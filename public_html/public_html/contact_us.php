@@ -21,16 +21,24 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     try {
         // Konfigurasi SMTP
         $mail->isSMTP();
-        $mail->Host       = 'mail.petalytix.id'; // Ganti dengan SMTP server
+        $mail->Host       = getenv('SMTP_HOST') ?: 'smtp.example.com';
         $mail->SMTPAuth   = true;
-        $mail->Username   = 'contact@petalytix.id'; // Ganti dengan email SMTP
-        $mail->Password   = 'B1smillah!'; // Ganti password email
-        $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
-        $mail->Port       = 465;
+        $mail->Username   = getenv('SMTP_USER') ?: 'user@example.com';
+        $mail->Password   = getenv('SMTP_PASS') ?: '';
+        $mail->SMTPSecure = (getenv('SMTP_SECURE') === 'true')
+            ? PHPMailer::ENCRYPTION_SMTPS
+            : PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->Port       = (int) (getenv('SMTP_PORT') ?: 465);
     
         // Pengirim & Penerima
-        $mail->setFrom('contact@petalytix.id', 'Petalytix Contact Form');
-        $mail->addAddress('contact@petalytix.id', 'Petalytix Admin'); // penerima
+        $mail->setFrom(
+            getenv('SMTP_FROM') ?: $mail->Username,
+            'Petalytix Contact Form'
+        );
+        $mail->addAddress(
+            getenv('CONTACT_TO') ?: $mail->Username,
+            'Petalytix Admin'
+        ); // penerima
         $mail->addReplyTo($email, $name); // reply langsung ke pengirim form 
     
         // Konten email
