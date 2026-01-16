@@ -1,0 +1,32 @@
+[13-Aug-2025 09:02:24 Asia/Jakarta] PHP Warning:  mail() has been disabled for security reasons in /home/pety4436/public_html/api.php on line 109
+[13-Aug-2025 09:42:28 Asia/Jakarta] PHP Warning:  mail() has been disabled for security reasons in /home/pety4436/public_html/api.php on line 109
+[13-Aug-2025 09:42:52 Asia/Jakarta] PHP Warning:  mail() has been disabled for security reasons in /home/pety4436/public_html/api.php on line 109
+[13-Aug-2025 10:12:53 Asia/Jakarta] PHP Warning:  mail() has been disabled for security reasons in /home/pety4436/public_html/api.php on line 109
+[13-Aug-2025 10:13:03 Asia/Jakarta] PHP Warning:  mail() has been disabled for security reasons in /home/pety4436/public_html/api.php on line 109
+[13-Aug-2025 10:13:12 Asia/Jakarta] PHP Warning:  mail() has been disabled for security reasons in /home/pety4436/public_html/api.php on line 109
+[13-Aug-2025 10:13:15 Asia/Jakarta] PHP Warning:  mail() has been disabled for security reasons in /home/pety4436/public_html/api.php on line 109
+[13-Aug-2025 10:13:16 Asia/Jakarta] PHP Warning:  mail() has been disabled for security reasons in /home/pety4436/public_html/api.php on line 109
+[13-Aug-2025 10:24:11 Asia/Jakarta] PHP Warning:  mail() has been disabled for security reasons in /home/pety4436/public_html/api.php on line 109
+[13-Aug-2025 10:24:13 Asia/Jakarta] PHP Warning:  mail() has been disabled for security reasons in /home/pety4436/public_html/api.php on line 109
+[13-Aug-2025 10:39:56 Asia/Jakarta] PHP Warning:  mail() has been disabled for security reasons in /home/pety4436/public_html/api.php on line 109
+[13-Aug-2025 11:55:16 Asia/Jakarta] PHP Warning:  mail() has been disabled for security reasons in /home/pety4436/public_html/api.php on line 109
+[13-Aug-2025 11:59:04 Asia/Jakarta] PHP Fatal error:  Uncaught Error: Undefined class constant 'ENCRYPTION_STARTSMTPS' in /home/pety4436/public_html/contact_us.php:25
+Stack trace:
+#0 {main}
+  thrown in /home/pety4436/public_html/contact_us.php on line 25
+[13-Aug-2025 12:00:01 Asia/Jakarta] PHP Fatal error:  Uncaught Error: Undefined class constant 'ENCRYPTION_STARTSMTPS' in /home/pety4436/public_html/contact_us.php:25
+Stack trace:
+#0 {main}
+  thrown in /home/pety4436/public_html/contact_us.php on line 25
+[13-Aug-2025 12:06:40 Asia/Jakarta] PHP Fatal error:  Uncaught Error: Undefined class constant 'ENCRYPTION_STARTSMTPS' in /home/pety4436/public_html/contact_us.php:31
+Stack trace:
+#0 {main}
+  thrown in /home/pety4436/public_html/contact_us.php on line 31
+[13-Aug-2025 12:07:50 Asia/Jakarta] PHP Fatal error:  Uncaught Error: Undefined class constant 'ENCRYPTION_STARTSMTPS' in /home/pety4436/public_html/contact_us.php:31
+Stack trace:
+#0 {main}
+  thrown in /home/pety4436/public_html/contact_us.php on line 31
+[13-Aug-2025 12:08:28 Asia/Jakarta] PHP Fatal error:  Uncaught Error: Undefined class constant 'ENCRYPTION_STARTSMTPS' in /home/pety4436/public_html/contact_us.php:26
+Stack trace:
+#0 {main}
+  thrown in /home/pety4436/public_html/contact_us.php on line 26

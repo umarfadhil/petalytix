@@ -1,0 +1,26 @@
+{
+  "name": "petalytix",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "seed": "node scripts/seed-portfolio.js"
+  },
+  "dependencies": {
+    "jose": "5.2.4",
+    "mongodb": "6.6.2",
+    "next": "^14.2.35",
+    "nodemailer": "^7.0.12",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.11.30",
+    "@types/react": "18.2.66",
+    "@types/react-dom": "18.2.22",
+    "typescript": "5.4.5"
+  }
+}

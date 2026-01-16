@@ -1,0 +1,110 @@
+
+
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hubungi Kami</title>
+<style>
+  body { font-family: Arial, sans-serif; }
+  form {
+    max-width: 500px;
+    margin: auto;
+  }
+  label {
+    display: block;
+    margin-top: 10px;
+    font-weight: bold;
+  }
+  input, textarea {
+    width: 100%;
+    padding: 8px;
+    margin-top: 4px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+  }
+  textarea { resize: vertical; }
+  button {
+    background-color: #007BFF;
+    color: white;
+    padding: 10px 20px;
+    margin-top: 15px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  button:hover { background-color: #0056b3; }
+  .message {
+    margin-top: 15px;
+    padding: 10px;
+    border-radius: 4px;
+    display: none;
+  }
+  .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+  .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+</style>
+
+
+
+<form id="contactForm">
+  <label>Nama</label>
+  <input type="text" name="name" placeholder="Nama Anda" required="">
+
+  <label>Email</label>
+  <input type="email" name="email" placeholder="example@youremail.com" required="">
+
+  <label>Kontak</label>
+  <input type="text" name="phone" placeholder="08xxx" required="">
+
+  <label>Nama Bisnis/Perusahaan</label>
+  <input type="text" name="company" placeholder="Google" required="">
+
+  <label>Pesan</label>
+  <textarea name="message" rows="5" placeholder="Tuliskan pesanmu disini..." required=""></textarea>
+
+  <div style="display: flex; align-items: flex-start; margin-top: 10px; font-size: 14px; text-align: left;">
+    <input type="checkbox" name="agree" required="" style="margin: 3px 8px 0px -125px;">
+    <span>
+      Saya sudah membaca dan paham dengan
+      <a href="https://petalytix.id/id/kebijakan-privasi/" target="_blank" style="color: green;">kebijakan privasi</a>.
+    </span>
+  </div>
+
+  <button type="submit">Submit</button>
+  <div id="formMessage" class="message"></div>
+</form>
+
+<script>
+document.getElementById("contactForm").addEventListener("submit", function(e) {
+    e.preventDefault(); // cegah reload halaman
+
+    let formData = new FormData(this);
+
+    fetch("contact_us.php", {
+        method: "POST",
+        body: formData
+    })
+    .then(response => response.text())
+    .then(data => {
+        let msgBox = document.getElementById("formMessage");
+        msgBox.style.display = "block";
+
+        if (data.includes("berhasil")) {
+            msgBox.className = "message success";
+            msgBox.innerHTML = "✅ Pesan Anda berhasil dikirim!";
+            document.getElementById("contactForm").reset();
+        } else {
+            msgBox.className = "message error";
+            msgBox.innerHTML = "❌ Terjadi kesalahan: " + data;
+        }
+    })
+    .catch(error => {
+        let msgBox = document.getElementById("formMessage");
+        msgBox.style.display = "block";
+        msgBox.className = "message error";
+        msgBox.innerHTML = "❌ Gagal mengirim: " + error;
+    });
+});
+</script>
+
+
+

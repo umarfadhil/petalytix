@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Admin Dashboard</title>
+    <!-- Firebase App (core SDK) -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-app-compat.js"></script>
+    
+    <!-- Firebase Auth -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-auth-compat.js"></script>
+    
+    <!-- Firebase Firestore -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-firestore-compat.js"></script>
+</head>
+<body>
+  <h1>Admin Dashboard</h1>
+  <table border="1" id="userTable">
+    <thead>
+      <tr><th>Email</th><th>Action</th></tr>
+    </thead>
+    <tbody id="userList"></tbody>
+  </table>
+
+  <script>
+    // ✅ Your Firebase config here
+    const firebaseConfig = {
+      apiKey: "AIzaSyDwxASMHa85LAV01rScMgbCxqEQ1FdKXdI",
+      authDomain: "petalytix.firebaseapp.com",
+      projectId: "petalytix"
+    };
+    firebase.initializeApp(firebaseConfig);
+
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    // Load all users from Firestore
+    function loadUsers() {
+      db.collection("users").get().then((querySnapshot) => {
+        const userList = document.getElementById("userList");
+        userList.innerHTML = "";
+        querySnapshot.forEach((doc) => {
+          const user = doc.data();
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${user.email}</td>
+            <td><button onclick="resetPassword('${user.email}')">Reset Password</button></td>
+          `;
+          userList.appendChild(tr);
+        });
+      });
+    }
+
+    // Send password reset email
+    function resetPassword(email) {
+      auth.sendPasswordResetEmail(email)
+        .then(() => alert("Password reset email sent to " + email))
+        .catch(err => alert("Error: " + err.message));
+    }
+
+    // Load on page open
+    loadUsers();
+  </script>
+</body>
+</html>

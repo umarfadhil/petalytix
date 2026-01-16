@@ -1,0 +1,119 @@
+<!-- DASHBOARD -->
+<div class="container">
+  
+  <!-- Header -->
+  <div class="header">
+    <h2>Selamat Datang di Petalytix</h2>
+    <button id="logoutBtn" class="btn btn-danger">Logout</button>
+  </div>
+
+    <!-- User Info -->
+    <div class="card">
+        <h3>Profil Pengguna</h3>
+        <p><strong>Nama:</strong> <span id="userName">Loading...</span></p>
+        <p><strong>Email:</strong> <span id="userEmail">Loading...</span></p>
+        <p><strong>No Handphone:</strong> <span id="userPhone">Loading...</span></p>
+        <p><strong>Perusahaan:</strong> <span id="userCompany">Loading...</span></p>
+        <button id="resetBtn" class="btn btn-danger">Reset Password</button>
+    </div>
+    
+    <!-- Embed Report -->
+    <div class="card">
+        <h3>One-page Report</h3>
+        <div class="dashboard-frame">
+            <iframe id="reportFrame" src="" allowfullscreen></iframe>
+        </div>
+        <div class="spacer" style="height:40px;"></div>
+        <div>
+            <a id="downloadReport" class="btn btn-primary" target="_blank">Download Report</a>
+        </div>
+        
+    </div>
+    
+    
+    <!-- Embed Dashboard -->
+    <div class="card">
+        <h3>Dashboard</h3>
+        <div class="dashboard-frame">
+            <iframe id="dashboardFrame" src="" allowfullscreen></iframe>
+        </div>
+        <!---<a id="downloadDashboard" download="dashboard.pdf" class="btn btn-primary" target="_blank">Download Dashboard</a>--->
+    </div>
+
+    
+<!-- Link CSS file -->
+<link rel="stylesheet" href="style.css">
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+  import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
+  import { getAuth, onAuthStateChanged, signOut, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDwxASMHa85LAV01rScMgbCxqEQ1FdKXdI",
+    authDomain: "petalytix.firebaseapp.com",
+    projectId: "petalytix",
+    storageBucket: "petalytix.firebasestorage.app",
+    messagingSenderId: "676653270164",
+    appId: "1:676653270164:web:d5ae00e4c6938b661ce081"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const auth = getAuth(app);
+
+  const urlParams = new URLSearchParams(window.location.search);
+  const uid = urlParams.get("uid");
+
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) {
+      // Kalau belum login → tendang ke login
+      window.location.href = "/";
+      return;
+    }
+
+    if (user.uid !== uid) {
+      // Kalau login tapi UID beda → larang akses
+      alert("Unauthorized access!");
+      window.location.href = "/";
+      return;
+    }
+
+    // Kalau lolos semua → ambil data user
+    await loadUserData();
+  });
+
+  async function loadUserData() {
+    const userRef = doc(db, "users", uid);
+    const userSnap = await getDoc(userRef);
+
+    if (userSnap.exists()) {
+      const data = userSnap.data();
+      document.getElementById("userName").innerText = data.name || "-";
+      document.getElementById("userEmail").innerText = data.email || "-";
+      document.getElementById("userPhone").innerText = data.phone || "-";
+      document.getElementById("userCompany").innerText = data.company || "-";
+      document.getElementById("dashboardFrame").src = data.dashboardLink || "";
+      document.getElementById("reportFrame").src = data.reportLink || "";
+      document.getElementById("downloadReport").href = data.reportPdf || "#";
+      document.getElementById("downloadDashboard").href = data.dashboardPdf || "#";
+    } else {
+      alert("Data user tidak ditemukan");
+    }
+  }
+
+  document.getElementById("logoutBtn").addEventListener("click", async () => {
+    await signOut(auth);
+    window.location.href = "/";
+  });
+  
+  document.getElementById("resetBtn").addEventListener("click", async () => {
+    const email = document.getElementById("userEmail").innerText;
+    if (email && email !== "-") {
+      await sendPasswordResetEmail(auth, email);
+      alert("Link reset password sudah dikirim ke email Anda.");
+    } else {
+      alert("Email tidak ditemukan!");
+    }
+  });
+</script>
