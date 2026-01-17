@@ -1,8 +1,16 @@
 # Petalytix Portfolio
 
-Version: 1.0.1
+## Changelog
 
-Location based portfolio site built with Next.js (App Router) and MongoDB. Supports English and Bahasa Indonesia.
+### v1.0.2
+
+- Performance: public pages use ISR with hourly revalidation; portfolio changes trigger immediate refresh.
+- Sitemap: `/sitemap.xml` is dynamic with hourly cache and revalidation on portfolio updates.
+- Images: responsive `sizes` hints for portfolio cards and galleries.
+
+### v1.0.1
+
+- Initial release.
 
 ## Setup
 
@@ -68,6 +76,6 @@ Optional:
 
 ## Sitemap
 
-- The static sitemap lives at `public_html/public_html/sitemap.xml`.
-- Update the base domain and paths when routes or locale structure changes.
-- Dynamic portfolio detail pages are not listed in the sitemap by default.
+- The sitemap is generated at `/sitemap.xml` from `src/app/sitemap.ts`.
+- It uses `NEXT_PUBLIC_SITE_URL` as the base domain and includes locale + portfolio detail pages.
+- It is cached hourly; portfolio create/update/delete actions revalidate `/sitemap.xml` immediately.

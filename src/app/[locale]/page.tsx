@@ -5,7 +5,7 @@ import { getPortfolioItems } from "@/lib/portfolio";
 import FeaturedCarousel from "@/components/FeaturedCarousel";
 import { getOrderedSections, getSiteSettings, localize } from "@/lib/site-settings";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 3600;
 
 export default async function HomePage({
   params

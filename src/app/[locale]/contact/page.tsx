@@ -3,7 +3,7 @@ import { getCopy, Locale } from "@/lib/content";
 import { getOrderedSections, getSiteSettings, localize } from "@/lib/site-settings";
 import ContactForm from "@/components/ContactForm";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 3600;
 
 export default async function ContactPage({
   params

@@ -92,6 +92,7 @@ export default function ProjectGallery({ images, title }: ProjectGalleryProps) {
                 alt={getAlt(title, index)}
                 width={800}
                 height={500}
+                sizes="(max-width: 768px) 100vw, 33vw"
                 className="project-image"
                 unoptimized={image.startsWith("data:")}
               />

@@ -5,7 +5,7 @@ import { getPortfolioItems } from "@/lib/portfolio";
 import ProjectCard from "@/components/ProjectCard";
 import { getOrderedSections, getSiteSettings, localize } from "@/lib/site-settings";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 3600;
 
 export default async function PortfolioPage({
   params

@@ -6,7 +6,7 @@ import { getPortfolioItemBySlug } from "@/lib/portfolio";
 import { normalizeUrl } from "@/lib/url";
 import ProjectGallery from "@/components/ProjectGallery";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 3600;
 
 function localize(text: { en: string; id: string }, locale: Locale) {
   return locale === "id" ? text.id : text.en;
@@ -48,6 +48,7 @@ export default async function PortfolioDetailPage({
               alt={title}
               width={1200}
               height={640}
+              sizes="(max-width: 900px) 100vw, 1000px"
               className="project-image"
               unoptimized={isCoverDataImage}
             />

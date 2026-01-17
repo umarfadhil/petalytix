@@ -6,10 +6,12 @@ import {
   getPortfolioItemById,
   updatePortfolioItem
 } from "@/lib/portfolio";
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 export type ActionState = { ok: boolean; message: string };
 type UploadResult<T> = { value?: T; error?: string };
+const PORTFOLIO_LOCALES = ["en", "id"] as const;
 
 function parseList(value: string) {
   return value
@@ -164,6 +166,17 @@ function validatePayload(payload: Awaited<ReturnType<typeof buildPayload>>["payl
   return null;
 }
 
+function revalidatePortfolioPaths(slug?: string) {
+  PORTFOLIO_LOCALES.forEach((locale) => {
+    revalidatePath(`/${locale}`);
+    revalidatePath(`/${locale}/portfolio`);
+    if (slug) {
+      revalidatePath(`/${locale}/portfolio/${slug}`);
+    }
+  });
+  revalidatePath("/sitemap.xml");
+}
+
 export async function createPortfolioAction(
   _prevState: ActionState,
   formData: FormData
@@ -179,6 +192,7 @@ export async function createPortfolioAction(
   }
 
   await createPortfolioItem(payload);
+  revalidatePortfolioPaths(payload.slug);
   redirect("/admin");
 }
 
@@ -199,26 +213,27 @@ export async function updatePortfolioAction(
     return { ok: false, message: "Missing portfolio item id." };
   }
 
-  const needsExisting =
-    payload.coverImage === undefined ||
-    payload.images === undefined ||
-    payload.attachment === undefined;
-  if (needsExisting) {
-    const existing = await getPortfolioItemById(id);
-    if (existing) {
-      if (payload.coverImage === undefined) {
-        payload.coverImage = existing.coverImage;
-      }
-      if (payload.images === undefined) {
-        payload.images = existing.images;
-      }
-      if (payload.attachment === undefined) {
-        payload.attachment = existing.attachment;
-      }
-    }
+  const existing = await getPortfolioItemById(id);
+  if (!existing) {
+    return { ok: false, message: "Portfolio item not found." };
+  }
+
+  const previousSlug = existing.slug;
+  if (payload.coverImage === undefined) {
+    payload.coverImage = existing.coverImage;
+  }
+  if (payload.images === undefined) {
+    payload.images = existing.images;
+  }
+  if (payload.attachment === undefined) {
+    payload.attachment = existing.attachment;
   }
 
   await updatePortfolioItem(id, payload);
+  revalidatePortfolioPaths(payload.slug);
+  if (previousSlug !== payload.slug) {
+    revalidatePortfolioPaths(previousSlug);
+  }
   redirect("/admin");
 }
 
@@ -227,6 +242,8 @@ export async function deletePortfolioAction(formData: FormData) {
   if (!id) {
     return;
   }
+  const existing = await getPortfolioItemById(id);
   await deletePortfolioItem(id);
+  revalidatePortfolioPaths(existing?.slug);
   redirect("/admin");
 }
