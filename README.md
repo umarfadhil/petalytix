@@ -1,5 +1,7 @@
 # Petalytix Portfolio
 
+Version: 1.0.1
+
 Location based portfolio site built with Next.js (App Router) and MongoDB. Supports English and Bahasa Indonesia.
 
 ## Setup
@@ -28,6 +30,7 @@ npm run seed
 
 - Login at `/admin` using `ADMIN_EMAIL` and `ADMIN_PASSWORD`.
 - Use the `Site settings` tab to update home, about, and contact page content.
+- Portfolio detail descriptions preserve line breaks, so new lines in the admin description render as new lines on the public page.
 
 ## Environment variables
 

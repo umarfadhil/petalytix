@@ -56,13 +56,18 @@ export default async function PortfolioDetailPage({
       ) : null}
 
       <section className="section reveal">
-        <p className="subtitle">{summary}</p>
+        <p className="subtitle" style={{ whiteSpace: "pre-line" }}>
+          {summary}
+        </p>
       </section>
 
       {description ? (
         <section className="section reveal delay-2">
           <div className="feature-card">
-            <p className="subtitle" style={{ fontSize: "15px" }}>
+            <p
+              className="subtitle"
+              style={{ fontSize: "15px", whiteSpace: "pre-line" }}
+            >
               {description}
             </p>
           </div>
