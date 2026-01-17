@@ -13,11 +13,19 @@ const privacySlugByLocale: Record<Locale, string> = {
   id: "kebijakan-privasi"
 };
 
-const staticPages = [
+type SitemapEntry = MetadataRoute.Sitemap[number];
+type ChangeFrequency = NonNullable<SitemapEntry["changeFrequency"]>;
+type PageDefinition = {
+  path: string;
+  changeFrequency: ChangeFrequency;
+  priority: number;
+};
+
+const staticPages: PageDefinition[] = [
   { path: "/", changeFrequency: "weekly", priority: 1.0 }
 ];
 
-const localePages = locales.flatMap((locale) => {
+const localePages: PageDefinition[] = locales.flatMap((locale) => {
   const basePath = `/${locale}`;
   return [
     { path: basePath, changeFrequency: "weekly", priority: 0.9 },
