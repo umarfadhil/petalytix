@@ -1,5 +1,6 @@
 import "./globals.css";
 import { Oxanium, Sora } from "next/font/google";
+import { Analytics } from "@vercel/analytics/react";
 
 const display = Oxanium({
   subsets: ["latin"],
@@ -32,7 +33,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${display.variable} ${body.variable}`}>{children}</body>
+      <body className={`${display.variable} ${body.variable}`}>
+        {children}
+        <Analytics />
+      </body>
     </html>
   );
 }

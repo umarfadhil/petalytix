@@ -2,6 +2,10 @@
 
 ## Changelog
 
+### v1.0.3
+
+- Analytics: Vercel Web Analytics enabled via `@vercel/analytics`.
+
 ### v1.0.2
 
 - Performance: public pages use ISR with hourly revalidation; portfolio changes trigger immediate refresh.
@@ -73,6 +77,7 @@ Email (contact form)
 
 Optional:
 - Run `npm run seed` locally against the production MongoDB to preload portfolio items.
+- Enable Web Analytics in the Vercel project settings to start collecting page views.
 
 ## Sitemap
 
