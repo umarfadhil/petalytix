@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### v1.0.4
+
+- AyaKasir subdomain: New `ayakasir.petalytix.id` with landing page, privacy policy, and account deletion request form.
+- Middleware routing: Subdomain detection and rewrite via `middleware.ts`.
+- Bilingual pages: All AyaKasir pages support EN/ID locales.
+- Responsive forms: Delete account form with properly stacked label+input fields.
+
 ### v1.0.3
 
 - Analytics: Vercel Web Analytics enabled via `@vercel/analytics`.
@@ -84,3 +91,18 @@ Optional:
 - The sitemap is generated at `/sitemap.xml` from `src/app/sitemap.ts`.
 - It uses `NEXT_PUBLIC_SITE_URL` as the base domain and includes locale + portfolio detail pages.
 - It is cached hourly; portfolio create/update/delete actions revalidate `/sitemap.xml` immediately.
+
+## AyaKasir Subdomain (`ayakasir.petalytix.id`)
+
+### Pages
+- **Landing page** (`/en`, `/id`) — AyaKasir app overview with features and Google Play Store link
+- **Privacy Policy** (`/en/privacy-policy`, `/id/privacy-policy`) — Google Play Store compliant
+- **Delete Account Request** (`/en/delete-account-request`, `/id/delete-account-request`) — Account deletion form
+
+### Implementation
+- **Routing:** Middleware-based subdomain detection and rewrite (`middleware.ts`)
+- **Structure:** `src/app/ayakasir/[locale]/` with dedicated layout, pages, and actions
+- **Content:** `src/lib/ayakasir-content.ts` — all EN/ID copy and privacy policy text
+- **Components:** `src/components/ayakasir/` — NavBar, Footer, DeleteAccountForm
+- **Email:** Deletion requests sent via existing Nodemailer SMTP config to `CONTACT_TO`
+- **Styling:** Responsive design with AyaKasir brand colors (#1D72E9 primary, #37A454 secondary)

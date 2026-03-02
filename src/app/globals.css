@@ -1496,3 +1496,69 @@ main {
     animation: none;
   }
 }
+
+/* ─── AyaKasir Subdomain ───────────────────────────────── */
+
+.ayakasir-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ayakasir-logo-text {
+  font-family: var(--font-display), "Segoe UI", sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #1d72e9, #37a454);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.ayakasir-lang-switch {
+  display: flex;
+  gap: 4px;
+}
+
+.ayakasir-lang-btn {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-line);
+  background: transparent;
+  color: var(--color-muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.ayakasir-lang-btn.active {
+  background: var(--color-ink);
+  color: #fff;
+  border-color: var(--color-ink);
+}
+
+.ayakasir-btn-primary {
+  background: linear-gradient(135deg, #1d72e9, #37a454) !important;
+  box-shadow: 0 18px 30px rgba(29, 114, 233, 0.25) !important;
+}
+
+.ayakasir-btn-primary:hover {
+  box-shadow: 0 24px 40px rgba(29, 114, 233, 0.35) !important;
+}
+
+.ayakasir-card-full {
+  width: min(var(--page-max), 100% - 48px);
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.ayakasir-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ayakasir-form-field input,
+.ayakasir-form-field textarea {
+  width: 100%;
+}
