@@ -9,12 +9,14 @@ export function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
+  // Rewrite bare / directly to /ayakasir/en (no redirect, avoids cache bypass issue)
   if (pathname === "/") {
     const url = request.nextUrl.clone();
-    url.pathname = "/en";
-    return NextResponse.redirect(url);
+    url.pathname = "/ayakasir/en";
+    return NextResponse.rewrite(url);
   }
 
+  // Rewrite /en or /id (with optional subpath) to /ayakasir/en or /ayakasir/id
   const localeMatch = pathname.match(/^\/(en|id)(\/.*)?$/);
   if (localeMatch) {
     const url = request.nextUrl.clone();
