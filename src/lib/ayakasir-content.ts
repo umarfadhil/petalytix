@@ -68,16 +68,16 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
       deleteAccount: "Delete Account"
     },
     hero: {
-      eyebrow: "Android POS for small restaurants",
-      title: "The cashier app your restaurant deserves.",
+      eyebrow: "AyaKasir – PoS Apps for Indonesian MSMEs",
+      title: "Manage inventory, menu, and sales in one integrated app.",
       subtitle:
-        "AyaKasir is a full-featured Point of Sale and ERP application for small restaurants. Manage transactions, inventory, purchasing, and reporting — all in one place, even offline.",
+        "AyaKasir is a Point of Sale and ERP application to manage inventory, menu, and sales in one integrated app. AyaKasir is designed to help small business owners, retails, small restaurants, and F&B businesses manage their daily operations more efficiently, faster, and more organized.",
       ctaPlayStore: "Get it on Google Play",
       ctaLearnMore: "Learn more"
     },
     features: {
       eyebrow: "Features",
-      title: "Everything you need to run your restaurant.",
+      title: "Everything you need to run your start up business.",
       items: [
         {
           title: "Point of Sale",
@@ -256,7 +256,7 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
     },
     features: {
       eyebrow: "Fitur",
-      title: "Semua yang kamu butuhkan untuk mengelola restoran.",
+      title: "Semua yang kamu butuhkan untuk mengelola UMKM kamu.",
       items: [
         {
           title: "Point of Sale",

@@ -1,7 +1,21 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc --noEmit)"
+      "Bash(npx tsc --noEmit)",
+      "mcp__claude_ai_Vercel__list_teams",
+      "mcp__claude_ai_Vercel__list_projects",
+      "mcp__claude_ai_Vercel__get_project",
+      "mcp__claude_ai_Vercel__search_vercel_documentation",
+      "Bash(curl -s \"https://api.vercel.com/v9/projects/prj_WyqD3hjh9mMni0y1KQ2BsOdQ0G79/domains/ayakasir.petalytix.id?teamId=team_otviaWucEDynhISMA9Vs5018\" -H \"Authorization: Bearer $VERCEL_TOKEN\")",
+      "mcp__claude_ai_Vercel__web_fetch_vercel_url",
+      "mcp__claude_ai_Vercel__get_deployment",
+      "Bash(python3 -c \":*)",
+      "Bash(node -e \":*)",
+      "mcp__claude_ai_Vercel__list_deployments",
+      "Bash(curl -s -o /dev/null -w \"%{http_code} %{redirect_url}\" \"https://ayakasir.petalytix.id/\")",
+      "Bash(curl -sI \"https://ayakasir.petalytix.id/\")",
+      "Bash(curl -sI \"https://ayakasir.petalytix.id/en\")",
+      "mcp__claude_ai_Vercel__get_runtime_logs"
     ]
   }
 }
