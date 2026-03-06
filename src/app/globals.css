@@ -714,8 +714,8 @@ main {
 }
 
 .project-cover.project-cover-large {
-  height: 360px;
-  min-height: 260px;
+  height: auto;
+  min-height: 0;
 }
 
 .project-cover.project-cover-gallery {
@@ -1507,7 +1507,7 @@ main {
 
 .ayakasir-logo-text {
   font-family: var(--font-display), "Segoe UI", sans-serif;
-  font-size: 20px;
+  font-size: 35px;
   font-weight: 700;
   background: linear-gradient(135deg, #1d72e9, #37a454);
   -webkit-background-clip: text;
@@ -1516,26 +1516,32 @@ main {
 }
 
 .ayakasir-lang-switch {
-  display: flex;
-  gap: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+.ayakasir-lang-divider {
+  color: var(--color-muted);
+  font-size: 11px;
+  opacity: 0.5;
+  padding: 0 2px;
 }
 
 .ayakasir-lang-btn {
   font-size: 12px;
   font-weight: 600;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--color-line);
+  padding: 0 8px;
   background: transparent;
+  border: none;
   color: var(--color-muted);
-  transition: background 0.15s, color 0.15s;
+  transition: color 0.15s;
 }
 
 .ayakasir-lang-btn.active {
-  background: var(--color-ink);
-  color: #fff;
-  border-color: var(--color-ink);
+  color: var(--color-ink);
 }
+
 
 .ayakasir-btn-primary {
   background: linear-gradient(135deg, #1d72e9, #37a454) !important;

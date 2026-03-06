@@ -15,7 +15,11 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code} %{redirect_url}\" \"https://ayakasir.petalytix.id/\")",
       "Bash(curl -sI \"https://ayakasir.petalytix.id/\")",
       "Bash(curl -sI \"https://ayakasir.petalytix.id/en\")",
-      "mcp__claude_ai_Vercel__get_runtime_logs"
+      "mcp__claude_ai_Vercel__get_runtime_logs",
+      "Bash(npm run build)",
+      "Bash(npx next build)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(ls src/app/ayakasir/[locale]/simulator/ src/components/ayakasir/simulator/)"
     ]
   }
 }

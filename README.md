@@ -2,6 +2,15 @@
 
 ## Changelog
 
+### v1.0.5
+
+- AyaKasir Simulator: Interactive POS simulator at `/[locale]/simulator` — full phone-frame UI with 6 screens (POS, Dashboard, Products, Inventory, Purchasing, Settings), 4 demo datasets (retail, restaurant, services, multichannel), per-item discounts, UTANG payment, BOM-based inventory deduction, vendor/goods-receiving management, and CSV export.
+- Simulator nav: Added Simulator link to AyaKasir NavBar (desktop + mobile drawer) and a CTA section on the AyaKasir landing page.
+- NavBar polish: Language switcher redesigned (pill → text with divider), larger AyaKasir logo text (35px), language switch added to mobile nav CTA area.
+- Submodule: AyaKasir Android source added as a git submodule at `repos/ayakasir`.
+- Build config: `outputFileTracingExcludes` added to `next.config.js` to exclude `repos/` and `ai-memory/` from Vercel deploy bundle; `tsconfig.json` excludes same dirs.
+- Middleware fix: `middleware.ts` moved to `src/` (required by Next.js when `src/` directory is used); subdomain root rewrite and root page `force-dynamic` corrected.
+
 ### v1.0.4
 
 - AyaKasir subdomain: New `ayakasir.petalytix.id` with landing page, privacy policy, and account deletion request form.

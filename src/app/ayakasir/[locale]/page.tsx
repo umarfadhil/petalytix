@@ -53,6 +53,22 @@ export default function AyaKasirLandingPage({
           ))}
         </div>
       </section>
+
+      <section className="section reveal delay-2" style={{ textAlign: "center" }}>
+        <span className="eyebrow">{copy.simulator.eyebrow}</span>
+        <h2 className="title">{copy.simulator.title}</h2>
+        <p className="subtitle" style={{ margin: "0 auto" }}>
+          {copy.simulator.subtitle}
+        </p>
+        <div className="project-links" style={{ justifyContent: "center" }}>
+          <a
+            className="button primary ayakasir-btn-primary"
+            href={`/${params.locale}/simulator`}
+          >
+            {copy.simulator.cta}
+          </a>
+        </div>
+      </section>
     </>
   );
 }

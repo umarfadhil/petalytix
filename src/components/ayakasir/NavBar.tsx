@@ -21,13 +21,14 @@ export default function AyaKasirNavBar({
             <span className="ayakasir-logo-text">AyaKasir</span>
           </Link>
           <div className="nav-actions">
-            <div className="ayakasir-lang-switch">
+            <div className="lang-switch ayakasir-lang-switch">
               <Link
                 href={`/en`}
                 className={`ayakasir-lang-btn${locale === "en" ? " active" : ""}`}
               >
                 EN
               </Link>
+              <span className="ayakasir-lang-divider">|</span>
               <Link
                 href={`/id`}
                 className={`ayakasir-lang-btn${locale === "id" ? " active" : ""}`}
@@ -55,6 +56,12 @@ export default function AyaKasirNavBar({
               {copy.nav.home}
             </Link>
             <Link
+              href={`/${locale}/simulator`}
+              onClick={() => setIsOpen(false)}
+            >
+              {copy.nav.simulator}
+            </Link>
+            <Link
               href={`/${locale}/privacy-policy`}
               onClick={() => setIsOpen(false)}
             >
@@ -67,6 +74,23 @@ export default function AyaKasirNavBar({
             >
               {copy.nav.deleteAccount}
             </Link>
+          </div>
+          <div className="nav-cta">
+            <div className="lang-switch ayakasir-lang-switch">
+              <Link
+                href={`/en`}
+                className={`ayakasir-lang-btn${locale === "en" ? " active" : ""}`}
+              >
+                EN
+              </Link>
+              <span className="ayakasir-lang-divider">|</span>
+              <Link
+                href={`/id`}
+                className={`ayakasir-lang-btn${locale === "id" ? " active" : ""}`}
+              >
+                ID
+              </Link>
+            </div>
           </div>
         </div>
       </div>

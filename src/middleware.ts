@@ -1,26 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 
+// Add new product subdomains here. Key = subdomain prefix, value = app path segment.
+const SUBDOMAIN_MAP: Record<string, string> = {
+  ayakasir: "ayakasir",
+};
+
 export function middleware(request: NextRequest) {
   const host = request.headers.get("host") || "";
-  const isAyaKasir =
-    host.startsWith("ayakasir.") || host.startsWith("ayakasir:");
 
-  if (!isAyaKasir) return NextResponse.next();
+  let matchedProduct: string | undefined;
+  for (const [subdomain, appPath] of Object.entries(SUBDOMAIN_MAP)) {
+    if (host.startsWith(`${subdomain}.`) || host.startsWith(`${subdomain}:`)) {
+      matchedProduct = appPath;
+      break;
+    }
+  }
+
+  if (!matchedProduct) return NextResponse.next();
 
   const { pathname } = request.nextUrl;
 
-  // Rewrite bare / directly to /ayakasir/en (no redirect, avoids cache bypass issue)
+  // Rewrite bare / directly to /<product>/id (default locale: Indonesian)
   if (pathname === "/") {
     const url = request.nextUrl.clone();
-    url.pathname = "/ayakasir/en";
+    url.pathname = `/${matchedProduct}/id`;
     return NextResponse.rewrite(url);
   }
 
-  // Rewrite /en or /id (with optional subpath) to /ayakasir/en or /ayakasir/id
+  // Rewrite /en or /id (with optional subpath) to /<product>/en or /<product>/id
   const localeMatch = pathname.match(/^\/(en|id)(\/.*)?$/);
   if (localeMatch) {
     const url = request.nextUrl.clone();
-    url.pathname = `/ayakasir${pathname}`;
+    url.pathname = `/${matchedProduct}${pathname}`;
     return NextResponse.rewrite(url);
   }
 

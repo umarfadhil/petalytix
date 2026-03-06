@@ -13,6 +13,7 @@ type AyaKasirCopy = {
     home: string;
     privacyPolicy: string;
     deleteAccount: string;
+    simulator: string;
   };
   hero: {
     eyebrow: string;
@@ -50,6 +51,12 @@ type AyaKasirCopy = {
     manualText: string;
     note: string;
   };
+  simulator: {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    cta: string;
+  };
   footer: {
     note: string;
     privacyUrl: string;
@@ -65,7 +72,8 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
     nav: {
       home: "Home",
       privacyPolicy: "Privacy Policy",
-      deleteAccount: "Delete Account"
+      deleteAccount: "Delete Account",
+      simulator: "Try Simulator"
     },
     hero: {
       eyebrow: "AyaKasir – PoS Apps for Indonesian MSMEs",
@@ -110,6 +118,13 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
             "Works without internet. Data syncs automatically with the cloud when connectivity is restored."
         }
       ]
+    },
+    simulator: {
+      eyebrow: "Try It Now",
+      title: "Experience AyaKasir in your browser.",
+      subtitle:
+        "No download needed. Try the full POS experience with sample data — manage products, make transactions, and explore the dashboard.",
+      cta: "Open Simulator",
     },
     privacyPolicy: {
       title: "Privacy Policy",
@@ -244,7 +259,8 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
     nav: {
       home: "Beranda",
       privacyPolicy: "Kebijakan Privasi",
-      deleteAccount: "Hapus Akun"
+      deleteAccount: "Hapus Akun",
+      simulator: "Coba Simulator"
     },
     hero: {
       eyebrow: "AyaKasir – Aplikasi Kasir untuk UMKM Indonesia",
@@ -289,6 +305,13 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
             "Bekerja tanpa internet. Data tersinkronisasi otomatis ke cloud saat koneksi tersedia."
         }
       ]
+    },
+    simulator: {
+      eyebrow: "Coba Sekarang",
+      title: "Rasakan AyaKasir langsung di browser.",
+      subtitle:
+        "Tanpa perlu download. Coba pengalaman kasir lengkap dengan data contoh — kelola produk, buat transaksi, dan jelajahi dashboard.",
+      cta: "Buka Simulator",
     },
     privacyPolicy: {
       title: "Kebijakan Privasi",

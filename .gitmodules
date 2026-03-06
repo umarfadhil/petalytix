@@ -1,0 +1,3 @@
+[submodule "repos/ayakasir"]
+	path = repos/ayakasir
+	url = https://github.com/umarfadhil/ayakasir.git

@@ -4,9 +4,8 @@ out
 .env
 .env.local
 .env.*
-apps/ayakasir-merchant/README.md
-/ai-memory
-CODE_RULES.md
-PROJECT_OVERVIEW.md
-FILE_MAP.md
-SESSION_LEARNINGS.md
+# Submodule build artifacts
+repos/*/build/
+repos/*/.gradle/
+repos/*/.idea/
+
