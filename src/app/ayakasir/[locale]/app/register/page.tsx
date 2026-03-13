@@ -50,6 +50,9 @@ export default function RegisterPage() {
   if (success) {
     return (
       <div className="erp-auth">
+        <div className="erp-auth-orb erp-auth-orb--1" />
+        <div className="erp-auth-orb erp-auth-orb--2" />
+        <div className="erp-auth-orb erp-auth-orb--3" />
         <div className="erp-auth-card">
           <div className="erp-auth-logo">AyaKa$ir</div>
           <div className="erp-alert erp-alert--success" style={{ marginTop: 24 }}>
@@ -72,6 +75,9 @@ export default function RegisterPage() {
 
   return (
     <div className="erp-auth">
+      <div className="erp-auth-orb erp-auth-orb--1" />
+      <div className="erp-auth-orb erp-auth-orb--2" />
+      <div className="erp-auth-orb erp-auth-orb--3" />
       <div className="erp-auth-card">
         <div className="erp-auth-logo">AyaKa$ir</div>
         <p className="erp-auth-subtitle">

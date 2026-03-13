@@ -42,6 +42,7 @@ body:has(.erp-root) {
   font-family: var(--erp-font);
   color: var(--erp-ink);
   background: var(--erp-bg);
+  width: 100%;
   height: 100vh;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
@@ -51,17 +52,105 @@ body:has(.erp-root) {
   box-sizing: border-box;
 }
 
+/* ── Auth background animations ── */
+@keyframes erp-auth-drift-a {
+  0%   { transform: translate(0, 0) scale(1); }
+  33%  { transform: translate(40px, -30px) scale(1.08); }
+  66%  { transform: translate(-20px, 20px) scale(0.95); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+@keyframes erp-auth-drift-b {
+  0%   { transform: translate(0, 0) scale(1); }
+  40%  { transform: translate(-50px, 30px) scale(1.1); }
+  70%  { transform: translate(25px, -15px) scale(0.92); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+@keyframes erp-auth-drift-c {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(30px, 40px) scale(1.06); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+@keyframes erp-auth-grid-slide {
+  0%   { background-position: 0 0; }
+  100% { background-position: 120px 120px; }
+}
+
 /* ── Auth layout (login/register) ── */
 .erp-auth {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  width: 100%;
   min-height: 100vh;
   padding: 24px;
-  background: linear-gradient(135deg, var(--erp-primary) 0%, #1560c7 100%);
+  background-color: #f6f7fb;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* Animated grid */
+.erp-auth::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image:
+    linear-gradient(0deg, rgba(11, 15, 26, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(11, 15, 26, 0.05) 1px, transparent 1px);
+  background-size: 120px 120px;
+  animation: erp-auth-grid-slide 8s linear infinite;
+}
+
+/* Floating orbs */
+.erp-auth::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image:
+    radial-gradient(circle at 12% 22%, rgba(21, 209, 197, 0.22), transparent 42%),
+    radial-gradient(circle at 82% 5%,  rgba(255, 138, 61, 0.20), transparent 45%),
+    radial-gradient(circle at 60% 85%, rgba(29, 114, 233, 0.14), transparent 40%);
+  animation: erp-auth-drift-a 18s ease-in-out infinite;
+}
+
+.erp-auth-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px);
+  pointer-events: none;
+  z-index: 0;
+}
+.erp-auth-orb--1 {
+  width: 340px;
+  height: 340px;
+  top: -80px;
+  left: -80px;
+  background: rgba(21, 209, 197, 0.18);
+  animation: erp-auth-drift-b 22s ease-in-out infinite;
+}
+.erp-auth-orb--2 {
+  width: 280px;
+  height: 280px;
+  bottom: -60px;
+  right: -60px;
+  background: rgba(255, 138, 61, 0.16);
+  animation: erp-auth-drift-c 26s ease-in-out infinite;
+}
+.erp-auth-orb--3 {
+  width: 200px;
+  height: 200px;
+  top: 50%;
+  left: 65%;
+  background: rgba(29, 114, 233, 0.12);
+  animation: erp-auth-drift-a 20s ease-in-out infinite reverse;
 }
 
 .erp-auth-card {
+  position: relative;
+  z-index: 1;
   background: var(--erp-surface);
   border-radius: var(--erp-radius-xl);
   box-shadow: var(--erp-shadow-lg);
