@@ -4,8 +4,10 @@ const nextConfig = {
   images: {
     formats: ["image/avif", "image/webp"]
   },
-  outputFileTracingExcludes: {
-    "*": ["./repos/**", "./ai-memory/**"]
+  experimental: {
+    outputFileTracingExcludes: {
+      "*": ["./repos/**", "./ai-memory/**"]
+    }
   }
 };
 
