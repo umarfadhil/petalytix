@@ -9,7 +9,7 @@ Petalytix (petalytix.id) is a portfolio and analytics showcase site built with N
 ### Subdomains
 
 - **petalytix.id** — Main marketing/portfolio site
-- **ayakasir.petalytix.id** — Landing pages for AyaKasir, an Android POS merchant app
+- **ayakasir.petalytix.id** — Landing pages + Desktop ERP for AyaKasir, an Android POS merchant app
 
 ## Tech Stack
 
@@ -38,6 +38,20 @@ Middleware (`src/middleware.ts`) intercepts requests:
 - `ayakasir.*` hostnames are rewritten to `/ayakasir/[locale]/...`
 - Main domain serves from `/[locale]/...`
 
+### Landing Page
+
+- NavBar: Login button linking to `/${locale}/app/login`; Home and Privacy Policy nav links removed.
+- Hero: client component with typing animation cycling through feature words (`typingWords` in copy). Hero copy shape: `titlePrefix`, `titleSuffix`, `typingWords`, `ctaPlayStore`, `ctaLogin`.
+- Features section: 6-step vertical flow (Purchasing → Inventory → Menu → Customers → Cashier → Dashboard) with inline flat SVG illustrations per step + cross-platform sync illustration.
+- CSS in `globals.css`: `.ayakasir-hero-*`, `.ayakasir-typing-word`, `.ayakasir-cursor`, `.ayakasir-features-flow`, `.ayakasir-feature-step`, `.ayakasir-sync-badge`, `.ayakasir-crossplatform`.
+
+### ERP Dashboard
+
+- No page-level scroll: `.erp-shell` is `height: 100vh; overflow: hidden`; `.erp-main` scrolls independently.
+- Sidebar collapse: `ErpSidebar` has local `collapsed` state; `.erp-sidebar--collapsed` collapses to icon-only width; collapse toggle button in sidebar header.
+- Watermark: `"AyaKasir by Petalytix | 2026"` fixed bottom-right via `.erp-watermark`.
+- ERP pages have no marketing NavBar/Footer (separate layout, unchanged).
+
 ### App Simulator
 
 - Web-based simulator on ayakasir.petalytix.id mimics the native Android app inside a phone-frame mockup.
@@ -45,3 +59,24 @@ Middleware (`src/middleware.ts`) intercepts requests:
 - 4 scenario datasets (restaurant, retail, multi-channel, services) chosen after login.
 - Hardcoded credentials: username `ayakasir`, password `cobaduluaja`.
 - Files under `src/app/ayakasir/[locale]/simulator/`.
+
+### Desktop ERP
+
+- Full-featured web ERP at `ayakasir.petalytix.id/{locale}/app/` with real Supabase data.
+- Auth: ERP access uses `public.users.password_hash/password_salt` as source of truth, with a signed HTTP-only ERP session cookie. Supabase Auth is used only as a best-effort enrollment/confirmation fallback for registration and password sync. Legacy recovery: if `tenant_id` is missing, recover from `tenants.owner_email`; if hash is missing, fallback to Supabase Auth login and backfill.
+- Two-way realtime sync with mobile app via Supabase Realtime (Postgres Changes) on all tenant tables + `tenants`.
+- Screens:
+  - **Dashboard**: cash balance, Tunai/Transfer/UTANG/QRIS stat cards, period filter (today/month/year/custom date range), expandable transaction rows, pagination (10/25/50), top products table.
+  - **POS**: product grid with category grouping (flat when filtered/searching), variant picker, customer search/create dialog, CASH/QRIS/TRANSFER/UTANG payment methods (gated by `tenants.enabled_payment_methods`), clear cart, receipt dialog. BOM-aware inventory deduction on checkout (unit conversion: kg↔g, L↔mL).
+  - **Products**: menu items only (MENU_ITEM type) with BOM editor (variants + components per product), category CRUD, clone, search.
+  - **Inventory**: stock table, adjust stock dialog (movement type selector + optional notes) → writes to `inventory_movements` table + updates `avg_cogs`.
+  - **Purchasing**: goods receiving (decimal qty, auto inventory apply/reversal on edit/delete, avg_cogs weighted-average, in-form quick-create vendor/raw material) + vendor CRUD. Raw Materials tab: full CRUD for RAW_MATERIAL products + categories.
+  - **Customers**: customer table (category filter + text search), category management panel, customer detail panel (stats + tx history). CRUD for customers and customer categories.
+  - **Settings**: profile, change password (hash update + best-effort Supabase Auth sync), initial balance, QRIS config (merchant name + image URL), User Management (add/edit/delete tenant users with role + Feature Access checkboxes for CASHIER), CSV export (date range picker + enriched columns matching Android export).
+- Role-based access: OWNER sees all; CASHIER sees only features in `users.feature_access` (sidebar filtered); CASHIER restricted from delete/category-management in Purchasing, Products, Customers.
+- Repository layer in `src/lib/supabase/repositories/` — 14 files, function-based, mirrors mobile's Kotlin repositories.
+- State: React Context + useReducer in `src/components/ayakasir/erp/store.tsx`, server-side initial data load in `(erp)/layout.tsx`.
+- CSS: `.erp-*` prefix in `src/app/ayakasir/[locale]/app/erp.css`. Sidebar collapsible to icon-only mode. Watermark fixed bottom-right.
+- i18n: `src/components/ayakasir/erp/i18n.ts` (EN/ID).
+- Middleware protects `/app/*` routes, redirects unauthenticated to `/app/login`.
+- Supabase tables: `inventory_movements` (stock adjustment audit trail); `avg_cogs` BIGINT on `inventory` for HPP tracking.

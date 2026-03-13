@@ -27,27 +27,82 @@ src/
 │   │   └── page.tsx
 │   ├── ayakasir/
 │   │   └── [locale]/                # AyaKasir subdomain pages
-│   │       ├── layout.tsx
-│   │       ├── page.tsx             # Landing page (includes simulator CTA)
-│   │       ├── privacy-policy/
-│   │       ├── delete-account-request/
-│   │       └── simulator/           # Simulator route
-│   │           ├── page.tsx         # Server entry point
-│   │           ├── SimulatorShell.tsx  # Client wrapper
-│   │           └── simulator.css    # All .sim-* scoped CSS
+│   │       ├── layout.tsx           # Minimal locale validator only (no nav/footer)
+│   │       ├── (marketing)/         # Route group: NavBar + Footer
+│   │       │   ├── layout.tsx       # Marketing layout (NavBar + Footer)
+│   │       │   ├── page.tsx         # Landing page
+│   │       │   ├── privacy-policy/page.tsx
+│   │       │   ├── delete-account-request/page.tsx
+│   │       │   └── simulator/       # App simulator
+│   │       │       ├── page.tsx
+│   │       │       ├── SimulatorShell.tsx
+│   │       │       └── simulator.css
+│   │       └── app/                 # Desktop ERP (no nav/footer)
+│   │           ├── layout.tsx       # ERP root layout (imports erp.css)
+│   │           ├── erp.css          # All .erp-* scoped CSS
+│   │           ├── login/page.tsx
+│   │           ├── register/page.tsx
+│   │           └── (erp)/           # Authenticated route group
+│   │               ├── layout.tsx   # Sidebar + ErpProvider (fetches data SSR)
+│   │               ├── page.tsx     # Redirect to dashboard
+│   │               ├── dashboard/page.tsx
+│   │               ├── pos/page.tsx
+│   │               ├── products/page.tsx
+│   │               ├── inventory/page.tsx
+│   │               ├── purchasing/page.tsx
+│   │               ├── customers/page.tsx
+│   │               └── settings/page.tsx
 │   └── actions/
 │       └── contact.ts               # Contact form server action
 ├── lib/
 │   ├── content.ts                   # Main site i18n copy (EN/ID)
 │   ├── ayakasir-content.ts          # AyaKasir i18n copy (EN/ID) + simulator CTA copy
 │   ├── site-settings.ts             # MongoDB-backed dynamic settings
-│   └── privacy-policy.ts            # Petalytix privacy policy content
-├── middleware.ts                     # Subdomain routing middleware
+│   ├── privacy-policy.ts            # Petalytix privacy policy content
+│   ├── erp-auth.ts                  # ERP signed-cookie session helpers
+│   ├── erp-auth-token.ts            # ERP JWT token helpers
+│   ├── ayakasir-password.ts         # ERP password hash helpers
+│   └── supabase/                    # Supabase integration (AyaKasir ERP)
+│       ├── client.ts                # Browser client (@supabase/ssr)
+│       ├── server.ts                # Server client (cookies-based)
+│       ├── middleware.ts            # Middleware client (request/response cookies)
+│       ├── types.ts                 # DB row types + table constants
+│       ├── realtime.ts              # useRealtimeSync hook
+│       └── repositories/            # CRUD per table (14 files + index)
+│           ├── categories.ts
+│           ├── products.ts
+│           ├── variants.ts
+│           ├── inventory.ts
+│           ├── inventory-movements.ts  # Stock adjustment audit trail
+│           ├── product-components.ts
+│           ├── vendors.ts
+│           ├── goods-receiving.ts
+│           ├── transactions.ts
+│           ├── cash-withdrawals.ts
+│           ├── general-ledger.ts
+│           ├── customers.ts
+│           ├── customer-categories.ts
+│           └── index.ts
+├── middleware.ts                     # Subdomain routing + ERP auth protection
 └── components/
     ├── ayakasir/
-    │   ├── NavBar.tsx               # AyaKasir nav
+    │   ├── NavBar.tsx               # AyaKasir nav (login btn desktop-only; mobile inside menu)
+    │   ├── Hero.tsx                 # Hero client component (typing animation + SVG illustrations)
     │   ├── Footer.tsx               # AyaKasir footer
     │   ├── DeleteAccountForm.tsx    # Delete account form
+    │   ├── erp/                     # Desktop ERP components
+    │   │   ├── store.tsx            # ErpProvider context + reducer
+    │   │   ├── i18n.ts              # EN/ID copy for ERP UI
+    │   │   ├── utils.ts             # formatRupiah, formatDate, date ranges
+    │   │   ├── ErpSidebar.tsx       # Sidebar navigation (feature-gated per user role)
+    │   │   └── screens/
+    │   │       ├── DashboardScreen.tsx
+    │   │       ├── PosScreen.tsx
+    │   │       ├── ProductsScreen.tsx
+    │   │       ├── InventoryScreen.tsx
+    │   │       ├── PurchasingScreen.tsx
+    │   │       ├── CustomersScreen.tsx
+    │   │       └── SettingsScreen.tsx
     │   └── simulator/               # Simulator components (25 files)
     │       ├── types.ts             # All TS interfaces & state types
     │       ├── constants.ts         # Credentials, formatRupiah, genId
@@ -85,5 +140,14 @@ src/
 | `src/app/[locale]/page.tsx` | Main site homepage |
 | `src/app/ayakasir/[locale]/page.tsx` | AyaKasir landing page |
 | `src/app/ayakasir/[locale]/simulator/page.tsx` | App simulator |
+| `src/app/ayakasir/[locale]/app/login/page.tsx` | ERP login page (server-action backed custom auth) |
+| `src/app/ayakasir/[locale]/app/(erp)/layout.tsx` | ERP authenticated layout (data fetch + provider) |
+| `src/app/ayakasir/actions/auth.ts` | ERP auth server actions (login/register/logout/change password/upsert user/QRIS settings) |
+| `src/lib/erp-auth.ts` | ERP signed-cookie session helpers |
+| `src/lib/erp-auth-token.ts` | ERP JWT token helpers |
+| `src/lib/ayakasir-password.ts` | ERP password hash helpers |
+| `src/lib/supabase/types.ts` | Supabase DB row types (source of truth) |
+| `src/components/ayakasir/erp/store.tsx` | ERP state context + realtime sync |
+| `src/components/ayakasir/erp/screens/CustomersScreen.tsx` | Customers screen (table, categories, detail panel) |
 | `src/app/actions/contact.ts` | Contact form server action |
 | `src/app/ayakasir/actions/delete-account.ts` | Account deletion server action |

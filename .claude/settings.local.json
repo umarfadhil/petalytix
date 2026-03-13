@@ -19,7 +19,30 @@
       "Bash(npm run build)",
       "Bash(npx next build)",
       "Bash(echo \"exit: $?\")",
-      "Bash(ls src/app/ayakasir/[locale]/simulator/ src/components/ayakasir/simulator/)"
+      "Bash(ls src/app/ayakasir/[locale]/simulator/ src/components/ayakasir/simulator/)",
+      "Bash(npm install @supabase/supabase-js @supabase/ssr)",
+      "Bash(mkdir -p src/lib/supabase/repositories)",
+      "Bash(mkdir -p src/components/ayakasir/erp/screens)",
+      "Bash(mkdir -p src/components/ayakasir/erp/shared)",
+      "Bash(mkdir -p \"src/app/ayakasir/[locale]/app/login\")",
+      "Bash(mkdir -p \"src/app/ayakasir/[locale]/app/register\")",
+      "Bash(mkdir -p \"src/app/ayakasir/[locale]/app/\\(erp\\)/dashboard\")",
+      "Bash(mkdir -p \"src/app/ayakasir/[locale]/app/\\(erp\\)/pos\")",
+      "Bash(mkdir -p \"src/app/ayakasir/[locale]/app/\\(erp\\)/products\")",
+      "Bash(mkdir -p \"src/app/ayakasir/[locale]/app/\\(erp\\)/inventory\")",
+      "Bash(mkdir -p \"src/app/ayakasir/[locale]/app/\\(erp\\)/purchasing\")",
+      "Bash(mkdir -p \"src/app/ayakasir/[locale]/app/\\(erp\\)/settings\")",
+      "Bash(mv page.tsx \"\\(marketing\\)/\")",
+      "Bash(mv privacy-policy:*)",
+      "Bash(mv delete-account-request:*)",
+      "Bash(mv simulator:*)",
+      "Bash(echo \"EXIT:$?\")",
+      "mcp__claude_ai_Supabase__list_projects",
+      "mcp__claude_ai_Supabase__apply_migration",
+      "mcp__claude_ai_Supabase__execute_sql",
+      "Bash(grep -r \"SALE_DEBT\\\\|DEBT_SETTLED\" 'c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/repos/ayakasir' --include=*.sql -l)",
+      "Bash(find 'c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/repos/ayakasir' -name *.kt)",
+      "Bash(ls \"c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/src/app/ayakasir/[locale]/app/\\(erp\\)\")"
     ]
   }
 }

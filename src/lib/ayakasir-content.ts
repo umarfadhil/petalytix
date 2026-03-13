@@ -14,13 +14,16 @@ type AyaKasirCopy = {
     privacyPolicy: string;
     deleteAccount: string;
     simulator: string;
+    login: string;
   };
   hero: {
     eyebrow: string;
-    title: string;
+    titlePrefix: string;
+    titleSuffix: string;
+    typingWords: string[];
     subtitle: string;
     ctaPlayStore: string;
-    ctaLearnMore: string;
+    ctaLogin: string;
   };
   features: {
     eyebrow: string;
@@ -73,49 +76,52 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
       home: "Home",
       privacyPolicy: "Privacy Policy",
       deleteAccount: "Delete Account",
-      simulator: "Try Simulator"
+      simulator: "Try Simulator",
+      login: "Login"
     },
     hero: {
-      eyebrow: "AyaKasir – PoS Apps for Indonesian MSMEs",
-      title: "Manage inventory, menu, and sales in one integrated app.",
+      eyebrow: "AyaKasir — Ultra-light ERP for Indonesian SMEs",
+      titlePrefix: "Manage your ",
+      titleSuffix: " in one app.",
+      typingWords: ["purchases", "inventory", "menu", "customers", "cashier", "sales"],
       subtitle:
-        "AyaKasir is a Point of Sale and ERP application to manage inventory, menu, and sales in one integrated app. AyaKasir is designed to help small business owners, retails, small restaurants, and F&B businesses manage their daily operations more efficiently, faster, and more organized.",
+        "Running a small business is already hard enough. AyaKasir keeps things simple — one app for your FnB, retail, or service business. No complicated setup, no extra cost. Just what you need to run smoothly, every day.",
       ctaPlayStore: "Get it on Google Play",
-      ctaLearnMore: "Learn more"
+      ctaLogin: "Open Dashboard"
     },
     features: {
-      eyebrow: "Features",
-      title: "Everything you need to run your start up business.",
+      eyebrow: "One Flow, End to End",
+      title: "From buying stock to closing sales — all connected.",
       items: [
         {
-          title: "Point of Sale",
+          title: "Purchasing",
           description:
-            "Fast and intuitive transaction management. Support for cash, QRIS, and multiple payment methods."
+            "Record goods received from vendors, track costs, and auto-update your stock. No more manual notebooks."
         },
         {
           title: "Inventory",
           description:
-            "Track stock levels with precision. Component-level tracking keeps your ingredients in check."
+            "Always know what's left. Stock adjusts automatically after every sale or goods receiving — even down to raw ingredients with BOM tracking."
         },
         {
-          title: "Purchasing",
+          title: "Menu & Products",
           description:
-            "Manage vendors and goods receiving. Stay on top of every purchase and restock."
+            "Set up your menu or product catalog once. Organize by category, add variants, and manage raw material components easily."
         },
         {
-          title: "Reporting",
+          title: "Customers & Debt",
           description:
-            "Sales analytics dashboard with daily, monthly, and yearly period filters."
+            "Track customer credit (utang) and payment status. Know who owes what, and settle debts with a tap."
         },
         {
-          title: "Cash Management",
+          title: "Cashier (POS)",
           description:
-            "General ledger-based balance tracking. Record withdrawals, initial balance, and adjustments."
+            "Fast, smooth transactions on Android. Support for cash, QRIS, and credit. Works offline too."
         },
         {
-          title: "Offline First",
+          title: "Dashboard & Reports",
           description:
-            "Works without internet. Data syncs automatically with the cloud when connectivity is restored."
+            "See your sales, cash balance, and top products at a glance — on your phone or the web dashboard."
         }
       ]
     },
@@ -260,49 +266,52 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
       home: "Beranda",
       privacyPolicy: "Kebijakan Privasi",
       deleteAccount: "Hapus Akun",
-      simulator: "Coba Simulator"
+      simulator: "Coba Simulator",
+      login: "Masuk"
     },
     hero: {
-      eyebrow: "AyaKasir – Aplikasi Kasir untuk UMKM Indonesia",
-      title: "Kelola stok, menu, sampai penjualan toko dengan mudah dan terintegrasi.",
+      eyebrow: "AyaKasir — ERP Ringan untuk UMKM Indonesia",
+      titlePrefix: "Kelola ",
+      titleSuffix: " dalam satu aplikasi.",
+      typingWords: ["pembelian", "stok", "menu", "pelanggan", "kasir", "penjualan"],
       subtitle:
-        "AyaKasir adalah aplikasi Point of Sale dan ERP lengkap untuk kelola stok, menu, sampai penjualan toko dengan mudah dan terintegrasi dalam satu aplikasi. AyaKasir dirancang untuk membantu pemilik UMKM, toko retail, kedai, dan bisnis F&B mengelola operasional harian dengan lebih efisien, cepat, dan rapi.",
+        "Bisnis kecil sudah cukup banyak tantangannya. AyaKasir bikin semuanya simpel — satu aplikasi untuk usaha FnB, retail, atau jasa kamu. Tanpa setup ribet, tanpa biaya tambahan. Cukup yang kamu butuhkan untuk jalan tiap hari.",
       ctaPlayStore: "Unduh di Google Play",
-      ctaLearnMore: "Pelajari lebih lanjut"
+      ctaLogin: "Buka Dashboard"
     },
     features: {
-      eyebrow: "Fitur",
-      title: "Semua yang kamu butuhkan untuk mengelola UMKM kamu.",
+      eyebrow: "Satu Alur, Dari Awal Sampai Akhir",
+      title: "Dari beli stok sampai tutup kasir — semua terhubung.",
       items: [
         {
-          title: "Point of Sale",
+          title: "Pembelian",
           description:
-            "Manajemen transaksi yang cepat dan intuitif. Mendukung tunai, QRIS, dan berbagai metode pembayaran."
+            "Catat barang masuk dari vendor, pantau biaya, dan stok langsung terupdate otomatis. Gak perlu buku catatan lagi."
         },
         {
           title: "Inventaris",
           description:
-            "Pantau stok dengan presisi. Pelacakan per komponen menjaga bahan bakumu tetap terkontrol."
+            "Selalu tahu sisa stok kamu. Stok menyesuaikan otomatis setiap ada penjualan atau barang masuk — termasuk bahan baku lewat fitur BOM."
         },
         {
-          title: "Pembelian",
+          title: "Menu & Produk",
           description:
-            "Kelola vendor dan penerimaan barang. Pantau setiap pembelian dan restok dengan mudah."
+            "Atur menu atau katalog produk sekali. Kelompokkan per kategori, tambah varian, dan atur komponen bahan baku dengan mudah."
         },
         {
-          title: "Laporan",
+          title: "Pelanggan & Hutang",
           description:
-            "Dashboard analitik penjualan dengan filter periode harian, bulanan, dan tahunan."
+            "Pantau kredit pelanggan (utang) dan status pembayaran. Tahu siapa yang belum bayar, dan lunasi dengan satu ketukan."
         },
         {
-          title: "Manajemen Kas",
+          title: "Kasir (POS)",
           description:
-            "Pelacakan saldo berbasis buku besar. Catat penarikan, saldo awal, dan penyesuaian."
+            "Transaksi cepat dan lancar di Android. Mendukung tunai, QRIS, dan hutang. Bisa offline juga."
         },
         {
-          title: "Offline First",
+          title: "Dashboard & Laporan",
           description:
-            "Bekerja tanpa internet. Data tersinkronisasi otomatis ke cloud saat koneksi tersedia."
+            "Lihat penjualan, saldo kas, dan produk terlaris sekilas — dari HP atau dashboard web kamu."
         }
       ]
     },

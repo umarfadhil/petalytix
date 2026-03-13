@@ -1455,7 +1455,7 @@ main {
     display: grid;
     grid-template-columns: 1fr;
     gap: 12px;
-    text-align: left;
+    text-align: right;
     font-size: 14px;
   }
 
@@ -1465,6 +1465,31 @@ main {
 
   .nav-cta {
     display: none;
+  }
+
+  /* AyaKasir nav on mobile: brand+toggle same row, menu below */
+  .ayakasir-nav-inner {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0;
+    padding: 12px 16px;
+  }
+  .ayakasir-nav-inner .nav-menu {
+    display: none;
+    width: 100%;
+    order: 3;
+    flex: none;
+  }
+  .ayakasir-nav-inner .nav-menu.is-open {
+    display: flex;
+  }
+  .ayakasir-nav-inner .nav-actions {
+    margin-left: 0;
+    order: 2;
+  }
+  .ayakasir-nav-inner .nav-brand {
+    order: 1;
   }
 }
 
@@ -1567,4 +1592,405 @@ main {
 .ayakasir-form-field input,
 .ayakasir-form-field textarea {
   width: 100%;
+}
+
+/* ── AyaKasir Nav layout override ── */
+/* On desktop, nav-inner is brand | links | actions — all in one row */
+.ayakasir-nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+@media (min-width: 641px) {
+  /* nav-menu sits between brand and actions on desktop */
+  .ayakasir-nav-inner .nav-menu {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex: 1;
+    justify-content: right;
+  }
+
+  /* nav-actions is always the rightmost item */
+  .ayakasir-nav-inner .nav-actions {
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+}
+
+/* ── AyaKasir Nav Login button ── */
+.ayakasir-nav-login {
+  padding: 8px 18px !important;
+  font-size: 14px !important;
+  border-radius: 8px !important;
+}
+
+/* nav-cta login only shows on mobile (inside open menu) — hide on desktop */
+.nav-cta .ayakasir-nav-login {
+  display: none;
+}
+
+/* On mobile: hide desktop-only items; show nav-cta login inside open menu */
+@media (max-width: 640px) {
+  .ayakasir-desktop-only {
+    display: none !important;
+  }
+  .nav-menu.is-open .nav-cta {
+    display: flex;
+  }
+  .nav-cta .ayakasir-nav-login {
+    display: inline-flex;
+  }
+}
+
+/* ── AyaKasir Hero ── */
+.ayakasir-hero {
+  padding-bottom: 0 !important;
+}
+
+.ayakasir-hero-inner {
+  display: flex;
+  align-items: center;
+  gap: 48px;
+  width: 100%;
+}
+
+.ayakasir-hero-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.ayakasir-hero-text .eyebrow {
+  margin-bottom: 0;
+}
+
+.ayakasir-hero-text .project-links {
+  margin-top: 8px;
+}
+
+.ayakasir-hero-title {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.ayakasir-hero-subtitle {
+  max-width: 520px;
+}
+
+.ayakasir-hero-illo {
+  flex-shrink: 0;
+  width: min(380px, 45vw);
+}
+
+.ayakasir-hero-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* ── Typing animation ── */
+.ayakasir-typing-word {
+  color: #1D72E9;
+  font-style: italic;
+  display: inline;
+}
+
+.ayakasir-cursor {
+  display: inline-block;
+  color: #37A454;
+  font-style: normal;
+  animation: ayakasir-blink 0.9s step-end infinite;
+  margin-left: 1px;
+}
+
+@keyframes ayakasir-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Hero illustration floating animations */
+@keyframes ayakasir-float-a {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes ayakasir-float-b {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes ayakasir-float-c {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes ayakasir-particle {
+  0%, 100% { opacity: 0.15; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.4); }
+}
+
+.ayakasir-hero-float-1 {
+  animation: ayakasir-float-a 4s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.ayakasir-hero-float-2 {
+  animation: ayakasir-float-b 5s ease-in-out infinite;
+  animation-delay: 0.7s;
+  transform-origin: center;
+}
+
+.ayakasir-hero-float-3 {
+  animation: ayakasir-float-c 4.5s ease-in-out infinite;
+  animation-delay: 1.4s;
+  transform-origin: center;
+}
+
+.ayakasir-hero-particle-1 {
+  animation: ayakasir-particle 3s ease-in-out infinite;
+}
+
+.ayakasir-hero-particle-2 {
+  animation: ayakasir-particle 3.5s ease-in-out infinite;
+  animation-delay: 1s;
+}
+
+/* ── Sync badge ── */
+.ayakasir-sync-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #e8f0fe;
+  color: #1D72E9;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: 999px;
+  margin-bottom: 40px;
+}
+
+/* ── Features flow ── */
+.ayakasir-features-flow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  max-width: 960px;
+  margin: 0 auto;
+  position: relative;
+}
+
+/* Dashed connector lines between cells */
+.ayakasir-features-flow::before {
+  content: "";
+  position: absolute;
+  /* horizontal line across row 1 */
+  inset: 0;
+  pointer-events: none;
+}
+
+.ayakasir-feature-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 28px 20px;
+  position: relative;
+  background: white;
+  border-radius: 16px;
+  border: 1px solid #f3f4f6;
+  margin: 8px;
+}
+
+.ayakasir-feature-illo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.ayakasir-illo-svg {
+  width: 110px;
+  height: 90px;
+  display: block;
+}
+
+.ayakasir-feature-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ayakasir-feature-step-num {
+  font-size: 11px;
+  font-weight: 700;
+  color: #1D72E9;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.ayakasir-feature-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-ink);
+}
+
+.ayakasir-feature-desc {
+  font-size: 13px;
+  color: var(--color-ink-secondary, #555);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* Arrow between cards — right edge of card 1,2,4,5 */
+.ayakasir-feature-arrow {
+  position: absolute;
+  right: -22px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+}
+
+/* Mobile-only down arrows — hidden on desktop */
+.ayakasir-feature-arrow--mobile-down {
+  display: none;
+}
+
+/* Row-turn connector between the two grid rows */
+.ayakasir-row-connector {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: stretch;
+  padding: 0 16px;
+  height: 60px;
+}
+
+.ayakasir-row-turn-svg {
+  width: 100%;
+  height: 60px;
+  display: block;
+  overflow: visible;
+}
+
+/* ── Cross-platform illustration ── */
+.ayakasir-crossplatform {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  margin-top: 0px;
+  padding: 32px 24px;
+  background: #f5f6fa;
+  border-radius: 16px;
+}
+
+.ayakasir-crossplatform-svg {
+  width: min(560px, 100%);
+  height: auto;
+  display: block;
+}
+
+.ayakasir-crossplatform-label {
+  font-size: 14px;
+  color: var(--color-ink-secondary, #555);
+  text-align: center;
+  margin: 0;
+}
+
+/* ── Cross-platform sync animation ── */
+@keyframes ayakasir-pulse-dot {
+  0%, 100% { opacity: 0.2; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+@keyframes ayakasir-travel-right {
+  0% { opacity: 0; transform: translateX(0); }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(60px); }
+}
+
+@keyframes ayakasir-travel-left {
+  0% { opacity: 0; transform: translateX(0); }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(-60px); }
+}
+
+@keyframes ayakasir-spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.ayakasir-sync-dot-r {
+  animation: ayakasir-travel-right 2s ease-in-out infinite;
+}
+
+.ayakasir-sync-dot-l {
+  animation: ayakasir-travel-left 2s ease-in-out infinite;
+  animation-delay: 1s;
+}
+
+.ayakasir-sync-ring {
+  animation: ayakasir-pulse-dot 2s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.ayakasir-sync-icon-spin {
+  animation: ayakasir-spin-slow 3s linear infinite;
+  transform-origin: 50% 50%;
+}
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .ayakasir-hero-inner {
+    flex-direction: column;
+    gap: 32px;
+  }
+  .ayakasir-hero-illo {
+    width: min(300px, 90vw);
+  }
+  .ayakasir-features-flow {
+    grid-template-columns: 1fr;
+    max-width: 480px;
+  }
+  .ayakasir-feature-step {
+    flex-direction: row;
+    text-align: left;
+    padding: 20px 16px;
+    margin: 6px 0;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  .ayakasir-feature-illo {
+    margin-bottom: 0;
+    flex-shrink: 0;
+  }
+  .ayakasir-illo-svg {
+    width: 72px;
+    height: 60px;
+  }
+  /* Hide desktop arrows + row connector, show mobile down arrows */
+  .ayakasir-feature-arrow {
+    display: none;
+  }
+  .ayakasir-row-connector {
+    display: none;
+  }
+  .ayakasir-feature-arrow--mobile-down {
+    display: flex;
+    position: absolute;
+    bottom: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+  }
 }

@@ -1,0 +1,1034 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useErp } from "../store";
+import { getErpCopy } from "../i18n";
+import { formatRupiah } from "../utils";
+import { createTransaction } from "@/lib/supabase/repositories/transactions";
+import { calculateCashBalance, createLedgerEntry } from "@/lib/supabase/repositories/general-ledger";
+import { createCashWithdrawal } from "@/lib/supabase/repositories/cash-withdrawals";
+import { createCustomer } from "@/lib/supabase/repositories/customers";
+import { adjustInventory } from "@/lib/supabase/repositories/inventory";
+import type { DbTransaction, DbTransactionItem, DbGeneralLedger, DbCashWithdrawal, DbCustomer } from "@/lib/supabase/types";
+
+type DiscountType = "NONE" | "AMOUNT" | "PERCENT";
+
+interface CartItem {
+  productId: string;
+  variantId: string;
+  name: string;
+  variantName: string | null;
+  unitPrice: number;
+  qty: number;
+  discountType: DiscountType;
+  discountValue: number; // raw input: rupiah for AMOUNT, percentage for PERCENT
+}
+
+function calcDiscountPerUnit(item: CartItem): number {
+  if (item.discountType === "AMOUNT") return item.discountValue;
+  if (item.discountType === "PERCENT") return Math.round(item.unitPrice * item.discountValue / 100);
+  return 0;
+}
+
+function calcSubtotal(item: CartItem): number {
+  return Math.max(0, (item.unitPrice - calcDiscountPerUnit(item)) * item.qty);
+}
+
+type PaymentMethod = "CASH" | "QRIS" | "TRANSFER" | "UTANG";
+
+export default function PosScreen() {
+  const { state, dispatch, supabase, tenantId, locale } = useErp();
+  const copy = getErpCopy(locale);
+
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
+
+  // Customer dialog
+  const [showCustomerDialog, setShowCustomerDialog] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [selectedCustomer, setSelectedCustomer] = useState<DbCustomer | null>(null);
+  const [showNewCustomerForm, setShowNewCustomerForm] = useState(false);
+  const [newCustomerName, setNewCustomerName] = useState("");
+  const [newCustomerPhone, setNewCustomerPhone] = useState("");
+  const [savingCustomer, setSavingCustomer] = useState(false);
+
+  // Tarik Tunai
+  const [showWithdrawal, setShowWithdrawal] = useState(false);
+  const [withdrawalAmount, setWithdrawalAmount] = useState("");
+  const [withdrawalReason, setWithdrawalReason] = useState("");
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [withdrawalMsg, setWithdrawalMsg] = useState<string | null>(null);
+
+  // Checkout / receipt
+  const [showCheckout, setShowCheckout] = useState(false);
+  const [showReceipt, setShowReceipt] = useState(false);
+  const [receiptDate, setReceiptDate] = useState<Date | null>(null);
+  const [txNote, setTxNote] = useState("");
+  const [processing, setProcessing] = useState(false);
+  const [variantPicker, setVariantPicker] = useState<string | null>(null);
+
+  // Discount picker
+  const [discountPickerIdx, setDiscountPickerIdx] = useState<number | null>(null);
+  const [discountType, setDiscountType] = useState<DiscountType>("NONE");
+  const [discountValue, setDiscountValue] = useState("");
+
+  const customerSearchRef = useRef<HTMLInputElement>(null);
+
+  // Enabled payment methods from tenant settings (comma-separated string)
+  const enabledMethods = useMemo<Set<PaymentMethod>>(() => {
+    const raw = state.restaurant?.enabled_payment_methods || "CASH";
+    const set = new Set(raw.split(",").map((s) => s.trim()) as PaymentMethod[]);
+    return set;
+  }, [state.restaurant?.enabled_payment_methods]);
+
+  // Ensure current paymentMethod is always valid
+  useEffect(() => {
+    if (!enabledMethods.has(paymentMethod)) {
+      const first = (["CASH", "QRIS", "TRANSFER", "UTANG"] as PaymentMethod[]).find((m) => enabledMethods.has(m));
+      if (first) setPaymentMethod(first);
+    }
+  }, [enabledMethods, paymentMethod]);
+
+  const menuProducts = useMemo(
+    () => state.products.filter((p) => p.product_type === "MENU_ITEM" && p.is_active),
+    [state.products]
+  );
+
+  const menuCategories = useMemo(
+    () => state.categories.filter((c) => c.category_type === "MENU"),
+    [state.categories]
+  );
+
+  const filteredProducts = useMemo(() => {
+    let list = menuProducts;
+    if (categoryFilter) list = list.filter((p) => p.category_id === categoryFilter);
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter((p) => p.name.toLowerCase().includes(q));
+    }
+    return list;
+  }, [menuProducts, categoryFilter, search]);
+
+  // Group products by category when showing all (no category filter, no search)
+  const groupedProducts = useMemo(() => {
+    if (categoryFilter || search) return null;
+    const groups: { categoryName: string; products: typeof filteredProducts }[] = [];
+    const catIds = new Set(menuCategories.map((c) => c.id));
+    for (const cat of menuCategories) {
+      const catProducts = filteredProducts.filter((p) => p.category_id === cat.id);
+      if (catProducts.length > 0) groups.push({ categoryName: cat.name, products: catProducts });
+    }
+    const uncategorized = filteredProducts.filter((p) => !p.category_id || !catIds.has(p.category_id));
+    if (uncategorized.length > 0) groups.push({ categoryName: copy.products.noCategory, products: uncategorized });
+    return groups;
+  }, [filteredProducts, categoryFilter, search, menuCategories, copy.products.noCategory]);
+
+  const cartTotal = useMemo(
+    () => cart.reduce((sum, item) => sum + calcSubtotal(item), 0),
+    [cart]
+  );
+
+  // Customer search filtered from local state
+  const filteredCustomers = useMemo(() => {
+    if (!customerSearch.trim()) return state.customers.slice(0, 10);
+    const q = customerSearch.toLowerCase();
+    return state.customers
+      .filter((c) => c.name.toLowerCase().includes(q) || (c.phone || "").includes(q))
+      .slice(0, 10);
+  }, [state.customers, customerSearch]);
+
+  const addToCart = useCallback(
+    (productId: string, variantId = "", variantName: string | null = null) => {
+      const product = state.products.find((p) => p.id === productId);
+      if (!product) return;
+      const variant = variantId ? state.variants.find((v) => v.id === variantId) : null;
+      const unitPrice = product.price + (variant?.price_adjustment || 0);
+      setCart((prev) => {
+        const existing = prev.find((i) => i.productId === productId && i.variantId === variantId);
+        if (existing) return prev.map((i) => i === existing ? { ...i, qty: i.qty + 1 } : i);
+        return [...prev, { productId, variantId, name: product.name, variantName: variantName || variant?.name || null, unitPrice, qty: 1, discountType: "NONE", discountValue: 0 }];
+      });
+    },
+    [state.products, state.variants]
+  );
+
+  const handleProductClick = useCallback(
+    (productId: string) => {
+      const variants = state.variants.filter((v) => v.product_id === productId);
+      if (variants.length > 0) setVariantPicker(productId);
+      else addToCart(productId);
+    },
+    [state.variants, addToCart]
+  );
+
+  const updateQty = (idx: number, delta: number) => {
+    setCart((prev) =>
+      prev.map((item, i) => (i === idx ? { ...item, qty: item.qty + delta } : item)).filter((item) => item.qty > 0)
+    );
+  };
+
+  const openCustomerDialog = () => {
+    setCustomerSearch("");
+    setSelectedCustomer(null);
+    setShowNewCustomerForm(false);
+    setNewCustomerName("");
+    setNewCustomerPhone("");
+    setShowCustomerDialog(true);
+    setTimeout(() => customerSearchRef.current?.focus(), 50);
+  };
+
+  const handleSaveNewCustomer = async () => {
+    if (!newCustomerName.trim()) return;
+    setSavingCustomer(true);
+    try {
+      const saved = await createCustomer(supabase, {
+        id: crypto.randomUUID(),
+        tenant_id: tenantId,
+        name: newCustomerName.trim(),
+        phone: newCustomerPhone.trim() || null,
+        email: null,
+        birthday: null,
+        gender: null,
+        category_id: null,
+        notes: null,
+      });
+      dispatch({ type: "UPSERT", table: "customers", payload: saved as unknown as Record<string, unknown> });
+      setSelectedCustomer(saved);
+      setShowNewCustomerForm(false);
+      setShowCustomerDialog(false);
+      setShowCheckout(true);
+    } catch (err) {
+      console.error("Failed to save customer:", err);
+    }
+    setSavingCustomer(false);
+  };
+
+  const handleCheckout = async () => {
+    if (cart.length === 0 || processing) return;
+    setProcessing(true);
+    try {
+      const now = Date.now();
+      const txId = crypto.randomUUID();
+      const userId = state.user?.id || "";
+
+      const transaction: Omit<DbTransaction, "sync_status"> = {
+        id: txId,
+        tenant_id: tenantId,
+        user_id: userId,
+        date: now,
+        total: cartTotal,
+        payment_method: paymentMethod,
+        status: "COMPLETED",
+        customer_id: selectedCustomer?.id || null,
+        debt_status: paymentMethod === "UTANG" ? "UNPAID" : null,
+        notes: txNote.trim() || null,
+        updated_at: now,
+      };
+
+      const items: Omit<DbTransactionItem, "sync_status">[] = cart.map((item) => {
+        const discountPerUnit = calcDiscountPerUnit(item);
+        return {
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          transaction_id: txId,
+          product_id: item.productId,
+          variant_id: item.variantId,
+          product_name: item.name,
+          variant_name: item.variantName,
+          qty: item.qty,
+          unit_price: item.unitPrice,
+          subtotal: calcSubtotal(item),
+          discount_type: item.discountType,
+          discount_value: item.discountType === "NONE" ? 0 : item.discountValue,
+          discount_per_unit: item.discountType === "NONE" ? 0 : discountPerUnit,
+          updated_at: now,
+        };
+      });
+
+      const result = await createTransaction(supabase, transaction, items);
+      dispatch({ type: "UPSERT", table: "transactions", payload: result.transaction as unknown as Record<string, unknown> });
+      for (const item of result.items) {
+        dispatch({ type: "UPSERT", table: "transactionItems", payload: item as unknown as Record<string, unknown> });
+      }
+
+      // Mirror mobile app ledger conventions:
+      // CASH → SALE (positive amount, affects Saldo Kas)
+      // QRIS → SALE_QRIS (positive amount, excluded from Saldo Kas)
+      // TRANSFER → SALE_TRANSFER (non-cash, excluded from Saldo Kas)
+      // UTANG → SALE_DEBT (amount=0, placeholder; cash only enters on DEBT_SETTLED)
+      const ledgerType =
+        paymentMethod === "CASH" ? "SALE" :
+        paymentMethod === "QRIS" ? "SALE_QRIS" :
+        paymentMethod === "TRANSFER" ? "SALE_TRANSFER" :
+        "SALE_DEBT"; // UTANG
+      const ledgerEntry: Omit<DbGeneralLedger, "sync_status"> = {
+        id: crypto.randomUUID(),
+        tenant_id: tenantId,
+        type: ledgerType,
+        amount: paymentMethod === "UTANG" ? 0 : cartTotal,
+        reference_id: txId,
+        description: `${paymentMethod} sale`,
+        date: now,
+        user_id: userId,
+        updated_at: now,
+      };
+      const savedLedger = await createLedgerEntry(supabase, ledgerEntry);
+      dispatch({ type: "UPSERT", table: "generalLedger", payload: savedLedger as unknown as Record<string, unknown> });
+
+      // Deduct inventory: BOM-aware with unit conversion (mirrors mobile app logic)
+      // Convert BOM qty to inventory's stored unit before accumulating
+      const toBaseUnit = (qty: number, unit: string): { qty: number; base: string } => {
+        if (unit === "kg") return { qty: qty * 1000, base: "g" };
+        if (unit === "L") return { qty: qty * 1000, base: "mL" };
+        return { qty, base: unit };
+      };
+      const fromBaseUnit = (qty: number, targetUnit: string): number => {
+        if (targetUnit === "kg") return qty / 1000;
+        if (targetUnit === "L") return qty / 1000;
+        return qty;
+      };
+      // Accumulate in base units (g / mL / pcs) keyed by productId alone for raw materials
+      // (raw material inventory rows have no variant — stored as "" or null)
+      const deductionsBase = new Map<string, { qty: number; variantId: string }>();
+      const findInv = (productId: string, variantId: string) =>
+        state.inventory.find(
+          (i) => i.product_id === productId && (!i.variant_id || i.variant_id === variantId)
+        );
+      for (const item of cart) {
+        const components = state.productComponents.filter((c) => c.parent_product_id === item.productId);
+        if (components.length > 0) {
+          for (const comp of components) {
+            const key = comp.component_product_id;
+            const { qty: baseQty } = toBaseUnit(comp.required_qty * item.qty, comp.unit || "pcs");
+            const existing = deductionsBase.get(key);
+            deductionsBase.set(key, { qty: (existing?.qty || 0) + baseQty, variantId: "" });
+          }
+        } else {
+          const key = `${item.productId}__${item.variantId}`;
+          const existing = deductionsBase.get(key);
+          deductionsBase.set(key, { qty: (existing?.qty || 0) + item.qty, variantId: item.variantId });
+        }
+      }
+      for (const [key, { qty: baseQty, variantId }] of deductionsBase) {
+        const productId = key.includes("__") ? key.split("__")[0] : key;
+        const current = findInv(productId, variantId);
+        if (!current) continue;
+        // Convert inventory current qty to base unit, subtract, convert back
+        const { qty: currentInBase } = toBaseUnit(current.current_qty, current.unit);
+        const newBase = Math.max(0, currentInBase - baseQty);
+        const newQty = fromBaseUnit(newBase, current.unit);
+        try {
+          const updated = await adjustInventory(supabase, productId, current.variant_id ?? "", newQty);
+          dispatch({ type: "UPSERT", table: "inventory", payload: updated as unknown as Record<string, unknown> });
+        } catch (err) {
+          console.error("Inventory deduction failed for", productId, err);
+        }
+      }
+
+      setShowCheckout(false);
+      setReceiptDate(new Date());
+      setShowReceipt(true);
+    } catch (err) {
+      console.error("Transaction failed:", err);
+    }
+    setProcessing(false);
+  };
+
+  const handleNewTransaction = () => {
+    setCart([]);
+    setShowReceipt(false);
+    setSelectedCustomer(null);
+    setTxNote("");
+    setPaymentMethod("CASH");
+    setShowCustomerDialog(false);
+    setShowCheckout(false);
+  };
+
+  const cashBalance = useMemo(
+    () => calculateCashBalance(state.generalLedger),
+    [state.generalLedger]
+  );
+
+  const handleWithdrawal = async () => {
+    const amount = parseInt(withdrawalAmount);
+    if (!amount || amount <= 0) return;
+    if (amount > cashBalance) return;
+    setWithdrawing(true);
+    setWithdrawalMsg(null);
+    try {
+      const now = Date.now();
+      const userId = state.user?.id || "";
+      const withdrawalId = crypto.randomUUID();
+      const reason = withdrawalReason.trim() || (locale === "id" ? "Tarik tunai" : "Cash withdrawal");
+
+      const withdrawal: Omit<DbCashWithdrawal, "sync_status"> = {
+        id: withdrawalId,
+        tenant_id: tenantId,
+        user_id: userId,
+        amount,
+        reason,
+        date: now,
+        updated_at: now,
+      };
+      const savedWithdrawal = await createCashWithdrawal(supabase, withdrawal);
+      dispatch({ type: "UPSERT", table: "cashWithdrawals", payload: savedWithdrawal as unknown as Record<string, unknown> });
+
+      const ledgerEntry: Omit<DbGeneralLedger, "sync_status"> = {
+        id: crypto.randomUUID(),
+        tenant_id: tenantId,
+        type: "WITHDRAWAL",
+        amount: -amount,
+        reference_id: withdrawalId,
+        description: reason,
+        date: now,
+        user_id: userId,
+        updated_at: now,
+      };
+      const savedLedger = await createLedgerEntry(supabase, ledgerEntry);
+      dispatch({ type: "UPSERT", table: "generalLedger", payload: savedLedger as unknown as Record<string, unknown> });
+
+      setWithdrawalMsg(copy.dashboard.withdrawalSuccess);
+      setWithdrawalAmount("");
+      setWithdrawalReason("");
+      setTimeout(() => { setShowWithdrawal(false); setWithdrawalMsg(null); }, 1200);
+    } catch (err) {
+      console.error("Withdrawal failed:", err);
+      setWithdrawalMsg(copy.common.error);
+    }
+    setWithdrawing(false);
+  };
+
+  const ALL_METHODS: { key: PaymentMethod; label: string }[] = [
+    { key: "CASH", label: copy.pos.cash },
+    { key: "QRIS", label: copy.pos.qris },
+    { key: "TRANSFER", label: copy.pos.transfer },
+    { key: "UTANG", label: copy.pos.utang },
+  ];
+
+  return (
+    <div className="erp-pos">
+      {/* Product grid */}
+      <div className="erp-pos-products">
+        <div className="erp-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            type="text"
+            placeholder={copy.pos.search}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        <div className="erp-chips">
+          <button
+            className={`erp-chip${!categoryFilter ? " erp-chip--active" : ""}`}
+            onClick={() => setCategoryFilter(null)}
+          >
+            {copy.pos.allCategories}
+          </button>
+          {menuCategories.map((c) => (
+            <button
+              key={c.id}
+              className={`erp-chip${categoryFilter === c.id ? " erp-chip--active" : ""}`}
+              onClick={() => setCategoryFilter(c.id)}
+            >
+              {c.name}
+            </button>
+          ))}
+        </div>
+
+        <div className={`erp-pos-grid${groupedProducts ? "" : " erp-pos-grid--flat"}`}>
+          {groupedProducts ? (
+            groupedProducts.map((group) => (
+              <div key={group.categoryName} className="erp-pos-category-group">
+                <div className="erp-pos-category-label">{group.categoryName}</div>
+                <div className="erp-pos-category-items">
+                  {group.products.map((p) => (
+                    <div key={p.id} className="erp-pos-card" onClick={() => handleProductClick(p.id)}>
+                      <div className="erp-pos-card-name">{p.name}</div>
+                      <div className="erp-pos-card-price">{formatRupiah(p.price)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))
+          ) : (
+            filteredProducts.map((p) => (
+              <div key={p.id} className="erp-pos-card" onClick={() => handleProductClick(p.id)}>
+                <div className="erp-pos-card-name">{p.name}</div>
+                <div className="erp-pos-card-price">{formatRupiah(p.price)}</div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Cart */}
+      <div className="erp-pos-cart">
+        <div className="erp-pos-cart-header">
+          <span>{copy.pos.cart}</span>
+          {cart.length > 0 && (
+            <button className="erp-btn erp-btn--danger erp-btn--sm" onClick={() => setCart([])}>
+              {copy.pos.clearCart}
+            </button>
+          )}
+        </div>
+
+        {cart.length === 0 ? (
+          <div className="erp-pos-empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" />
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <path d="M16 10a4 4 0 01-8 0" />
+            </svg>
+            <p>{copy.pos.emptyCart}</p>
+            <p style={{ fontSize: 13 }}>{copy.pos.addItems}</p>
+          </div>
+        ) : (
+          <div className="erp-pos-cart-items">
+            {cart.map((item, idx) => {
+              const discountPerUnit = calcDiscountPerUnit(item);
+              const subtotal = calcSubtotal(item);
+              return (
+                <div key={`${item.productId}-${item.variantId}`} className="erp-pos-cart-item">
+                  <div className="erp-pos-cart-item-info">
+                    <div className="erp-pos-cart-item-name">
+                      {item.name}
+                      {item.variantName && <span style={{ color: "var(--erp-muted)", fontSize: 12 }}> ({item.variantName})</span>}
+                    </div>
+                    <div className="erp-pos-cart-item-price-row">
+                      <span className="erp-pos-cart-item-price">{formatRupiah(item.unitPrice)}</span>
+                      <button
+                        className={`erp-pos-discount-btn${item.discountType !== "NONE" ? " erp-pos-discount-btn--active" : ""}`}
+                        onClick={() => {
+                          setDiscountPickerIdx(idx);
+                          setDiscountType(item.discountType === "NONE" ? "AMOUNT" : item.discountType);
+                          setDiscountValue(item.discountType !== "NONE" ? String(item.discountValue) : "");
+                        }}
+                        title={copy.pos.discount}
+                      >
+                        %
+                      </button>
+                    </div>
+                    {item.discountType !== "NONE" && (
+                      <div className="erp-pos-cart-item-discount">
+                        -{item.discountType === "PERCENT" ? `${item.discountValue}%` : formatRupiah(item.discountValue)}
+                        <span style={{ color: "var(--erp-muted)", marginLeft: 4 }}>({formatRupiah(discountPerUnit)}/item)</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="erp-pos-cart-item-qty">
+                    <button className="erp-pos-qty-btn" onClick={() => updateQty(idx, -1)}>-</button>
+                    <span>{item.qty}</span>
+                    <button className="erp-pos-qty-btn" onClick={() => updateQty(idx, 1)}>+</button>
+                  </div>
+                  <div className="erp-pos-cart-item-subtotal">{formatRupiah(subtotal)}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="erp-pos-cart-footer">
+          {cart.length > 0 && (
+            <>
+              <div className="erp-pos-total">
+                <span className="erp-pos-total-label">{copy.pos.total}</span>
+                <span className="erp-pos-total-value">{formatRupiah(cartTotal)}</span>
+              </div>
+              <button className="erp-btn erp-btn--primary erp-btn--full" onClick={openCustomerDialog}>
+                {copy.pos.checkout}
+              </button>
+            </>
+          )}
+          <button
+            className="erp-btn erp-btn--secondary erp-btn--full"
+            style={{ marginTop: cart.length > 0 ? 8 : 0 }}
+            onClick={() => { setShowWithdrawal(true); setWithdrawalMsg(null); }}
+          >
+            {copy.dashboard.cashWithdrawal}
+          </button>
+        </div>
+      </div>
+
+      {/* Discount picker dialog */}
+      {discountPickerIdx !== null && (
+        <div className="erp-overlay" onClick={() => setDiscountPickerIdx(null)}>
+          <div className="erp-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.pos.discount}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setDiscountPickerIdx(null)}>
+                {copy.common.close}
+              </button>
+            </div>
+            <div className="erp-dialog-body">
+              <div className="erp-discount-type-row">
+                {(["AMOUNT", "PERCENT"] as DiscountType[]).map((t) => (
+                  <button
+                    key={t}
+                    className={`erp-btn erp-btn--secondary${discountType === t ? " erp-btn--active" : ""}`}
+                    onClick={() => { setDiscountType(t); setDiscountValue(""); }}
+                  >
+                    {t === "AMOUNT" ? copy.pos.amountDiscount : copy.pos.percentDiscount}
+                  </button>
+                ))}
+              </div>
+              {(() => {
+                const itemPrice = cart[discountPickerIdx!]?.unitPrice ?? 0;
+                const val = parseFloat(discountValue) || 0;
+                const overLimit = discountType === "PERCENT" ? val > 100 : val > itemPrice;
+                const maxLabel = discountType === "PERCENT" ? "100%" : formatRupiah(itemPrice);
+                return (
+                  <div className="erp-input-group" style={{ marginTop: 16 }}>
+                    <label className="erp-label">
+                      {discountType === "AMOUNT"
+                        ? `${copy.pos.amountDiscount} (Rp)`
+                        : `${copy.pos.percentDiscount} (%)`}
+                    </label>
+                    <input
+                      className={`erp-input${overLimit ? " erp-input--error" : ""}`}
+                      type="number"
+                      min="0"
+                      max={discountType === "PERCENT" ? 100 : itemPrice}
+                      value={discountValue}
+                      onChange={(e) => setDiscountValue(e.target.value)}
+                      placeholder="0"
+                      autoFocus
+                    />
+                    {overLimit && (
+                      <span className="erp-input-hint erp-input-hint--error">
+                        {locale === "id" ? `Maksimum ${maxLabel}` : `Maximum ${maxLabel}`}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+            <div className="erp-dialog-footer">
+              {(() => {
+                const itemPrice = cart[discountPickerIdx!]?.unitPrice ?? 0;
+                const val = parseFloat(discountValue) || 0;
+                const overLimit = discountType === "PERCENT" ? val > 100 : val > itemPrice;
+                return (
+                  <button
+                    className="erp-btn erp-btn--primary"
+                    disabled={overLimit}
+                    onClick={() => {
+                      setCart((prev) => prev.map((item, i) =>
+                        i === discountPickerIdx ? { ...item, discountType, discountValue: val } : item
+                      ));
+                      setDiscountPickerIdx(null);
+                    }}
+                  >
+                    {copy.common.confirm}
+                  </button>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Variant picker dialog */}
+      {variantPicker && (
+        <div className="erp-overlay" onClick={() => setVariantPicker(null)}>
+          <div className="erp-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.pos.selectVariant}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setVariantPicker(null)}>
+                {copy.common.close}
+              </button>
+            </div>
+            <div className="erp-dialog-body">
+              {state.variants.filter((v) => v.product_id === variantPicker).map((v) => {
+                const product = state.products.find((p) => p.id === variantPicker);
+                return (
+                  <button
+                    key={v.id}
+                    className="erp-btn erp-btn--secondary erp-btn--full"
+                    style={{ marginBottom: 8, justifyContent: "space-between" }}
+                    onClick={() => { addToCart(variantPicker, v.id, v.name); setVariantPicker(null); }}
+                  >
+                    <span>{v.name}</span>
+                    <span>{formatRupiah((product?.price || 0) + v.price_adjustment)}</span>
+                  </button>
+                );
+              })}
+              <button
+                className="erp-btn erp-btn--secondary erp-btn--full"
+                onClick={() => { addToCart(variantPicker); setVariantPicker(null); }}
+              >
+                {copy.pos.noDiscount} ({formatRupiah(state.products.find((p) => p.id === variantPicker)?.price || 0)})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Customer search / add dialog */}
+      {showCustomerDialog && (
+        <div className="erp-overlay" onClick={() => setShowCustomerDialog(false)}>
+          <div className="erp-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.pos.searchCustomer}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowCustomerDialog(false)}>
+                {copy.common.close}
+              </button>
+            </div>
+            <div className="erp-dialog-body" style={{ paddingBottom: 8 }}>
+              {!showNewCustomerForm ? (
+                <>
+                  <div className="erp-search" style={{ marginBottom: 12 }}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    <input
+                      ref={customerSearchRef}
+                      type="text"
+                      placeholder={copy.pos.customerNamePlaceholder}
+                      value={customerSearch}
+                      onChange={(e) => setCustomerSearch(e.target.value)}
+                    />
+                  </div>
+                  <div className="erp-pos-customer-list">
+                    {filteredCustomers.map((c) => (
+                      <button
+                        key={c.id}
+                        className={`erp-pos-customer-row${selectedCustomer?.id === c.id ? " erp-pos-customer-row--active" : ""}`}
+                        onClick={() => {
+                          setSelectedCustomer(c);
+                          setShowCustomerDialog(false);
+                          setShowCheckout(true);
+                        }}
+                      >
+                        <span className="erp-pos-customer-name">{c.name}</span>
+                        {c.phone && <span className="erp-pos-customer-phone">{c.phone}</span>}
+                      </button>
+                    ))}
+                    {filteredCustomers.length === 0 && (
+                      <p style={{ textAlign: "center", color: "var(--erp-muted)", fontSize: 13, padding: "12px 0" }}>
+                        {copy.common.noData}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    className="erp-btn erp-btn--ghost erp-btn--sm"
+                    style={{ marginTop: 8 }}
+                    onClick={() => { setShowNewCustomerForm(true); setNewCustomerName(customerSearch); }}
+                  >
+                    {copy.pos.newCustomer}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="erp-input-group">
+                    <label className="erp-label">{copy.products.name}</label>
+                    <input
+                      className="erp-input"
+                      value={newCustomerName}
+                      onChange={(e) => setNewCustomerName(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="erp-input-group">
+                    <label className="erp-label">{copy.pos.customerPhone}</label>
+                    <input
+                      className="erp-input"
+                      type="tel"
+                      value={newCustomerPhone}
+                      onChange={(e) => setNewCustomerPhone(e.target.value)}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="erp-dialog-footer">
+              {showNewCustomerForm ? (
+                <>
+                  <button className="erp-btn erp-btn--secondary" onClick={() => setShowNewCustomerForm(false)}>
+                    {copy.common.back}
+                  </button>
+                  <button
+                    className="erp-btn erp-btn--primary"
+                    onClick={handleSaveNewCustomer}
+                    disabled={savingCustomer || !newCustomerName.trim()}
+                  >
+                    {savingCustomer ? copy.common.loading : copy.common.save}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    className="erp-btn erp-btn--secondary"
+                    onClick={() => { setSelectedCustomer(null); setShowCustomerDialog(false); setShowCheckout(true); }}
+                  >
+                    {locale === "id" ? "Lewati" : "Skip"}
+                  </button>
+                  <button
+                    className="erp-btn erp-btn--primary"
+                    onClick={() => { setShowCustomerDialog(false); setShowCheckout(true); }}
+                    disabled={!selectedCustomer}
+                  >
+                    {copy.common.confirm}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Checkout / payment dialog */}
+      {showCheckout && (
+        <div className="erp-overlay" onClick={() => setShowCheckout(false)}>
+          <div className="erp-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.pos.confirmPayment}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowCheckout(false)}>
+                {copy.common.close}
+              </button>
+            </div>
+            <div className="erp-dialog-body">
+              <div className="erp-pos-total" style={{ marginBottom: 20 }}>
+                <span className="erp-pos-total-label">{copy.pos.total}</span>
+                <span className="erp-pos-total-value">{formatRupiah(cartTotal)}</span>
+              </div>
+
+              {selectedCustomer && (
+                <div className="erp-input-group">
+                  <label className="erp-label">{copy.pos.customerName}</label>
+                  <div className="erp-pos-customer-badge">
+                    <span>{selectedCustomer.name}</span>
+                    {selectedCustomer.phone && (
+                      <span style={{ color: "var(--erp-muted)", fontSize: 12 }}>{selectedCustomer.phone}</span>
+                    )}
+                    <button
+                      className="erp-btn erp-btn--ghost erp-btn--sm"
+                      style={{ marginLeft: "auto", padding: "2px 8px" }}
+                      onClick={() => { setSelectedCustomer(null); setShowCheckout(false); openCustomerDialog(); }}
+                    >
+                      {copy.common.edit}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="erp-input-group">
+                <label className="erp-label">{copy.pos.paymentMethod}</label>
+                <div className="erp-payment-methods">
+                  {ALL_METHODS.map(({ key, label }) => {
+                    const enabled = enabledMethods.has(key);
+                    return (
+                      <button
+                        key={key}
+                        className={`erp-payment-btn${paymentMethod === key ? " erp-payment-btn--active" : ""}${!enabled ? " erp-payment-btn--disabled" : ""}`}
+                        onClick={() => { if (enabled) { setPaymentMethod(key); setTxNote(""); } }}
+                        disabled={!enabled}
+                        title={!enabled ? (locale === "id" ? "Metode tidak aktif" : "Method not enabled") : undefined}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {(paymentMethod === "UTANG" || paymentMethod === "TRANSFER") && (
+                <div className="erp-input-group">
+                  <label className="erp-label">{copy.pos.utangNote}</label>
+                  <input
+                    className="erp-input"
+                    value={txNote}
+                    onChange={(e) => setTxNote(e.target.value)}
+                    placeholder={locale === "id" ? "Catatan tambahan..." : "Additional notes..."}
+                  />
+                </div>
+              )}
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowCheckout(false)}>
+                {copy.common.cancel}
+              </button>
+              <button className="erp-btn erp-btn--primary" onClick={handleCheckout} disabled={processing}>
+                {processing ? copy.common.loading : copy.pos.confirmPayment}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tarik Tunai dialog */}
+      {showWithdrawal && (
+        <div className="erp-overlay" onClick={() => setShowWithdrawal(false)}>
+          <div className="erp-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.dashboard.cashWithdrawal}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowWithdrawal(false)}>
+                {copy.common.close}
+              </button>
+            </div>
+            <div className="erp-dialog-body">
+              <div className="erp-card erp-card--stat" style={{ marginBottom: 20 }}>
+                <span className="erp-card-label">{copy.dashboard.cashBalance}</span>
+                <span className={`erp-card-value${cashBalance >= 0 ? " erp-card-value--success" : " erp-card-value--danger"}`}>
+                  {formatRupiah(cashBalance)}
+                </span>
+              </div>
+              {(() => {
+                const amt = parseInt(withdrawalAmount) || 0;
+                const overLimit = amt > cashBalance;
+                return (
+                  <>
+                    <div className="erp-input-group">
+                      <label className="erp-label">{copy.dashboard.withdrawalAmount}</label>
+                      <input
+                        className={`erp-input${overLimit ? " erp-input--error" : ""}`}
+                        type="number"
+                        min="1"
+                        max={cashBalance}
+                        value={withdrawalAmount}
+                        onChange={(e) => setWithdrawalAmount(e.target.value)}
+                        placeholder="0"
+                        autoFocus
+                      />
+                      {overLimit && (
+                        <span className="erp-input-hint erp-input-hint--error">
+                          {locale === "id"
+                            ? `Maksimum ${formatRupiah(cashBalance)}`
+                            : `Maximum ${formatRupiah(cashBalance)}`}
+                        </span>
+                      )}
+                    </div>
+                    <div className="erp-input-group">
+                      <label className="erp-label">{copy.dashboard.withdrawalReason}</label>
+                      <input
+                        className="erp-input"
+                        value={withdrawalReason}
+                        onChange={(e) => setWithdrawalReason(e.target.value)}
+                        placeholder={locale === "id" ? "Tarik tunai..." : "Cash withdrawal..."}
+                      />
+                    </div>
+                    {withdrawalMsg && (
+                      <div className={`erp-alert erp-alert--${withdrawalMsg === copy.common.error ? "error" : "success"}`}>
+                        {withdrawalMsg}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowWithdrawal(false)}>
+                {copy.common.cancel}
+              </button>
+              {(() => {
+                const amt = parseInt(withdrawalAmount) || 0;
+                const overLimit = amt > cashBalance;
+                return (
+                  <button
+                    key="withdraw-btn"
+                    className="erp-btn erp-btn--primary"
+                    onClick={handleWithdrawal}
+                    disabled={withdrawing || !withdrawalAmount || amt <= 0 || overLimit}
+                  >
+                    {withdrawing ? copy.common.loading : copy.dashboard.cashWithdrawal}
+                  </button>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Receipt dialog */}
+      {showReceipt && (
+        <div className="erp-overlay">
+          <div className="erp-dialog">
+            <div className="erp-dialog-header">
+              <h3>{paymentMethod === "UTANG" ? (locale === "id" ? "Transaksi Dicatat" : "Transaction Recorded") : copy.pos.paymentSuccess}</h3>
+            </div>
+            <div className="erp-dialog-body">
+              <div className="erp-receipt">
+                <div className="erp-receipt-header">{state.restaurant?.name || "AyaKasir"}</div>
+                {receiptDate && (
+                  <div style={{ textAlign: "center", fontSize: 12, marginBottom: 2 }}>
+                    {receiptDate.toLocaleDateString(locale === "id" ? "id-ID" : "en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                    {" "}
+                    {receiptDate.toLocaleTimeString(locale === "id" ? "id-ID" : "en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                  </div>
+                )}
+                {state.user?.name && (
+                  <div style={{ textAlign: "center", fontSize: 12, marginBottom: 4 }}>
+                    {locale === "id" ? "Kasir" : "Cashier"}: {state.user.name}
+                  </div>
+                )}
+                <div className="erp-receipt-divider">================================</div>
+                {cart.map((item, i) => {
+                  const discountPerUnit = calcDiscountPerUnit(item);
+                  const subtotal = calcSubtotal(item);
+                  return (
+                    <div key={i}>
+                      <div>{item.name}{item.variantName ? ` (${item.variantName})` : ""}</div>
+                      <div className="erp-receipt-row">
+                        <span>{item.qty} x {formatRupiah(item.unitPrice)}</span>
+                        <span>{formatRupiah(item.unitPrice * item.qty)}</span>
+                      </div>
+                      {item.discountType !== "NONE" && (
+                        <div className="erp-receipt-row" style={{ color: "#e53e3e" }}>
+                          <span>
+                            {locale === "id" ? "Diskon" : "Discount"}
+                            {item.discountType === "PERCENT" ? ` ${item.discountValue}%` : ""}{" "}
+                            (-{formatRupiah(discountPerUnit)}/item)
+                          </span>
+                          <span>-{formatRupiah(discountPerUnit * item.qty)}</span>
+                        </div>
+                      )}
+                      {item.discountType !== "NONE" && (
+                        <div className="erp-receipt-row" style={{ fontWeight: 600 }}>
+                          <span>{locale === "id" ? "Subtotal" : "Subtotal"}</span>
+                          <span>{formatRupiah(subtotal)}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="erp-receipt-divider">================================</div>
+                <div className="erp-receipt-row erp-receipt-total">
+                  <span>GRAND TOTAL</span>
+                  <span>{formatRupiah(cartTotal)}</span>
+                </div>
+                <div className="erp-receipt-row" style={{ fontSize: 12, marginTop: 4 }}>
+                  <span>{locale === "id" ? "Metode Bayar" : "Payment"}</span>
+                  <span>{paymentMethod}</span>
+                </div>
+                {selectedCustomer && (
+                  <div style={{ marginTop: 8, fontSize: 12 }}>
+                    {copy.pos.customerName}: {selectedCustomer.name}
+                  </div>
+                )}
+                {paymentMethod === "UTANG" && (
+                  <div style={{ marginTop: 8, padding: "6px 8px", border: "1px dashed #e53e3e", borderRadius: 4, fontSize: 12, color: "#e53e3e", fontWeight: 600, textAlign: "center" }}>
+                    {locale === "id" ? "*** BELUM LUNAS (UTANG) ***" : "*** UNPAID DEBT ***"}
+                  </div>
+                )}
+                <div className="erp-receipt-footer">Dicetak melalui aplikasi AyaKasir</div>
+              </div>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => window.print()}>
+                {copy.pos.printReceipt}
+              </button>
+              <button className="erp-btn erp-btn--primary" onClick={handleNewTransaction}>
+                {copy.pos.newTransaction}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -2,6 +2,17 @@
 
 ## Changelog
 
+### v1.0.6
+
+- ERP Desktop: Full-featured web ERP at `ayakasir.petalytix.id/{locale}/app/` backed by Supabase.
+- ERP Auth: Custom password hash (`public.users.password_hash/password_salt`) with signed HTTP-only cookie session. Supabase Auth used only as best-effort fallback for registration/password sync.
+- ERP Screens: Dashboard (stats, period filter, expandable transactions, pagination, custom date range), POS (category grouping, variant picker, customer search/create, TRANSFER payment, BOM-aware inventory deduction), Products (menu items + BOM editor per product), Inventory (stock adjust dialog with `inventory_movements` recording + avg_cogs HPP tracking), Purchasing (goods receiving with decimal qty, auto inventory apply/reversal, avg_cogs weighted-average, vendor/raw material CRUD with in-form quick-create), Customers (customer table, category management, detail panel with tx history), Settings (profile, change password, initial balance, QRIS config, User Management with Feature Access, CSV export with date range picker and enriched columns).
+- ERP State: React Context + useReducer (`store.tsx`); server-side initial data load in `(erp)/layout.tsx`; Supabase Realtime sync on all tenant tables.
+- ERP Sidebar: 7 nav items (Dashboard, POS, Products, Inventory, Purchasing, Customers, Settings); feature-gated per CASHIER `feature_access`; collapsible to icon-only mode.
+- ERP Cashier restrictions: CASHIER role sees restricted UI in Purchasing, Products, and Customers screens (no delete, no category management).
+- Supabase: New `inventory_movements` table for stock adjustment audit trail; `avg_cogs` field on inventory for HPP tracking.
+- Landing page: Hero converted to client component with typing animation (`typingWords`); 6-step feature flow (Purchasing → Inventory → Menu → Customers → Cashier → Dashboard) with flat SVG illustrations; NavBar Login button replaces Home/Privacy Policy links.
+
 ### v1.0.5
 
 - AyaKasir Simulator: Interactive POS simulator at `/[locale]/simulator` — full phone-frame UI with 6 screens (POS, Dashboard, Products, Inventory, Purchasing, Settings), 4 demo datasets (retail, restaurant, services, multichannel), per-item discounts, UTANG payment, BOM-based inventory deduction, vendor/goods-receiving management, and CSV export.

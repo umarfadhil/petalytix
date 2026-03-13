@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ERP_COOKIE_NAME, verifyErpSessionToken } from "@/lib/erp-auth-token";
 
 // Add new product subdomains here. Key = subdomain prefix, value = app path segment.
 const SUBDOMAIN_MAP: Record<string, string> = {
   ayakasir: "ayakasir",
 };
 
-export function middleware(request: NextRequest) {
+// ERP auth routes that don't require authentication
+const PUBLIC_APP_PATHS = ["/app/login", "/app/register"];
+
+export async function middleware(request: NextRequest) {
   const host = request.headers.get("host") || "";
 
   let matchedProduct: string | undefined;
@@ -30,6 +34,49 @@ export function middleware(request: NextRequest) {
   // Rewrite /en or /id (with optional subpath) to /<product>/en or /<product>/id
   const localeMatch = pathname.match(/^\/(en|id)(\/.*)?$/);
   if (localeMatch) {
+    const locale = localeMatch[1];
+    const subpath = localeMatch[2] || "";
+
+    // Check if this is an ERP /app/* route that needs auth protection
+    const isAppRoute = subpath.startsWith("/app");
+    const isPublicAppRoute = PUBLIC_APP_PATHS.some(
+      (p) => subpath === p || subpath.startsWith(p + "/")
+    );
+
+    if (isAppRoute && !isPublicAppRoute) {
+      // Refresh Supabase session and check auth
+      const token = request.cookies.get(ERP_COOKIE_NAME)?.value;
+      const session = token ? await verifyErpSessionToken(token) : null;
+
+      if (!session) {
+        // Redirect to login (external URL on the subdomain)
+        const loginUrl = request.nextUrl.clone();
+        loginUrl.pathname = `/${locale}/app/login`;
+        return NextResponse.redirect(loginUrl);
+      }
+
+      // Authenticated — rewrite to internal path and carry the refreshed cookies
+      const url = request.nextUrl.clone();
+      url.pathname = `/${matchedProduct}${pathname}`;
+      return NextResponse.rewrite(url);
+    }
+
+    // Non-app route or public app route — just rewrite
+    if (isAppRoute && isPublicAppRoute) {
+      const token = request.cookies.get(ERP_COOKIE_NAME)?.value;
+      const session = token ? await verifyErpSessionToken(token) : null;
+
+      if (session) {
+        const dashUrl = request.nextUrl.clone();
+        dashUrl.pathname = `/${locale}/app/dashboard`;
+        return NextResponse.redirect(dashUrl);
+      }
+
+      const url = request.nextUrl.clone();
+      url.pathname = `/${matchedProduct}${pathname}`;
+      return NextResponse.rewrite(url);
+    }
+
     const url = request.nextUrl.clone();
     url.pathname = `/${matchedProduct}${pathname}`;
     return NextResponse.rewrite(url);
@@ -39,5 +86,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon\\.ico|images/).*)"]
+  matcher: ["/((?!_next/static|_next/image|favicon\\.ico|images/).*)"],
 };
