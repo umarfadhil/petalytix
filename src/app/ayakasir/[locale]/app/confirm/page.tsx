@@ -14,14 +14,16 @@ export default function ConfirmPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tokenHash = searchParams.get("token_hash");
-  const otpType = searchParams.get("type") || "signup";
+  const otpType = searchParams.get("type") || "";
   const nextParam = searchParams.get("next");
   const [status, setStatus] = useState<ConfirmStatus>("loading");
   const [message, setMessage] = useState(authCopy.confirming);
 
   const redirectTarget = useMemo(() => {
+    const effectiveType =
+      (!otpType && tokenHash?.startsWith("pkce_")) ? "recovery" : otpType;
     const defaultTarget =
-      otpType === "recovery"
+      effectiveType === "recovery"
         ? `/${locale}/app/reset-password`
         : `/${locale}/app/login`;
 
