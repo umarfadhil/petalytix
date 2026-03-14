@@ -2,6 +2,14 @@
 
 ## Changelog
 
+### v1.0.7
+
+- Registration: Province/City dependent dropdowns sourced from `src/data/indonesia-provinces.json`; fields appear immediately after business name. Required 6-digit PIN stored as `pin_hash/pin_salt` on the owner user row. Tenant `province`/`city` written on register.
+- Auth flows: Supabase sign-up now redirects to `/<locale>/app/confirm` (new public route) for email activation. Added forgot-password (`/app/forgot-password`) and reset-password (`/app/reset-password`) flows; reset syncs Supabase Auth with `public.users` password hash. Confirm page handles `token_hash`, `access_token`/`refresh_token` hash, and `code` params.
+- Auth card: `erp-auth-card` is now scrollable with viewport max-height to avoid overlap on smaller screens.
+- Landing page: Added metrics section (tenants / provinces / cities / transactions) with count-up animation and live Supabase-backed totals.
+- Settings CSV export: Column order updated to match Android app export exactly — `id, reference_id, tenant_name, date, type, description, customer_category, customer_name, product_category, product_name, variant_name, qty, unit_price, discount_type, discount_value, discount_per_unit, amount, payment_method, transaction_notes, person_in_charge`. CSV profile card removed from the Unduh Data section.
+
 ### v1.0.6
 
 - ERP Desktop: Full-featured web ERP at `ayakasir.petalytix.id/{locale}/app/` backed by Supabase.

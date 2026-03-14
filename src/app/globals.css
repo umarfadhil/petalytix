@@ -1905,6 +1905,62 @@ main {
   margin: 0;
 }
 
+/* Metrics section */
+.ayakasir-metrics-section {
+  text-align: center;
+}
+
+.ayakasir-metrics-subtitle {
+  margin: 0 auto;
+  max-width: 640px;
+}
+
+.ayakasir-metrics-grid {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.ayakasir-metric-card {
+  position: relative;
+  border-radius: 18px;
+  padding: 18px 20px;
+  background: linear-gradient(135deg, rgba(29, 114, 233, 0.08), rgba(55, 164, 84, 0.08));
+  border: 1px solid rgba(29, 114, 233, 0.12);
+  min-height: 120px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  text-align: left;
+  box-shadow: 0 16px 30px rgba(15, 23, 42, 0.08);
+}
+
+.ayakasir-metric-card::after {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border-radius: 14px;
+  border: 1px dashed rgba(29, 114, 233, 0.18);
+  pointer-events: none;
+  opacity: 0.35;
+}
+
+.ayakasir-metric-value {
+  font-family: var(--font-display), "Segoe UI", sans-serif;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--metric-accent, #1D72E9);
+  font-variant-numeric: tabular-nums;
+}
+
+.ayakasir-metric-label {
+  font-size: 14px;
+  color: var(--color-ink-secondary, #555);
+  font-weight: 600;
+}
+
 /* ── Cross-platform sync animation ── */
 @keyframes ayakasir-pulse-dot {
   0%, 100% { opacity: 0.2; transform: scale(0.8); }
@@ -1992,5 +2048,11 @@ main {
     left: 50%;
     transform: translateX(-50%);
     z-index: 2;
+  }
+  .ayakasir-metric-card {
+    min-height: 0;
+  }
+  .ayakasir-metric-value {
+    font-size: 28px;
   }
 }

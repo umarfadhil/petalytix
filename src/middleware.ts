@@ -7,7 +7,13 @@ const SUBDOMAIN_MAP: Record<string, string> = {
 };
 
 // ERP auth routes that don't require authentication
-const PUBLIC_APP_PATHS = ["/app/login", "/app/register"];
+const PUBLIC_APP_PATHS = [
+  "/app/login",
+  "/app/register",
+  "/app/confirm",
+  "/app/forgot-password",
+  "/app/reset-password",
+];
 
 export async function middleware(request: NextRequest) {
   const host = request.headers.get("host") || "";

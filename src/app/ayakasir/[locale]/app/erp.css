@@ -157,6 +157,9 @@ body:has(.erp-root) {
   padding: 48px 40px;
   width: 100%;
   max-width: 420px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .erp-auth-logo {
@@ -1353,6 +1356,7 @@ body:has(.erp-root) {
   font-size: 14px;
   font-weight: 500;
 }
+
 
 /* ── Receipt dialog ── */
 .erp-receipt {

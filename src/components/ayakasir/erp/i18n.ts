@@ -249,6 +249,52 @@ export interface ErpCopy {
     transactionHistory: string;
     customerStats: string;
   };
+  auth: {
+    registerTitle: string;
+    fullNameLabel: string;
+    businessNameLabel: string;
+    emailLabel: string;
+    emailPlaceholder: string;
+    phoneLabel: string;
+    passwordLabel: string;
+    passwordPlaceholder: string;
+    passwordMask: string;
+    pinLabel: string;
+    pinPlaceholder: string;
+    provinceLabel: string;
+    provincePlaceholder: string;
+    cityLabel: string;
+    cityPlaceholder: string;
+    loginSubtitle: string;
+    loginButton: string;
+    noAccount: string;
+    registerLink: string;
+    forgotPassword: string;
+    forgotSubtitle: string;
+    forgotButton: string;
+    forgotSuccess: string;
+    registerButton: string;
+    loading: string;
+    registerSuccess: string;
+    confirmTitle: string;
+    confirming: string;
+    confirmSuccess: string;
+    confirmRecoverySuccess: string;
+    confirmError: string;
+    confirmRecoveryError: string;
+    resetSubtitle: string;
+    newPasswordLabel: string;
+    confirmPasswordLabel: string;
+    resetButton: string;
+    resetSuccess: string;
+    resetError: string;
+    resetInvalid: string;
+    resetMismatch: string;
+    backToLogin: string;
+    haveAccount: string;
+    signIn: string;
+    genericError: string;
+  };
   common: {
     save: string;
     cancel: string;
@@ -526,6 +572,52 @@ const en: ErpCopy = {
     transactionHistory: "Transaction History",
     customerStats: "Customer Stats",
   },
+  auth: {
+    registerTitle: "Create a new account",
+    fullNameLabel: "Full Name",
+    businessNameLabel: "Business Name",
+    emailLabel: "Email",
+    emailPlaceholder: "email@example.com",
+    phoneLabel: "Phone",
+    passwordLabel: "Password",
+    passwordPlaceholder: "Min. 6 characters",
+    passwordMask: "••••••••",
+    pinLabel: "6-digit PIN",
+    pinPlaceholder: "Enter your 6-digit PIN",
+    provinceLabel: "Province",
+    provincePlaceholder: "Select province",
+    cityLabel: "City / Regency",
+    cityPlaceholder: "Select city / regency",
+    loginSubtitle: "Sign in to ERP dashboard",
+    loginButton: "Sign In",
+    noAccount: "Don't have an account?",
+    registerLink: "Register",
+    forgotPassword: "Forgot password?",
+    forgotSubtitle: "Enter your email to receive a reset link.",
+    forgotButton: "Send reset link",
+    forgotSuccess: "If the email is registered, we've sent a reset link.",
+    registerButton: "Register",
+    loading: "Loading...",
+    registerSuccess: "Registration successful! Please check your email to confirm your account.",
+    confirmTitle: "Activate Account",
+    confirming: "Verifying your account...",
+    confirmSuccess: "Account activated. Redirecting to login...",
+    confirmRecoverySuccess: "Recovery verified. Redirecting to reset password...",
+    confirmError: "Activation failed. Please request a new activation email.",
+    confirmRecoveryError: "Recovery failed. Please request a new reset link.",
+    resetSubtitle: "Set a new password for your account.",
+    newPasswordLabel: "New Password",
+    confirmPasswordLabel: "Confirm Password",
+    resetButton: "Update Password",
+    resetSuccess: "Password updated. Redirecting to login...",
+    resetError: "Failed to update password. Please try again.",
+    resetInvalid: "Password must be at least 6 characters.",
+    resetMismatch: "Passwords do not match.",
+    backToLogin: "Back to login",
+    haveAccount: "Already have an account?",
+    signIn: "Sign In",
+    genericError: "An error occurred",
+  },
   common: {
     save: "Save",
     cancel: "Cancel",
@@ -802,6 +894,52 @@ const id: ErpCopy = {
     duplicateCategory: "Kategori dengan nama ini sudah ada.",
     transactionHistory: "Riwayat Transaksi",
     customerStats: "Statistik Pelanggan",
+  },
+  auth: {
+    registerTitle: "Daftar akun baru",
+    fullNameLabel: "Nama Lengkap",
+    businessNameLabel: "Nama Usaha",
+    emailLabel: "Email",
+    emailPlaceholder: "email@contoh.com",
+    phoneLabel: "Telepon",
+    passwordLabel: "Password",
+    passwordPlaceholder: "Min. 6 karakter",
+    passwordMask: "••••••••",
+    pinLabel: "PIN 6 digit",
+    pinPlaceholder: "Masukkan PIN 6 digit",
+    provinceLabel: "Provinsi",
+    provincePlaceholder: "Pilih provinsi",
+    cityLabel: "Kota / Kabupaten",
+    cityPlaceholder: "Pilih kota / kabupaten",
+    loginSubtitle: "Masuk ke dashboard ERP",
+    loginButton: "Masuk",
+    noAccount: "Belum punya akun?",
+    registerLink: "Daftar",
+    forgotPassword: "Lupa password?",
+    forgotSubtitle: "Masukkan email Anda untuk menerima tautan reset.",
+    forgotButton: "Kirim tautan reset",
+    forgotSuccess: "Jika email terdaftar, kami sudah mengirim tautan reset.",
+    registerButton: "Daftar",
+    loading: "Memuat...",
+    registerSuccess: "Pendaftaran berhasil! Silakan cek email Anda untuk konfirmasi akun.",
+    confirmTitle: "Aktivasi Akun",
+    confirming: "Memverifikasi akun...",
+    confirmSuccess: "Akun berhasil diaktifkan. Mengalihkan ke halaman masuk...",
+    confirmRecoverySuccess: "Verifikasi berhasil. Mengalihkan ke reset password...",
+    confirmError: "Aktivasi gagal. Silakan minta email aktivasi ulang.",
+    confirmRecoveryError: "Reset gagal. Silakan minta tautan reset ulang.",
+    resetSubtitle: "Atur password baru untuk akun Anda.",
+    newPasswordLabel: "Password Baru",
+    confirmPasswordLabel: "Konfirmasi Password",
+    resetButton: "Perbarui Password",
+    resetSuccess: "Password berhasil diperbarui. Mengalihkan ke halaman masuk...",
+    resetError: "Gagal memperbarui password. Silakan coba lagi.",
+    resetInvalid: "Password minimal 6 karakter.",
+    resetMismatch: "Konfirmasi password tidak cocok.",
+    backToLogin: "Kembali ke halaman masuk",
+    haveAccount: "Sudah punya akun?",
+    signIn: "Masuk",
+    genericError: "Terjadi kesalahan",
   },
   common: {
     save: "Simpan",

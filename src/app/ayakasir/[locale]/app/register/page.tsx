@@ -3,20 +3,29 @@
 import { useState } from "react";
 import { registerErpAction } from "@/app/ayakasir/actions/auth";
 import { useParams } from "next/navigation";
+import { getErpCopy } from "@/components/ayakasir/erp/i18n";
+import provincesData from "@/data/indonesia-provinces.json";
 
 export default function RegisterPage() {
   const params = useParams();
   const locale = (params.locale as string) || "id";
+  const copy = getErpCopy(locale);
+  const authCopy = copy.auth;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [restaurantName, setRestaurantName] = useState("");
+  const [pin, setPin] = useState("");
   const [phone, setPhone] = useState("");
+  const [province, setProvince] = useState("");
+  const [city, setCity] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const isId = locale === "id";
+  const provinces = provincesData as Record<string, string[]>;
+  const provinceOptions = Object.keys(provinces);
+  const cityOptions = province ? provinces[province] || [] : [];
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,19 +38,23 @@ export default function RegisterPage() {
         email,
         phone,
         restaurantName,
+        pin,
+        province,
+        city,
         password,
         locale,
+        origin: window.location.origin,
       });
 
       if (!result.ok) {
-        setError(result.message || (isId ? "Terjadi kesalahan" : "An error occurred"));
+        setError(result.message || authCopy.genericError);
         setLoading(false);
         return;
       }
 
       setSuccess(true);
     } catch {
-      setError(isId ? "Terjadi kesalahan" : "An error occurred");
+      setError(authCopy.genericError);
     }
 
     setLoading(false);
@@ -56,16 +69,14 @@ export default function RegisterPage() {
         <div className="erp-auth-card">
           <div className="erp-auth-logo">AyaKa$ir</div>
           <div className="erp-alert erp-alert--success" style={{ marginTop: 24 }}>
-            {isId
-              ? "Pendaftaran berhasil! Silakan cek email Anda untuk konfirmasi akun."
-              : "Registration successful! Please check your email to confirm your account."}
+            {authCopy.registerSuccess}
           </div>
           <p style={{ textAlign: "center", marginTop: 16, fontSize: 14 }}>
             <a
               href={`/${locale}/app/login`}
               style={{ color: "var(--erp-primary)", fontWeight: 500 }}
             >
-              {isId ? "Kembali ke halaman masuk" : "Back to login"}
+              {authCopy.backToLogin}
             </a>
           </p>
         </div>
@@ -81,14 +92,14 @@ export default function RegisterPage() {
       <div className="erp-auth-card">
         <div className="erp-auth-logo">AyaKa$ir</div>
         <p className="erp-auth-subtitle">
-          {isId ? "Daftar akun baru" : "Create a new account"}
+          {authCopy.registerTitle}
         </p>
 
         <form onSubmit={handleSubmit}>
           {error && <div className="erp-alert erp-alert--error">{error}</div>}
 
           <div className="erp-input-group">
-            <label className="erp-label">{isId ? "Nama Lengkap" : "Full Name"}</label>
+            <label className="erp-label">{authCopy.fullNameLabel}</label>
             <input
               className="erp-input"
               type="text"
@@ -99,7 +110,7 @@ export default function RegisterPage() {
           </div>
 
           <div className="erp-input-group">
-            <label className="erp-label">{isId ? "Nama Restoran" : "Restaurant Name"}</label>
+            <label className="erp-label">{authCopy.businessNameLabel}</label>
             <input
               className="erp-input"
               type="text"
@@ -110,20 +121,63 @@ export default function RegisterPage() {
           </div>
 
           <div className="erp-input-group">
-            <label className="erp-label">Email</label>
+            <label className="erp-label">{authCopy.provinceLabel}</label>
+            <select
+              className="erp-input"
+              value={province}
+              onChange={(e) => {
+                const nextProvince = e.target.value;
+                setProvince(nextProvince);
+                setCity("");
+              }}
+              required
+            >
+              <option value="" disabled>
+                {authCopy.provincePlaceholder}
+              </option>
+              {provinceOptions.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="erp-input-group">
+            <label className="erp-label">{authCopy.cityLabel}</label>
+            <select
+              className="erp-input"
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              required
+              disabled={!province}
+            >
+              <option value="" disabled>
+                {authCopy.cityPlaceholder}
+              </option>
+              {cityOptions.map((item) => (
+                <option key={`${province}-${item}`} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="erp-input-group">
+            <label className="erp-label">{authCopy.emailLabel}</label>
             <input
               className="erp-input"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="email@example.com"
+              placeholder={authCopy.emailPlaceholder}
               required
               autoComplete="email"
             />
           </div>
 
           <div className="erp-input-group">
-            <label className="erp-label">{isId ? "Telepon" : "Phone"}</label>
+            <label className="erp-label">{authCopy.phoneLabel}</label>
             <input
               className="erp-input"
               type="tel"
@@ -133,16 +187,35 @@ export default function RegisterPage() {
           </div>
 
           <div className="erp-input-group">
-            <label className="erp-label">Password</label>
+            <label className="erp-label">{authCopy.passwordLabel}</label>
             <input
               className="erp-input"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Min. 6 characters"
+              placeholder={authCopy.passwordPlaceholder}
               required
               minLength={6}
               autoComplete="new-password"
+            />
+          </div>
+
+          <div className="erp-input-group">
+            <label className="erp-label">{authCopy.pinLabel}</label>
+            <input
+              className="erp-input"
+              type="password"
+              inputMode="numeric"
+              pattern="[0-9]{6}"
+              maxLength={6}
+              value={pin}
+              onChange={(e) => {
+                const nextValue = e.target.value.replace(/\D/g, "").slice(0, 6);
+                setPin(nextValue);
+              }}
+              placeholder={authCopy.pinPlaceholder}
+              required
+              autoComplete="off"
             />
           </div>
 
@@ -151,19 +224,17 @@ export default function RegisterPage() {
             type="submit"
             disabled={loading}
           >
-            {loading
-              ? isId ? "Memuat..." : "Loading..."
-              : isId ? "Daftar" : "Register"}
+            {loading ? authCopy.loading : authCopy.registerButton}
           </button>
         </form>
 
         <p style={{ textAlign: "center", marginTop: 20, fontSize: 14, color: "var(--erp-muted)" }}>
-          {isId ? "Sudah punya akun?" : "Already have an account?"}{" "}
+          {authCopy.haveAccount}{" "}
           <a
             href={`/${locale}/app/login`}
             style={{ color: "var(--erp-primary)", fontWeight: 500 }}
           >
-            {isId ? "Masuk" : "Sign In"}
+            {authCopy.signIn}
           </a>
         </p>
       </div>

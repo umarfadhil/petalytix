@@ -42,6 +42,9 @@ src/
 │   │           ├── erp.css          # All .erp-* scoped CSS
 │   │           ├── login/page.tsx
 │   │           ├── register/page.tsx
+│   │           ├── confirm/page.tsx         # Email activation (token_hash / code / hash params)
+│   │           ├── forgot-password/page.tsx # Send reset email
+│   │           ├── reset-password/page.tsx  # Update password + backfill public.users hash
 │   │           └── (erp)/           # Authenticated route group
 │   │               ├── layout.tsx   # Sidebar + ErpProvider (fetches data SSR)
 │   │               ├── page.tsx     # Redirect to dashboard
@@ -83,6 +86,8 @@ src/
 │           ├── customers.ts
 │           ├── customer-categories.ts
 │           └── index.ts
+├── data/
+│   └── indonesia-provinces.json     # Province → cities lookup for register form
 ├── middleware.ts                     # Subdomain routing + ERP auth protection
 └── components/
     ├── ayakasir/

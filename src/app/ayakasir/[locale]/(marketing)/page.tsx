@@ -1,6 +1,54 @@
 import { Fragment } from "react";
+import type { CSSProperties } from "react";
 import { getAyaKasirCopy } from "@/lib/ayakasir-content";
 import AyaKasirHero from "@/components/ayakasir/Hero";
+import MetricCounter from "@/components/ayakasir/MetricCounter";
+import { createServerClient } from "@/lib/supabase/server";
+
+export const revalidate = 3600;
+
+type AyaKasirMetrics = {
+  tenants: number;
+  provinces: number;
+  cities: number;
+  transactions: number;
+};
+
+async function getAyaKasirMetrics(): Promise<AyaKasirMetrics> {
+  try {
+    const supabase = createServerClient();
+    const [tenantRes, transactionRes, locationRes] = await Promise.all([
+      supabase.from("tenants").select("id", { count: "exact", head: true }),
+      supabase.from("transactions").select("id", { count: "exact", head: true }),
+      supabase.from("tenants").select("province, city")
+    ]);
+
+    const provinces = new Set(
+      (locationRes.data ?? [])
+        .map((row) => row.province?.trim())
+        .filter((value): value is string => Boolean(value))
+    );
+    const cities = new Set(
+      (locationRes.data ?? [])
+        .map((row) => row.city?.trim())
+        .filter((value): value is string => Boolean(value))
+    );
+
+    return {
+      tenants: tenantRes.count ?? 0,
+      provinces: provinces.size,
+      cities: cities.size,
+      transactions: transactionRes.count ?? 0
+    };
+  } catch {
+    return {
+      tenants: 0,
+      provinces: 0,
+      cities: 0,
+      transactions: 0
+    };
+  }
+}
 
 export function generateMetadata({ params }: { params: { locale: string } }) {
   const copy = getAyaKasirCopy(params.locale);
@@ -10,12 +58,20 @@ export function generateMetadata({ params }: { params: { locale: string } }) {
   };
 }
 
-export default function AyaKasirLandingPage({
+export default async function AyaKasirLandingPage({
   params
 }: {
   params: { locale: string };
 }) {
   const copy = getAyaKasirCopy(params.locale);
+  const metrics = await getAyaKasirMetrics();
+  const metricValues = [
+    metrics.tenants,
+    metrics.provinces,
+    metrics.cities,
+    metrics.transactions
+  ];
+  const metricAccents = ["#1D72E9", "#37A454", "#1D72E9", "#37A454"];
 
   return (
     <>
@@ -101,6 +157,38 @@ export default function AyaKasirLandingPage({
               : "Available on Android — manage anywhere via the web dashboard."
             }
           </p>
+        </div>
+      </section>
+
+      {/* Metrics */}
+      <section className="section reveal delay-2 ayakasir-metrics-section">
+        <span className="eyebrow">{copy.metrics.eyebrow}</span>
+        <h2 className="title">{copy.metrics.title}</h2>
+        <p className="subtitle ayakasir-metrics-subtitle">
+          {copy.metrics.subtitle}
+        </p>
+        <div className="ayakasir-metrics-grid">
+          {copy.metrics.items.map((metric, index) => {
+            const metricStyle = {
+              animationDelay: `${0.08 * index}s`,
+              "--metric-accent": metricAccents[index % metricAccents.length]
+            } as CSSProperties;
+
+            return (
+              <div
+                key={metric.label}
+                className="ayakasir-metric-card reveal"
+                style={metricStyle}
+              >
+              <MetricCounter
+                value={metricValues[index] ?? 0}
+                locale={params.locale}
+                className="ayakasir-metric-value"
+              />
+              <div className="ayakasir-metric-label">{metric.label}</div>
+              </div>
+            );
+          })}
         </div>
       </section>
 

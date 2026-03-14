@@ -5,6 +5,8 @@ export interface DbTenant {
   name: string;
   owner_email: string;
   owner_phone: string;
+  province: string;
+  city: string;
   is_active: boolean;
   qris_image_url: string | null;
   qris_merchant_name: string | null;

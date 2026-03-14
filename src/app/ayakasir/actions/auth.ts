@@ -28,7 +28,11 @@ interface RegisterInput extends AuthInput {
   email: string;
   phone: string;
   restaurantName: string;
+  pin: string;
+  province: string;
+  city: string;
   password: string;
+  origin?: string;
 }
 
 interface ChangePasswordInput extends AuthInput {
@@ -217,16 +221,32 @@ export async function registerErpAction({
   email,
   phone,
   restaurantName,
+  pin,
+  province,
+  city,
   password,
   locale,
+  origin,
 }: RegisterInput): Promise<ActionResult> {
   const isId = isIdLocale(locale);
   const normalizedEmail = email.trim().toLowerCase();
   const trimmedName = name.trim();
   const trimmedRestaurantName = restaurantName.trim();
   const trimmedPhone = phone.trim();
+  const trimmedProvince = province.trim();
+  const trimmedCity = city.trim();
+  const trimmedPin = pin.trim();
+  const isPinValid = /^\d{6}$/.test(trimmedPin);
 
-  if (!trimmedName || !trimmedRestaurantName || !normalizedEmail || password.length < 6) {
+  if (
+    !trimmedName ||
+    !trimmedRestaurantName ||
+    !normalizedEmail ||
+    !trimmedProvince ||
+    !trimmedCity ||
+    password.length < 6 ||
+    !isPinValid
+  ) {
     return {
       ok: false,
       message: isId
@@ -267,12 +287,16 @@ export async function registerErpAction({
   const userId = crypto.randomUUID();
   const passwordSalt = generatePasswordSalt();
   const passwordHash = hashPassword(password, passwordSalt);
+  const pinSalt = generatePasswordSalt();
+  const pinHash = hashPassword(trimmedPin, pinSalt);
 
   const { error: tenantError } = await supabase.from("tenants").insert({
     id: tenantId,
     name: trimmedRestaurantName,
     owner_email: normalizedEmail,
     owner_phone: trimmedPhone,
+    province: trimmedProvince,
+    city: trimmedCity,
     is_active: false,
     sync_status: "SYNCED",
     updated_at: now,
@@ -293,8 +317,8 @@ export async function registerErpAction({
     name: trimmedName,
     email: normalizedEmail,
     phone: trimmedPhone,
-    pin_hash: "",
-    pin_salt: "",
+    pin_hash: pinHash,
+    pin_salt: pinSalt,
     password_hash: passwordHash,
     password_salt: passwordSalt,
     role: "OWNER",
@@ -316,6 +340,7 @@ export async function registerErpAction({
   }
 
   try {
+    const redirectBase = resolveAuthRedirectBase(origin);
     await supabase.auth.signUp({
       email: normalizedEmail,
       password,
@@ -324,7 +349,12 @@ export async function registerErpAction({
           name: trimmedName,
           restaurant_name: trimmedRestaurantName,
           phone: trimmedPhone,
+          province: trimmedProvince,
+          city: trimmedCity,
         },
+        emailRedirectTo: redirectBase
+          ? `${redirectBase}/${locale}/app/confirm`
+          : undefined,
       },
     });
   } catch {
@@ -334,8 +364,135 @@ export async function registerErpAction({
   return { ok: true };
 }
 
+function resolveAuthRedirectBase(origin?: string) {
+  if (origin) {
+    try {
+      return new URL(origin).origin;
+    } catch {
+      // ignore invalid origin
+    }
+  }
+
+  const envBase = process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || "";
+  if (envBase) {
+    try {
+      return new URL(envBase).origin;
+    } catch {
+      return "";
+    }
+  }
+
+  return "";
+}
+
 export async function logoutErpAction() {
   clearErpSessionCookie();
+}
+
+interface PasswordResetRequestInput extends AuthInput {
+  email: string;
+  origin?: string;
+}
+
+export async function requestPasswordResetAction({
+  email,
+  locale,
+  origin,
+}: PasswordResetRequestInput): Promise<ActionResult> {
+  const isId = isIdLocale(locale);
+  const normalizedEmail = email.trim().toLowerCase();
+
+  if (!normalizedEmail) {
+    return {
+      ok: false,
+      message: isId ? "Email wajib diisi." : "Email is required.",
+    };
+  }
+
+  const supabase = createServerClient();
+  const redirectBase = resolveAuthRedirectBase(origin);
+
+  const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+    redirectTo: redirectBase
+      ? `${redirectBase}/${locale}/app/confirm?type=recovery`
+      : undefined,
+  });
+
+  if (error) {
+    return {
+      ok: false,
+      message: isId
+        ? "Gagal mengirim email reset."
+        : "Failed to send reset email.",
+    };
+  }
+
+  return {
+    ok: true,
+    message: isId
+      ? "Jika email terdaftar, kami sudah mengirim tautan reset."
+      : "If the email is registered, we've sent a reset link.",
+  };
+}
+
+interface ResetPasswordInput extends AuthInput {
+  newPassword: string;
+}
+
+export async function resetErpPasswordAction({
+  newPassword,
+  locale,
+}: ResetPasswordInput): Promise<ActionResult> {
+  const isId = isIdLocale(locale);
+
+  if (!newPassword || newPassword.length < 6) {
+    return {
+      ok: false,
+      message: isId ? "Password tidak valid." : "Invalid password.",
+    };
+  }
+
+  const supabase = createServerClient();
+  const { data, error: userError } = await supabase.auth.getUser();
+  const authUser = data?.user;
+
+  if (userError || !authUser?.email) {
+    return {
+      ok: false,
+      message: isId
+        ? "Sesi reset tidak valid. Silakan minta ulang."
+        : "Reset session is invalid. Please request a new link.",
+    };
+  }
+
+  const normalizedEmail = authUser.email.trim().toLowerCase();
+  const nextSalt = generatePasswordSalt();
+  const nextHash = hashPassword(newPassword, nextSalt);
+
+  const { error: updateError } = await supabase
+    .from("users")
+    .update({
+      password_hash: nextHash,
+      password_salt: nextSalt,
+      updated_at: Date.now(),
+    })
+    .ilike("email", normalizedEmail);
+
+  if (updateError) {
+    return {
+      ok: false,
+      message: isId
+        ? "Gagal memperbarui password."
+        : "Failed to update the password.",
+    };
+  }
+
+  return {
+    ok: true,
+    message: isId
+      ? "Password berhasil diperbarui."
+      : "Password updated successfully.",
+  };
 }
 
 interface UserUpsertInput {

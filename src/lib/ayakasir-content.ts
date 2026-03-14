@@ -30,6 +30,12 @@ type AyaKasirCopy = {
     title: string;
     items: { title: string; description: string }[];
   };
+  metrics: {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    items: { label: string }[];
+  };
   privacyPolicy: {
     title: string;
     intro: string;
@@ -123,6 +129,18 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
           description:
             "See your sales, cash balance, and top products at a glance — on your phone or the web dashboard."
         }
+      ]
+    },
+    metrics: {
+      eyebrow: "Live Growth",
+      title: "Trusted by businesses across Indonesia.",
+      subtitle:
+        "Real activity from registered tenants and their daily transactions.",
+      items: [
+        { label: "Tenants" },
+        { label: "Provinces" },
+        { label: "Cities" },
+        { label: "Total Transactions" }
       ]
     },
     simulator: {
@@ -313,6 +331,18 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
           description:
             "Lihat penjualan, saldo kas, dan produk terlaris sekilas — dari HP atau dashboard web kamu."
         }
+      ]
+    },
+    metrics: {
+      eyebrow: "Pertumbuhan Nyata",
+      title: "Dipercaya bisnis di seluruh Indonesia.",
+      subtitle:
+        "Aktivitas riil dari tenant terdaftar dan transaksi harian mereka.",
+      items: [
+        { label: "Tenant" },
+        { label: "Provinsi" },
+        { label: "Kota" },
+        { label: "Total Transaksi" }
       ]
     },
     simulator: {

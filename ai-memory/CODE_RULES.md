@@ -60,10 +60,21 @@
 ### ERP Auth
 - ERP login uses `public.users.password_hash/password_salt` as the source of truth, not Supabase Auth sessions.
 - ERP access is stored in a signed HTTP-only cookie via `src/lib/erp-auth.ts`.
-- Middleware protects `/app/*` routes (except `/app/login`, `/app/register`) by validating the ERP session cookie.
+- Middleware protects `/app/*` routes (except `/app/login`, `/app/register`, `/app/confirm`, `/app/forgot-password`, `/app/reset-password`) by validating the ERP session cookie.
 - If user is logged in and visits login/register, redirect to `/app/dashboard`.
 - If an owner user is missing `tenant_id`, try to recover it from `tenants.owner_email` before failing login.
 - If a legacy user is missing `password_hash/password_salt`, allow one-time fallback to Supabase Auth login and backfill the hash into `public.users`.
+
+### ERP Registration
+- Province/City dropdowns are sourced from `src/data/indonesia-provinces.json` — Province is a top-level key, cities are values.
+- Registration requires a 6-digit PIN (`[0-9]{6}`), stored as `pin_hash/pin_salt` on the owner `public.users` row.
+- Tenant row gets `province` and `city` fields written at registration time.
+- After `supabase.auth.signUp()`, redirect to `/<locale>/app/confirm` (not directly to login).
+
+### ERP Password Reset
+- Forgot-password sends a reset email via `supabase.auth.resetPasswordForEmail()`.
+- Reset-password page reads `token_hash`/`code`/hash params, verifies the OTP, then updates both Supabase Auth password and `public.users.password_hash/password_salt`.
+- Confirm page (`/app/confirm`) handles `token_hash`, `access_token`/`refresh_token` (fragment hash), and `code` query params for email verification.
 
 ### ERP Role-Based Access
 - `state.user?.role === "OWNER"` → full access; `"CASHIER"` → restricted.

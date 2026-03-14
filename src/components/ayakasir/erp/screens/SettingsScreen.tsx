@@ -64,6 +64,28 @@ export default function SettingsScreen() {
   const todayStr = new Date().toISOString().split("T")[0];
   const [csvFrom, setCsvFrom] = useState(todayStr);
   const [csvTo, setCsvTo] = useState(todayStr);
+  const exportLookups = useMemo(() => {
+    const txMap = new Map(state.transactions.map((t) => [t.id, t]));
+    const customerMap = new Map(state.customers.map((c) => [c.id, c]));
+    const customerCatMap = new Map(state.customerCategories.map((cc) => [cc.id, cc]));
+    const productMap = new Map(state.products.map((p) => [p.id, p]));
+    const categoryMap = new Map(state.categories.map((c) => [c.id, c]));
+    const userMap = new Map(state.tenantUsers.map((u) => [u.id, u]));
+    const txItemsByTx = new Map<string, typeof state.transactionItems>();
+    for (const item of state.transactionItems) {
+      if (!txItemsByTx.has(item.transaction_id)) txItemsByTx.set(item.transaction_id, []);
+      txItemsByTx.get(item.transaction_id)!.push(item);
+    }
+    return { txMap, customerMap, customerCatMap, productMap, categoryMap, txItemsByTx, userMap };
+  }, [
+    state.transactions,
+    state.customers,
+    state.customerCategories,
+    state.products,
+    state.categories,
+    state.transactionItems,
+    state.tenantUsers,
+  ]);
 
   // ── Change password ──────────────────────────────────────────
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -311,23 +333,13 @@ export default function SettingsScreen() {
     const fromMs = new Date(csvFrom + "T00:00:00").getTime();
     const toMs = new Date(csvTo + "T23:59:59.999").getTime();
 
-    // Build lookup maps
-    const txMap = new Map(state.transactions.map((t) => [t.id, t]));
-    const customerMap = new Map(state.customers.map((c) => [c.id, c]));
-    const customerCatMap = new Map(state.customerCategories.map((cc) => [cc.id, cc]));
-    const productMap = new Map(state.products.map((p) => [p.id, p]));
-    const categoryMap = new Map(state.categories.map((c) => [c.id, c]));
-    const txItemsByTx = new Map<string, typeof state.transactionItems>();
-    for (const item of state.transactionItems) {
-      if (!txItemsByTx.has(item.transaction_id)) txItemsByTx.set(item.transaction_id, []);
-      txItemsByTx.get(item.transaction_id)!.push(item);
-    }
+    const { txMap, customerMap, customerCatMap, productMap, categoryMap, txItemsByTx, userMap } = exportLookups;
 
     const filtered = state.generalLedger.filter((e) => e.date >= fromMs && e.date <= toMs);
 
     const escape = (s: string | null | undefined) => `"${(s || "").replace(/"/g, '""')}"`;
 
-    const headers = "date,type,reference_id,payment_method,customer_name,customer_category,category_name,product_name,variant_name,qty,unit_price,discount_type,discount_value,discount_per_unit,amount,transaction_notes,description,id,updated_at";
+    const headers = "id,reference_id,tenant_name,date,type,description,customer_category,customer_name,product_category,product_name,variant_name,qty,unit_price,discount_type,discount_value,discount_per_unit,amount,payment_method,transaction_notes,person_in_charge";
 
     const rows = filtered.map((e) => {
       const tx = e.reference_id ? txMap.get(e.reference_id) : undefined;
@@ -340,14 +352,17 @@ export default function SettingsScreen() {
       const item = isItemType && txItems.length > 0 ? txItems[0] : undefined;
       const product = item ? productMap.get(item.product_id) : undefined;
       const category = product?.category_id ? categoryMap.get(product.category_id) : undefined;
+      const personInCharge = userMap.get(tx?.user_id || e.user_id)?.name || state.user?.name || "";
 
       return [
+        e.id,
+        e.reference_id || "",
+        escape(state.restaurant?.name),
         new Date(e.date).toISOString(),
         e.type,
-        e.reference_id || "",
-        tx?.payment_method || "",
-        escape(tx?.notes && !tx.customer_id ? tx.notes : customer?.name),
+        escape(e.description),
         escape(customerCat?.name),
+        escape(tx?.notes && !tx.customer_id ? tx.notes : customer?.name),
         escape(category?.name),
         escape(item?.product_name || product?.name),
         escape(item?.variant_name),
@@ -357,10 +372,9 @@ export default function SettingsScreen() {
         item?.discount_value ?? "",
         item?.discount_per_unit ?? "",
         e.amount,
+        tx?.payment_method || "",
         escape(tx?.notes),
-        escape(e.description),
-        e.id,
-        new Date(e.updated_at).toISOString(),
+        escape(personInCharge),
       ].join(",");
     });
 
