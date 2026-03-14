@@ -57,6 +57,11 @@ export default function ConfirmPage() {
         if (hashType) resolvedType = hashType;
       }
 
+      // PKCE reset-password links from Supabase may arrive with type="" — infer from token prefix
+      if (!resolvedType && tokenHash?.startsWith("pkce_")) {
+        resolvedType = "recovery";
+      }
+
       if (tokenHash) {
         const { error } = await supabase.auth.verifyOtp({
           token_hash: tokenHash,
