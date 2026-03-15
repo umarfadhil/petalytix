@@ -144,7 +144,9 @@ export default function ConfirmPage() {
             href={redirectTarget}
             style={{ color: "var(--erp-primary)", fontWeight: 500 }}
           >
-            {authCopy.backToLogin}
+            {redirectTarget.includes("reset-password")
+              ? authCopy.goToResetPassword
+              : authCopy.backToLogin}
           </a>
         </p>
       </div>

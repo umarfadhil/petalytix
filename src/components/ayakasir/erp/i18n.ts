@@ -290,6 +290,7 @@ export interface ErpCopy {
     resetError: string;
     resetInvalid: string;
     resetMismatch: string;
+    goToResetPassword: string;
     backToLogin: string;
     haveAccount: string;
     signIn: string;
@@ -613,6 +614,7 @@ const en: ErpCopy = {
     resetError: "Failed to update password. Please try again.",
     resetInvalid: "Password must be at least 6 characters.",
     resetMismatch: "Passwords do not match.",
+    goToResetPassword: "Set new password",
     backToLogin: "Back to login",
     haveAccount: "Already have an account?",
     signIn: "Sign In",
@@ -936,6 +938,7 @@ const id: ErpCopy = {
     resetError: "Gagal memperbarui password. Silakan coba lagi.",
     resetInvalid: "Password minimal 6 karakter.",
     resetMismatch: "Konfirmasi password tidak cocok.",
+    goToResetPassword: "Atur password baru",
     backToLogin: "Kembali ke halaman masuk",
     haveAccount: "Sudah punya akun?",
     signIn: "Masuk",
