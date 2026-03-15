@@ -1274,7 +1274,7 @@ body:has(.erp-root) {
 
 .erp-alert--error {
   background: var(--erp-danger-light);
-  color: var(--erp-danger);
+  color: var(--erp-success);
 }
 
 .erp-alert--success {
