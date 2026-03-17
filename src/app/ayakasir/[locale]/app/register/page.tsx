@@ -67,7 +67,7 @@ export default function RegisterPage() {
         <div className="erp-auth-orb erp-auth-orb--2" />
         <div className="erp-auth-orb erp-auth-orb--3" />
         <div className="erp-auth-card">
-          <div className="erp-auth-logo">AyaKa$ir</div>
+          <a className="erp-auth-logo" href="https://ayakasir.petalytix.id">AyaKa$ir</a>
           <div className="erp-alert erp-alert--success" style={{ marginTop: 24 }}>
             {authCopy.registerSuccess}
           </div>

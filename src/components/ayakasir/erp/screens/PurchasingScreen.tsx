@@ -9,6 +9,126 @@ import type { DbVendor, DbGoodsReceiving, DbGoodsReceivingItem, DbGeneralLedger,
 
 type Tab = "receiving" | "vendors" | "rawMaterials" | "categories";
 
+// ── Vendor CSV helpers ────────────────────────────────────────────────────────
+
+function parseVendorCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let i = 0;
+  while (i <= line.length) {
+    if (line[i] === '"') {
+      let field = "";
+      i++;
+      while (i < line.length) {
+        if (line[i] === '"' && line[i + 1] === '"') { field += '"'; i += 2; }
+        else if (line[i] === '"') { i++; break; }
+        else { field += line[i++]; }
+      }
+      fields.push(field.trim());
+      if (line[i] === ",") i++;
+    } else {
+      const end = line.indexOf(",", i);
+      if (end === -1) { fields.push(line.slice(i).trim()); break; }
+      fields.push(line.slice(i, end).trim());
+      i = end + 1;
+    }
+  }
+  return fields;
+}
+
+function normalizeVendorPhone(raw: string | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // If starts with digit 1-9 but not 0, prepend 0
+  if (/^[1-9]/.test(trimmed)) return "0" + trimmed;
+  return trimmed;
+}
+
+function parseCatCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let i = 0;
+  while (i <= line.length) {
+    if (line[i] === '"') {
+      let field = "";
+      i++;
+      while (i < line.length) {
+        if (line[i] === '"' && line[i + 1] === '"') { field += '"'; i += 2; }
+        else if (line[i] === '"') { i++; break; }
+        else { field += line[i++]; }
+      }
+      fields.push(field.trim());
+      if (line[i] === ",") i++;
+    } else {
+      const end = line.indexOf(",", i);
+      if (end === -1) { fields.push(line.slice(i).trim()); break; }
+      fields.push(line.slice(i, end).trim());
+      i = end + 1;
+    }
+  }
+  return fields;
+}
+
+type VendorImportRow = {
+  name: string;
+  phone: string | null;
+  address: string | null;
+  isDuplicate: boolean; // duplicate name in existing vendors or within batch
+};
+
+type CatImportRow = {
+  name: string;
+  sort_order: number;
+  isDuplicate: boolean;
+};
+
+// ── Raw material CSV helpers ──────────────────────────────────────────────────
+
+function parseRawCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let i = 0;
+  while (i <= line.length) {
+    if (line[i] === '"') {
+      let field = "";
+      i++;
+      while (i < line.length) {
+        if (line[i] === '"' && line[i + 1] === '"') { field += '"'; i += 2; }
+        else if (line[i] === '"') { i++; break; }
+        else { field += line[i++]; }
+      }
+      fields.push(field.trim());
+      if (line[i] === ",") i++;
+    } else {
+      const end = line.indexOf(",", i);
+      if (end === -1) { fields.push(line.slice(i).trim()); break; }
+      fields.push(line.slice(i, end).trim());
+      i = end + 1;
+    }
+  }
+  return fields;
+}
+
+// Normalize unit strings from CSV: kg→kg, KG→kg, Kg→kg, g→g, G→g, ml→mL, ML→mL, l→L, L→L, pcs→pcs etc.
+function normalizeUnit(raw: string): string {
+  const u = raw.trim().toLowerCase();
+  if (u === "kg") return "kg";
+  if (u === "g") return "g";
+  if (u === "ml" || u === "ml.") return "mL";
+  if (u === "l") return "L";
+  if (u === "pcs" || u === "pc") return "pcs";
+  // Return lowercase if unknown — will fall back to pcs on save
+  return u || "pcs";
+}
+
+type RawImportRow = {
+  name: string;
+  category: string;  // category name from CSV
+  unit: string;
+  description: string;
+  isDuplicate: boolean;
+  isNewCategory: boolean;
+};
+
+
 interface FormItem {
   productId: string;
   variantId: string;
@@ -44,6 +164,16 @@ export default function PurchasingScreen() {
   const [vendorPhone, setVendorPhone] = useState("");
   const [vendorAddress, setVendorAddress] = useState("");
 
+  // Vendor tab — pagination, bulk delete, CSV import
+  const [vendorPage, setVendorPage] = useState(0);
+  const [vendorPageSize, setVendorPageSize] = useState<10 | 25 | 50>(10);
+  const [selectedVendorIds, setSelectedVendorIds] = useState<Set<string>>(new Set());
+  const [showVendorBulkConfirm, setShowVendorBulkConfirm] = useState(false);
+  const [vendorBulkDeleting, setVendorBulkDeleting] = useState(false);
+  const [vendorImportPreview, setVendorImportPreview] = useState<VendorImportRow[] | null>(null);
+  const [vendorImportSaving, setVendorImportSaving] = useState(false);
+  const [vendorImportMsg, setVendorImportMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
   // Raw material product form state
   const [showRawForm, setShowRawForm] = useState(false);
   const [editRawId, setEditRawId] = useState<string | null>(null);
@@ -53,11 +183,36 @@ export default function PurchasingScreen() {
   const [rawActive, setRawActive] = useState(true);
   const [rawUnit, setRawUnit] = useState("pcs");
 
+  // Raw material pre-save warning state
+  const [showRawWarning, setShowRawWarning] = useState(false);
+
   // Raw material category form state
   const [showRawCatForm, setShowRawCatForm] = useState(false);
   const [editRawCatId, setEditRawCatId] = useState<string | null>(null);
   const [rawCatName, setRawCatName] = useState("");
   const [rawCatOrder, setRawCatOrder] = useState("0");
+
+  // Category tab — pagination, bulk delete, CSV import
+  const [catPage, setCatPage] = useState(0);
+  const [catPageSize, setCatPageSize] = useState<10 | 25 | 50>(10);
+  const [selectedCatIds, setSelectedCatIds] = useState<Set<string>>(new Set());
+  const [showCatBulkConfirm, setShowCatBulkConfirm] = useState(false);
+  const [catBulkDeleting, setCatBulkDeleting] = useState(false);
+  const [catImportPreview, setCatImportPreview] = useState<CatImportRow[] | null>(null);
+  const [catImportSaving, setCatImportSaving] = useState(false);
+  const [catImportMsg, setCatImportMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  // Delete category with options (same pattern as customers)
+  const [deleteCatTarget, setDeleteCatTarget] = useState<{ id: string; name: string; rawMaterialCount: number } | null>(null);
+
+  // Raw material tab — pagination, bulk delete, CSV import
+  const [rawPage, setRawPage] = useState(0);
+  const [rawPageSize, setRawPageSize] = useState<10 | 25 | 50>(10);
+  const [selectedRawIds, setSelectedRawIds] = useState<Set<string>>(new Set());
+  const [showRawBulkConfirm, setShowRawBulkConfirm] = useState(false);
+  const [rawBulkDeleting, setRawBulkDeleting] = useState(false);
+  const [rawImportPreview, setRawImportPreview] = useState<RawImportRow[] | null>(null);
+  const [rawImportSaving, setRawImportSaving] = useState(false);
+  const [rawImportMsg, setRawImportMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
   const [rawSearch, setRawSearch] = useState("");
   const [filterRawCategory, setFilterRawCategory] = useState("");
@@ -106,6 +261,30 @@ export default function PurchasingScreen() {
     return list;
   }, [state.goodsReceivings, state.goodsReceivingItems, state.products, filterDate, filterVendorId, filterItemName]);
 
+  const sortedVendors = useMemo(
+    () => [...state.vendors].sort((a, b) => a.name.localeCompare(b.name)),
+    [state.vendors]
+  );
+
+  const pagedVendors = useMemo(() => {
+    const start = vendorPage * vendorPageSize;
+    return sortedVendors.slice(start, start + vendorPageSize);
+  }, [sortedVendors, vendorPage, vendorPageSize]);
+
+  const vendorTotalPages = Math.ceil(sortedVendors.length / vendorPageSize);
+
+  const sortedRawCategories = useMemo(
+    () => [...rawCategories].sort((a, b) => a.name.localeCompare(b.name)),
+    [rawCategories]
+  );
+
+  const pagedRawCategories = useMemo(() => {
+    const start = catPage * catPageSize;
+    return sortedRawCategories.slice(start, start + catPageSize);
+  }, [sortedRawCategories, catPage, catPageSize]);
+
+  const catTotalPages = Math.ceil(sortedRawCategories.length / catPageSize);
+
   const filteredRawMaterials = useMemo(() => {
     let list = rawMaterials;
     if (filterRawCategory) {
@@ -115,8 +294,22 @@ export default function PurchasingScreen() {
       const q = rawSearch.toLowerCase();
       list = list.filter((p) => p.name.toLowerCase().includes(q));
     }
-    return list;
-  }, [rawMaterials, filterRawCategory, rawSearch]);
+    // Sort: category name alphabetically first, then name alphabetically within
+    return [...list].sort((a, b) => {
+      const catA = (a.category_id ? state.categories.find((c) => c.id === a.category_id)?.name ?? "" : "").toLowerCase();
+      const catB = (b.category_id ? state.categories.find((c) => c.id === b.category_id)?.name ?? "" : "").toLowerCase();
+      const catCmp = catA.localeCompare(catB);
+      if (catCmp !== 0) return catCmp;
+      return a.name.localeCompare(b.name);
+    });
+  }, [rawMaterials, filterRawCategory, rawSearch, state.categories]);
+
+  const pagedRawMaterials = useMemo(() => {
+    const start = rawPage * rawPageSize;
+    return filteredRawMaterials.slice(start, start + rawPageSize);
+  }, [filteredRawMaterials, rawPage, rawPageSize]);
+
+  const rawTotalPages = Math.ceil(filteredRawMaterials.length / rawPageSize);
 
   const getRawCategoryName = (id: string | null) => {
     if (!id) return copy.products.noCategory;
@@ -185,11 +378,11 @@ export default function PurchasingScreen() {
     // qty allows decimals (e.g. 1,5 kg) — store raw; costPerUnit is integer currency — strip non-digits
     const stored = field === "costPerUnit" ? parseNum(value) : value;
     next[idx] = { ...next[idx], [field]: stored };
-    // Auto-set unit from inventory — show user-friendly unit (mL→L, g→kg) for input
+    // Auto-set unit from inventory — inv.unit is already the display unit (kg/L/g/mL/pcs)
     if (field === "productId") {
       const inv = state.inventory.find((i) => i.product_id === value);
       if (inv) {
-        const displayUnit = inv.unit === "mL" ? "L" : inv.unit === "g" ? "kg" : inv.unit;
+        const displayUnit = inv.unit;
         next[idx].unit = displayUnit;
       }
     }
@@ -216,6 +409,8 @@ export default function PurchasingScreen() {
         if (unit === "kg") return { qty: qty * 1000, unit: "g" };
         return { qty, unit };
       };
+      // For inventory rows: current_qty is always stored in base (g/mL/pcs) regardless of unit display label
+      const invToBase = (inv: { current_qty: number; unit: string }): number => inv.current_qty;
 
       const header: Omit<DbGoodsReceiving, "sync_status"> = {
         id: recId,
@@ -261,7 +456,7 @@ export default function PurchasingScreen() {
           const key = `${old.product_id}|${old.variant_id ?? ""}`;
           const existing = inventorySnapshot.get(key);
           if (existing) {
-            const currentBase = toBaseQty(existing.current_qty, existing.unit).qty;
+            const currentBase = invToBase(existing);
             const newQtyBase = Math.max(0, Math.round(currentBase - oldBase));
             // Reversal: un-apply weighted-avg. Recover original avg_cogs before this purchase.
             // If we can, back-calculate: oldAvg = (currentAvg × currentQty - costPerBase × oldBase) / newQtyBase
@@ -275,7 +470,7 @@ export default function PurchasingScreen() {
               tenant_id: tenantId,
               current_qty: newQtyBase,
               min_qty: existing.min_qty,
-              unit: oldBaseUnit,
+              unit: existing.unit, // preserve display unit marker
               avg_cogs: Math.round(recoveredAvg),
               updated_at: now,
             });
@@ -309,7 +504,7 @@ export default function PurchasingScreen() {
         const { qty: receivedBase, unit: baseUnit } = toBaseQty(item.qty, item.unit);
         const key = `${item.product_id}|${item.variant_id ?? ""}`;
         const existing = inventorySnapshot.get(key);
-        const currentBase = existing ? toBaseQty(existing.current_qty, existing.unit).qty : 0;
+        const currentBase = existing ? invToBase(existing) : 0;
         // Weighted-average COGS: new purchase price in base units
         const costPerBase = item.cost_per_unit / (item.unit === "L" || item.unit === "kg" ? 1000 : 1);
         const newTotalQty = Math.round(currentBase + receivedBase);
@@ -322,7 +517,7 @@ export default function PurchasingScreen() {
           tenant_id: tenantId,
           current_qty: newTotalQty,
           min_qty: existing?.min_qty || 0,
-          unit: baseUnit,
+          unit: existing?.unit || baseUnit, // preserve display unit marker; fall back to receiving item's base unit for new rows
           avg_cogs: Math.round(newAvgCogs),
           updated_at: now,
         });
@@ -363,17 +558,19 @@ export default function PurchasingScreen() {
         if (unit === "kg") return { qty: qty * 1000, unit: "g" };
         return { qty, unit };
       };
+      // For inventory rows: current_qty is always stored in base (g/mL/pcs) regardless of unit display label
+      const invToBase = (inv: { current_qty: number; unit: string }): number => inv.current_qty;
 
       // Reverse inventory effect of the deleted receiving
       const oldItems = state.goodsReceivingItems.filter((i) => i.receiving_id === id);
       const now = Date.now();
       for (const old of oldItems) {
-        const { qty: oldBase, unit: oldBaseUnit } = toBaseQty(old.qty, old.unit);
+        const { qty: oldBase } = toBaseQty(old.qty, old.unit);
         const existing = state.inventory.find(
           (i) => i.product_id === old.product_id && (!i.variant_id || i.variant_id === old.variant_id)
         );
         if (existing) {
-          const currentBase = toBaseQty(existing.current_qty, existing.unit).qty;
+          const currentBase = invToBase(existing);
           const newQtyBase = Math.max(0, Math.round(currentBase - oldBase));
           // Reversal: back-calculate avg_cogs before this purchase was applied
           const costPerBase = old.cost_per_unit / (old.unit === "L" || old.unit === "kg" ? 1000 : 1);
@@ -386,7 +583,7 @@ export default function PurchasingScreen() {
             tenant_id: tenantId,
             current_qty: newQtyBase,
             min_qty: existing.min_qty,
-            unit: oldBaseUnit,
+            unit: existing.unit, // preserve display unit marker
             avg_cogs: Math.round(recoveredAvg),
             updated_at: now,
           });
@@ -490,17 +687,21 @@ export default function PurchasingScreen() {
     setRawDescription(p.description || "");
     setRawActive(p.is_active);
     const storedUnit = state.inventory.find((i) => i.product_id === p.id && (!i.variant_id || i.variant_id === ""))?.unit || "pcs";
-    setRawUnit(storedUnit === "mL" ? "L" : storedUnit === "g" ? "kg" : storedUnit);
+    setRawUnit(storedUnit); // unit is already the display unit (kg/L/g/mL/pcs)
     setShowRawForm(true);
   };
 
-  const handleSaveRaw = async () => {
+  const handleSaveRaw = async (skipWarnings = false) => {
     const nameLower = rawName.trim().toLowerCase();
     const duplicate = rawMaterials.some(
       (p) => p.name.toLowerCase() === nameLower && p.id !== editRawId
     );
     if (duplicate) {
       alert(copy.purchasing.duplicateRawMaterial);
+      return;
+    }
+    if (!editRawId && !skipWarnings && !rawCategory) {
+      setShowRawWarning(true);
       return;
     }
     setSaving(true);
@@ -530,8 +731,8 @@ export default function PurchasingScreen() {
           updated_at: now,
         });
         dispatch({ type: "UPSERT", table: "products", payload: created as unknown as Record<string, unknown> });
-        // Create initial inventory row — normalize unit to base (L→mL, kg→g)
-        const baseRawUnit = rawUnit === "L" ? "mL" : rawUnit === "kg" ? "g" : rawUnit;
+        // Create initial inventory row — store unit as display marker (kg/L/g/mL/pcs)
+        const baseRawUnit = rawUnit;
         const inv = await repo.upsertInventory(supabase, {
           product_id: productId!,
           variant_id: "",
@@ -564,6 +765,392 @@ export default function PurchasingScreen() {
       dispatch({ type: "DELETE", table: "products", id });
     } catch (err) {
       console.error("Delete raw material failed:", err);
+    }
+  };
+
+  // Vendor bulk delete
+  const handleVendorBulkDelete = async () => {
+    setVendorBulkDeleting(true);
+    try {
+      for (const id of selectedVendorIds) {
+        await repo.deleteVendor(supabase, id);
+        dispatch({ type: "DELETE", table: "vendors", id });
+      }
+      setSelectedVendorIds(new Set());
+    } catch (err) {
+      console.error("Bulk delete vendors failed:", err);
+    } finally {
+      setVendorBulkDeleting(false);
+      setShowVendorBulkConfirm(false);
+    }
+  };
+
+  // Category bulk delete
+  const handleCatBulkDelete = async (includeRaws: boolean) => {
+    setCatBulkDeleting(true);
+    try {
+      for (const id of selectedCatIds) {
+        if (includeRaws) {
+          const raws = rawMaterials.filter((p) => p.category_id === id);
+          for (const raw of raws) {
+            await repo.deleteProduct(supabase, raw.id);
+            dispatch({ type: "DELETE", table: "products", id: raw.id });
+          }
+        } else {
+          const raws = rawMaterials.filter((p) => p.category_id === id);
+          for (const raw of raws) {
+            const updated = await repo.updateProduct(supabase, raw.id, { category_id: null });
+            dispatch({ type: "UPSERT", table: "products", payload: updated as unknown as Record<string, unknown> });
+          }
+        }
+        await repo.deleteCategory(supabase, id);
+        dispatch({ type: "DELETE", table: "categories", id });
+      }
+      setSelectedCatIds(new Set());
+    } catch (err) {
+      console.error("Bulk delete categories failed:", err);
+    } finally {
+      setCatBulkDeleting(false);
+      setShowCatBulkConfirm(false);
+    }
+  };
+
+  // Raw material bulk delete
+  const handleRawBulkDelete = async () => {
+    setRawBulkDeleting(true);
+    try {
+      for (const id of selectedRawIds) {
+        await repo.deleteGoodsReceivingItemsByProductId(supabase, id);
+        await repo.deleteComponentsByProductId(supabase, id);
+        await repo.deleteInventoryByProductId(supabase, id);
+        await repo.deleteProduct(supabase, id);
+        dispatch({ type: "DELETE", table: "products", id });
+      }
+      setSelectedRawIds(new Set());
+    } catch (err) {
+      console.error("Bulk delete raw materials failed:", err);
+    } finally {
+      setRawBulkDeleting(false);
+      setShowRawBulkConfirm(false);
+    }
+  };
+
+  // Raw material CSV template download
+  const handleDownloadRawTemplate = () => {
+    const headers = ["name", "category", "unit", "description"];
+    const example = ["Chicken Breast", "Protein", "kg", "Fresh chicken breast"];
+    const csv = "\uFEFF" + headers.join(",") + "\n" + example.map((v) => `"${v}"`).join(",") + "\n";
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "ayakasir_raw_materials_template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Raw material CSV import — step 1: parse → preview
+  const handleImportRawCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setRawImportMsg(null);
+    try {
+      const text = await file.text();
+      const content = text.startsWith("\uFEFF") ? text.slice(1) : text;
+      const lines = content.split(/\r?\n/).filter((l) => l.trim());
+      if (lines.length < 2) throw new Error(copy.purchasing.rawImportError);
+
+      const headers = parseRawCsvLine(lines[0]).map((h) => h.toLowerCase());
+      const idx = (key: string) => headers.indexOf(key);
+
+      const existingNames = new Set(rawMaterials.map((p) => p.name.toLowerCase()));
+      const batchNames = new Set<string>();
+      const existingCatNames = new Set(rawCategories.map((c) => c.name.toLowerCase()));
+
+      const rows: RawImportRow[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = parseRawCsvLine(lines[i]);
+        const name = idx("name") >= 0 ? cols[idx("name")] ?? "" : "";
+        if (!name) continue;
+
+        const category = idx("category") >= 0 ? cols[idx("category")] || "" : "";
+        const rawUnit = idx("unit") >= 0 ? cols[idx("unit")] || "pcs" : "pcs";
+        const unit = normalizeUnit(rawUnit);
+        const description = idx("description") >= 0 ? cols[idx("description")] || "" : "";
+
+        const nameLower = name.toLowerCase();
+        const isDuplicate = existingNames.has(nameLower) || batchNames.has(nameLower);
+        batchNames.add(nameLower);
+
+        const isNewCategory = category.length > 0 && !existingCatNames.has(category.toLowerCase());
+
+        rows.push({ name, category, unit, description, isDuplicate, isNewCategory });
+      }
+
+      if (rows.length === 0) throw new Error(copy.purchasing.rawImportError);
+      setRawImportPreview(rows);
+    } catch (err) {
+      setRawImportMsg({ text: err instanceof Error ? err.message : copy.purchasing.rawImportError, ok: false });
+    }
+  };
+
+  // Raw material CSV import — step 2: confirm → save
+  const handleConfirmRawImport = async () => {
+    if (!rawImportPreview) return;
+    setRawImportSaving(true);
+    let imported = 0;
+    let skipped = 0;
+    try {
+      const now = Date.now();
+      // Build a live category name map (may have been updated since preview)
+      const catByName = new Map(rawCategories.map((c) => [c.name.toLowerCase(), c.id]));
+
+      for (const row of rawImportPreview) {
+        if (row.isDuplicate) { skipped++; continue; }
+
+        // Auto-create category if needed
+        let categoryId: string | null = null;
+        if (row.category) {
+          const catKey = row.category.toLowerCase();
+          if (catByName.has(catKey)) {
+            categoryId = catByName.get(catKey)!;
+          } else {
+            const newCatId = crypto.randomUUID();
+            const created = await repo.createCategory(supabase, {
+              id: newCatId,
+              tenant_id: tenantId,
+              name: row.category.trim(),
+              sort_order: 0,
+              category_type: "RAW_MATERIAL",
+              updated_at: now,
+            });
+            dispatch({ type: "UPSERT", table: "categories", payload: created as unknown as Record<string, unknown> });
+            catByName.set(catKey, newCatId);
+            categoryId = newCatId;
+          }
+        }
+
+        const productId = crypto.randomUUID();
+        const created = await repo.createProduct(supabase, {
+          id: productId,
+          tenant_id: tenantId,
+          name: row.name.trim(),
+          price: 0,
+          category_id: categoryId,
+          description: row.description || null,
+          image_path: null,
+          is_active: true,
+          product_type: "RAW_MATERIAL",
+          updated_at: now,
+        });
+        dispatch({ type: "UPSERT", table: "products", payload: created as unknown as Record<string, unknown> });
+
+        // Store unit as display marker (kg/L/g/mL/pcs); current_qty always stored in base units
+        const baseUnit = row.unit;
+        const inv = await repo.upsertInventory(supabase, {
+          product_id: productId,
+          variant_id: "",
+          tenant_id: tenantId,
+          current_qty: 0,
+          min_qty: 0,
+          unit: baseUnit,
+          avg_cogs: 0,
+          updated_at: now,
+        });
+        dispatch({ type: "UPSERT", table: "inventory", payload: inv as unknown as Record<string, unknown> });
+        imported++;
+      }
+      const msg = skipped > 0
+        ? `${copy.purchasing.rawImportSuccess} (${skipped} ${copy.purchasing.rawImportSkipped})`
+        : copy.purchasing.rawImportSuccess;
+      setRawImportMsg({ text: msg, ok: true });
+    } catch (err) {
+      setRawImportMsg({ text: copy.purchasing.rawImportError, ok: false });
+      console.error("Raw material import failed:", err);
+    } finally {
+      setRawImportSaving(false);
+      setRawImportPreview(null);
+    }
+  };
+
+  // Vendor CSV template download
+  const handleDownloadVendorTemplate = () => {
+    const headers = ["name", "phone", "address"];
+    const example = ["PT Maju Jaya", "08123456789", "Jl. Sudirman No. 1, Jakarta"];
+    const csv = "\uFEFF" + headers.join(",") + "\n" + example.map((v) => `"${v}"`).join(",") + "\n";
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "ayakasir_vendors_template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Vendor CSV import — step 1: parse → preview
+  const handleImportVendorCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setVendorImportMsg(null);
+    try {
+      const text = await file.text();
+      const content = text.startsWith("\uFEFF") ? text.slice(1) : text;
+      const lines = content.split(/\r?\n/).filter((l) => l.trim());
+      if (lines.length < 2) throw new Error(copy.purchasing.importError);
+
+      const headers = parseVendorCsvLine(lines[0]).map((h) => h.toLowerCase());
+      const idx = (key: string) => headers.indexOf(key);
+
+      const existingNames = new Set(state.vendors.map((v) => v.name.toLowerCase()));
+      const batchNames = new Set<string>();
+
+      const rows: VendorImportRow[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = parseVendorCsvLine(lines[i]);
+        const name = idx("name") >= 0 ? cols[idx("name")] ?? "" : "";
+        if (!name) continue;
+
+        const rawPhone = idx("phone") >= 0 ? cols[idx("phone")] || null : null;
+        const phone = normalizeVendorPhone(rawPhone);
+        const address = idx("address") >= 0 ? cols[idx("address")] || null : null;
+
+        const nameLower = name.toLowerCase();
+        const isDuplicate = existingNames.has(nameLower) || batchNames.has(nameLower);
+        batchNames.add(nameLower);
+
+        rows.push({ name, phone, address, isDuplicate });
+      }
+
+      if (rows.length === 0) throw new Error(copy.purchasing.importError);
+      setVendorImportPreview(rows);
+    } catch (err) {
+      setVendorImportMsg({ text: err instanceof Error ? err.message : copy.purchasing.importError, ok: false });
+    }
+  };
+
+  // Vendor CSV import — step 2: confirm → save
+  const handleConfirmVendorImport = async () => {
+    if (!vendorImportPreview) return;
+    setVendorImportSaving(true);
+    let imported = 0;
+    let skipped = 0;
+    try {
+      const now = Date.now();
+      for (const row of vendorImportPreview) {
+        if (row.isDuplicate) { skipped++; continue; }
+        const newId = crypto.randomUUID();
+        const created = await repo.createVendor(supabase, {
+          id: newId,
+          tenant_id: tenantId,
+          name: row.name.trim(),
+          phone: row.phone || null,
+          address: row.address || null,
+          updated_at: now,
+        });
+        dispatch({ type: "UPSERT", table: "vendors", payload: created as unknown as Record<string, unknown> });
+        imported++;
+      }
+      const msg = skipped > 0
+        ? `${copy.purchasing.importSuccess} (${skipped} ${copy.purchasing.importSkipped})`
+        : copy.purchasing.importSuccess;
+      setVendorImportMsg({ text: msg, ok: true });
+    } catch (err) {
+      setVendorImportMsg({ text: copy.purchasing.importError, ok: false });
+      console.error("Vendor import failed:", err);
+    } finally {
+      setVendorImportSaving(false);
+      setVendorImportPreview(null);
+    }
+  };
+
+  // Category CSV template download
+  const handleDownloadCatTemplate = () => {
+    const headers = ["name", "sort_order"];
+    const example = ["Sayuran", "1"];
+    const csv = "\uFEFF" + headers.join(",") + "\n" + example.map((v, i) => i === 1 ? v : `"${v}"`).join(",") + "\n";
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "ayakasir_raw_categories_template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Category CSV import — step 1: parse → preview
+  const handleImportCatCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setCatImportMsg(null);
+    try {
+      const text = await file.text();
+      const content = text.startsWith("\uFEFF") ? text.slice(1) : text;
+      const lines = content.split(/\r?\n/).filter((l) => l.trim());
+      if (lines.length < 2) throw new Error(copy.purchasing.importError);
+
+      const headers = parseCatCsvLine(lines[0]).map((h) => h.toLowerCase());
+      const idx = (key: string) => headers.indexOf(key);
+
+      const existingNames = new Set(rawCategories.map((c) => c.name.toLowerCase()));
+      const batchNames = new Set<string>();
+
+      const rows: CatImportRow[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = parseCatCsvLine(lines[i]);
+        const name = idx("name") >= 0 ? cols[idx("name")] ?? "" : "";
+        if (!name) continue;
+
+        const sort_order = idx("sort_order") >= 0 ? parseInt(cols[idx("sort_order")] || "0") || 0 : 0;
+
+        const nameLower = name.toLowerCase();
+        const isDuplicate = existingNames.has(nameLower) || batchNames.has(nameLower);
+        batchNames.add(nameLower);
+
+        rows.push({ name, sort_order, isDuplicate });
+      }
+
+      if (rows.length === 0) throw new Error(copy.purchasing.importError);
+      setCatImportPreview(rows);
+    } catch (err) {
+      setCatImportMsg({ text: err instanceof Error ? err.message : copy.purchasing.importError, ok: false });
+    }
+  };
+
+  // Category CSV import — step 2: confirm → save
+  const handleConfirmCatImport = async () => {
+    if (!catImportPreview) return;
+    setCatImportSaving(true);
+    let imported = 0;
+    let skipped = 0;
+    try {
+      const now = Date.now();
+      for (const row of catImportPreview) {
+        if (row.isDuplicate) { skipped++; continue; }
+        const newId = crypto.randomUUID();
+        const created = await repo.createCategory(supabase, {
+          id: newId,
+          tenant_id: tenantId,
+          name: row.name.trim(),
+          sort_order: row.sort_order,
+          category_type: "RAW_MATERIAL",
+          updated_at: now,
+        });
+        dispatch({ type: "UPSERT", table: "categories", payload: created as unknown as Record<string, unknown> });
+        imported++;
+      }
+      const msg = skipped > 0
+        ? `${copy.purchasing.catImportSuccess} (${skipped} ${copy.purchasing.importSkipped})`
+        : copy.purchasing.catImportSuccess;
+      setCatImportMsg({ text: msg, ok: true });
+    } catch (err) {
+      setCatImportMsg({ text: copy.purchasing.importError, ok: false });
+      console.error("Category import failed:", err);
+    } finally {
+      setCatImportSaving(false);
+      setCatImportPreview(null);
     }
   };
 
@@ -623,14 +1210,47 @@ export default function PurchasingScreen() {
     setSaving(false);
   };
 
-  const handleDeleteRawCat = async (id: string) => {
-    if (!confirm(copy.common.deleteWarning)) return;
+  const handleDeleteRawCat = (id: string) => {
+    const cat = rawCategories.find((c) => c.id === id);
+    if (!cat) return;
+    const rawMaterialCount = rawMaterials.filter((p) => p.category_id === id).length;
+    setShowRawCatForm(false);
+    setShowCatBulkConfirm(false);
+    setDeleteCatTarget({ id, name: cat.name, rawMaterialCount });
+  };
+
+  const handleConfirmDeleteCatWithRaws = async () => {
+    if (!deleteCatTarget) return;
     try {
-      await repo.deleteCategory(supabase, id);
-      dispatch({ type: "DELETE", table: "categories", id });
+      // Delete all raw materials in this category first
+      const raws = rawMaterials.filter((p) => p.category_id === deleteCatTarget.id);
+      for (const raw of raws) {
+        await repo.deleteProduct(supabase, raw.id);
+        dispatch({ type: "DELETE", table: "products", id: raw.id });
+      }
+      await repo.deleteCategory(supabase, deleteCatTarget.id);
+      dispatch({ type: "DELETE", table: "categories", id: deleteCatTarget.id });
     } catch (err) {
-      console.error("Delete raw category failed:", err);
+      console.error("Delete category with raws failed:", err);
     }
+    setDeleteCatTarget(null);
+  };
+
+  const handleConfirmDeleteCatKeepRaws = async () => {
+    if (!deleteCatTarget) return;
+    try {
+      // Patch all raw materials to null category_id
+      const raws = rawMaterials.filter((p) => p.category_id === deleteCatTarget.id);
+      for (const raw of raws) {
+        const updated = await repo.updateProduct(supabase, raw.id, { category_id: null });
+        dispatch({ type: "UPSERT", table: "products", payload: updated as unknown as Record<string, unknown> });
+      }
+      await repo.deleteCategory(supabase, deleteCatTarget.id);
+      dispatch({ type: "DELETE", table: "categories", id: deleteCatTarget.id });
+    } catch (err) {
+      console.error("Delete category keep raws failed:", err);
+    }
+    setDeleteCatTarget(null);
   };
 
   return (
@@ -643,19 +1263,46 @@ export default function PurchasingScreen() {
           </button>
         )}
         {tab === "vendors" && (
-          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateVendor}>
-            {copy.purchasing.addVendor}
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={handleDownloadVendorTemplate}>
+              ↓ {copy.purchasing.downloadTemplate}
+            </button>
+            <label className="erp-btn erp-btn--ghost erp-btn--sm" style={{ cursor: "pointer" }}>
+              ↑ {copy.purchasing.importCsv}
+              <input type="file" accept=".csv" style={{ display: "none" }} onChange={handleImportVendorCsv} />
+            </label>
+            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateVendor}>
+              {copy.purchasing.addVendor}
+            </button>
+          </div>
         )}
         {tab === "rawMaterials" && (
-          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateRaw}>
-            {copy.purchasing.addRawMaterial}
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={handleDownloadRawTemplate}>
+              ↓ {copy.purchasing.rawDownloadTemplate}
+            </button>
+            <label className="erp-btn erp-btn--ghost erp-btn--sm" style={{ cursor: "pointer" }}>
+              ↑ {copy.purchasing.rawImportCsv}
+              <input type="file" accept=".csv" style={{ display: "none" }} onChange={handleImportRawCsv} />
+            </label>
+            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateRaw}>
+              {copy.purchasing.addRawMaterial}
+            </button>
+          </div>
         )}
         {tab === "categories" && (
-          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateRawCat}>
-            {copy.purchasing.addRawCategory}
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={handleDownloadCatTemplate}>
+              ↓ {copy.purchasing.downloadTemplate}
+            </button>
+            <label className="erp-btn erp-btn--ghost erp-btn--sm" style={{ cursor: "pointer" }}>
+              ↑ {copy.purchasing.importCsv}
+              <input type="file" accept=".csv" style={{ display: "none" }} onChange={handleImportCatCsv} />
+            </label>
+            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateRawCat}>
+              {copy.purchasing.addRawCategory}
+            </button>
+          </div>
         )}
       </div>
 
@@ -676,11 +1323,32 @@ export default function PurchasingScreen() {
 
       {tab === "rawMaterials" && (
         <>
+          {/* Import message banner */}
+          {rawImportMsg && (
+            <div className={`erp-import-msg${rawImportMsg.ok ? " erp-import-msg--ok" : " erp-import-msg--err"}`}>
+              {rawImportMsg.text}
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setRawImportMsg(null)} style={{ marginLeft: 8 }}>✕</button>
+            </div>
+          )}
+
+          {/* Bulk bar */}
+          {isOwner && selectedRawIds.size > 0 && (
+            <div className="erp-bulk-bar">
+              <span>{selectedRawIds.size} {copy.common.selected}</span>
+              <button
+                className="erp-btn erp-btn--danger erp-btn--sm"
+                onClick={() => setShowRawBulkConfirm(true)}
+              >
+                {copy.purchasing.rawBulkDelete}
+              </button>
+            </div>
+          )}
+
           {/* Category filter chips */}
           <div className="erp-filter-bar">
             <span
               className={`erp-chip${filterRawCategory === "" ? " erp-chip--active" : ""}`}
-              onClick={() => setFilterRawCategory("")}
+              onClick={() => { setFilterRawCategory(""); setRawPage(0); setSelectedRawIds(new Set()); }}
             >
               {copy.pos.allCategories}
             </span>
@@ -688,7 +1356,7 @@ export default function PurchasingScreen() {
               <span
                 key={c.id}
                 className={`erp-chip${filterRawCategory === c.id ? " erp-chip--active" : ""}`}
-                onClick={() => setFilterRawCategory(filterRawCategory === c.id ? "" : c.id)}
+                onClick={() => { setFilterRawCategory(filterRawCategory === c.id ? "" : c.id); setRawPage(0); setSelectedRawIds(new Set()); }}
               >
                 {c.name}
               </span>
@@ -703,14 +1371,43 @@ export default function PurchasingScreen() {
               type="text"
               placeholder={copy.common.search}
               value={rawSearch}
-              onChange={(e) => setRawSearch(e.target.value)}
+              onChange={(e) => { setRawSearch(e.target.value); setRawPage(0); setSelectedRawIds(new Set()); }}
             />
+          </div>
+
+          {/* Pagination controls */}
+          <div className="erp-table-header-row">
+            <div className="erp-table-controls">
+              <span className="erp-text-muted" style={{ fontSize: 13 }}>{copy.purchasing.rawRowsPerPage}:</span>
+              {([10, 25, 50] as const).map((n) => (
+                <span
+                  key={n}
+                  className={`erp-chip${rawPageSize === n ? " erp-chip--active" : ""}`}
+                  onClick={() => { setRawPageSize(n); setRawPage(0); setSelectedRawIds(new Set()); }}
+                >
+                  {n}
+                </span>
+              ))}
+            </div>
           </div>
 
           <div className="erp-table-wrap">
             <table className="erp-table">
               <thead>
                 <tr>
+                  {isOwner && (
+                    <th style={{ width: 36 }}>
+                      <input
+                        type="checkbox"
+                        checked={pagedRawMaterials.length > 0 && pagedRawMaterials.every((p) => selectedRawIds.has(p.id))}
+                        onChange={(e) => {
+                          const next = new Set(selectedRawIds);
+                          pagedRawMaterials.forEach((p) => e.target.checked ? next.add(p.id) : next.delete(p.id));
+                          setSelectedRawIds(next);
+                        }}
+                      />
+                    </th>
+                  )}
                   <th>{copy.products.name}</th>
                   <th>{copy.products.category}</th>
                   <th>{copy.products.unit}</th>
@@ -721,13 +1418,26 @@ export default function PurchasingScreen() {
               <tbody>
                 {filteredRawMaterials.length === 0 ? (
                   <tr>
-                    <td colSpan={5} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
+                    <td colSpan={isOwner ? 6 : 5} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
                       {copy.purchasing.noRawMaterials}
                     </td>
                   </tr>
                 ) : (
-                  filteredRawMaterials.map((p) => (
-                    <tr key={p.id}>
+                  pagedRawMaterials.map((p) => (
+                    <tr key={p.id} className={selectedRawIds.has(p.id) ? "erp-table-row--selected" : ""}>
+                      {isOwner && (
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedRawIds.has(p.id)}
+                            onChange={(e) => {
+                              const next = new Set(selectedRawIds);
+                              e.target.checked ? next.add(p.id) : next.delete(p.id);
+                              setSelectedRawIds(next);
+                            }}
+                          />
+                        </td>
+                      )}
                       <td><strong>{p.name}</strong></td>
                       <td>{getRawCategoryName(p.category_id)}</td>
                       <td>{getRawInventoryUnit(p.id)}</td>
@@ -756,6 +1466,15 @@ export default function PurchasingScreen() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination nav */}
+          {rawTotalPages > 1 && (
+            <div className="erp-table-pagination">
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={rawPage === 0} onClick={() => setRawPage((p) => p - 1)}>‹</button>
+              <span style={{ fontSize: 13 }}>{rawPage + 1} / {rawTotalPages}</span>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={rawPage >= rawTotalPages - 1} onClick={() => setRawPage((p) => p + 1)}>›</button>
+            </div>
+          )}
         </>
       )}
 
@@ -868,14 +1587,18 @@ export default function PurchasingScreen() {
                                 {lineItems.length === 0 ? (
                                   <tr><td colSpan={4} style={{ color: "var(--erp-muted)" }}>—</td></tr>
                                 ) : (
-                                  lineItems.map((li) => (
-                                    <tr key={li.id}>
-                                      <td>{getProductName(li.product_id)}</td>
-                                      <td>{li.qty}</td>
-                                      <td>{li.unit}</td>
-                                      <td>{formatRupiah(li.qty * li.cost_per_unit)}</td>
-                                    </tr>
-                                  ))
+                                  lineItems.map((li) => {
+                                    const dispQty = li.unit === "g" ? li.qty / 1000 : li.unit === "mL" ? li.qty / 1000 : li.qty;
+                                    const dispUnit = li.unit === "g" ? "kg" : li.unit === "mL" ? "L" : li.unit;
+                                    return (
+                                      <tr key={li.id}>
+                                        <td>{getProductName(li.product_id)}</td>
+                                        <td>{dispQty % 1 === 0 ? dispQty : dispQty.toFixed(3).replace(/\.?0+$/, "")}</td>
+                                        <td>{dispUnit}</td>
+                                        <td>{formatRupiah(li.qty * li.cost_per_unit)}</td>
+                                      </tr>
+                                    );
+                                  })
                                 )}
                               </tbody>
                             </table>
@@ -893,97 +1616,241 @@ export default function PurchasingScreen() {
       )}
 
       {tab === "vendors" && (
-        <div className="erp-table-wrap">
-          <table className="erp-table">
-            <thead>
-              <tr>
-                <th>{copy.purchasing.vendorName}</th>
-                <th>{copy.purchasing.phone}</th>
-                <th>{copy.purchasing.address}</th>
-                <th>{copy.common.actions}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.vendors.length === 0 ? (
+        <>
+          {/* Import message banner */}
+          {vendorImportMsg && (
+            <div className={`erp-import-msg${vendorImportMsg.ok ? " erp-import-msg--ok" : " erp-import-msg--err"}`}>
+              {vendorImportMsg.text}
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setVendorImportMsg(null)} style={{ marginLeft: 8 }}>✕</button>
+            </div>
+          )}
+
+          {/* Bulk bar */}
+          {isOwner && selectedVendorIds.size > 0 && (
+            <div className="erp-bulk-bar">
+              <span>{selectedVendorIds.size} {copy.common.selected}</span>
+              <button
+                className="erp-btn erp-btn--danger erp-btn--sm"
+                onClick={() => setShowVendorBulkConfirm(true)}
+              >
+                {copy.purchasing.bulkDelete}
+              </button>
+            </div>
+          )}
+
+          {/* Pagination controls */}
+          <div className="erp-table-header-row">
+            <div className="erp-table-controls">
+              <span className="erp-text-muted" style={{ fontSize: 13 }}>{copy.purchasing.rowsPerPage}:</span>
+              {([10, 25, 50] as const).map((n) => (
+                <span
+                  key={n}
+                  className={`erp-chip${vendorPageSize === n ? " erp-chip--active" : ""}`}
+                  onClick={() => { setVendorPageSize(n); setVendorPage(0); setSelectedVendorIds(new Set()); }}
+                >
+                  {n}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="erp-table-wrap">
+            <table className="erp-table">
+              <thead>
                 <tr>
-                  <td colSpan={4} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
-                    {copy.purchasing.noVendors}
-                  </td>
+                  {isOwner && (
+                    <th style={{ width: 36 }}>
+                      <input
+                        type="checkbox"
+                        checked={pagedVendors.length > 0 && pagedVendors.every((v) => selectedVendorIds.has(v.id))}
+                        onChange={(e) => {
+                          const next = new Set(selectedVendorIds);
+                          pagedVendors.forEach((v) => e.target.checked ? next.add(v.id) : next.delete(v.id));
+                          setSelectedVendorIds(next);
+                        }}
+                      />
+                    </th>
+                  )}
+                  <th>{copy.purchasing.vendorName}</th>
+                  <th>{copy.purchasing.phone}</th>
+                  <th>{copy.purchasing.address}</th>
+                  <th>{copy.common.actions}</th>
                 </tr>
-              ) : (
-                state.vendors.map((v) => (
-                  <tr key={v.id}>
-                    <td><strong>{v.name}</strong></td>
-                    <td>{v.phone || "—"}</td>
-                    <td>{v.address || "—"}</td>
-                    <td className="erp-td-actions">
-                      <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => openEditVendor(v)}>
-                        {copy.common.edit}
-                      </button>
-                      {isOwner && (
-                        <button
-                          className="erp-btn erp-btn--ghost erp-btn--sm"
-                          style={{ color: "var(--erp-danger)" }}
-                          onClick={() => handleDeleteVendor(v.id)}
-                        >
-                          {copy.common.delete}
-                        </button>
-                      )}
+              </thead>
+              <tbody>
+                {sortedVendors.length === 0 ? (
+                  <tr>
+                    <td colSpan={isOwner ? 5 : 4} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
+                      {copy.purchasing.noVendors}
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {tab === "categories" && (
-        <div className="erp-table-wrap">
-          <table className="erp-table">
-            <thead>
-              <tr>
-                <th>{copy.products.categoryName}</th>
-                <th>{copy.products.sortOrder}</th>
-                <th>{copy.purchasing.itemCount}</th>
-                <th>{copy.common.actions}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rawCategories.length === 0 ? (
-                <tr>
-                  <td colSpan={4} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
-                    {copy.purchasing.noCategories}
-                  </td>
-                </tr>
-              ) : (
-                rawCategories.map((c) => (
-                  <tr key={c.id}>
-                    <td><strong>{c.name}</strong></td>
-                    <td>{c.sort_order}</td>
-                    <td>{rawMaterials.filter((p) => p.category_id === c.id).length}</td>
-                    <td className="erp-td-actions">
+                ) : (
+                  pagedVendors.map((v) => (
+                    <tr key={v.id} className={selectedVendorIds.has(v.id) ? "erp-table-row--selected" : ""}>
                       {isOwner && (
-                        <>
-                          <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => openEditRawCat(c)}>
-                            {copy.common.edit}
-                          </button>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedVendorIds.has(v.id)}
+                            onChange={(e) => {
+                              const next = new Set(selectedVendorIds);
+                              e.target.checked ? next.add(v.id) : next.delete(v.id);
+                              setSelectedVendorIds(next);
+                            }}
+                          />
+                        </td>
+                      )}
+                      <td><strong>{v.name}</strong></td>
+                      <td>{v.phone || "—"}</td>
+                      <td>{v.address || "—"}</td>
+                      <td className="erp-td-actions">
+                        <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => openEditVendor(v)}>
+                          {copy.common.edit}
+                        </button>
+                        {isOwner && (
                           <button
                             className="erp-btn erp-btn--ghost erp-btn--sm"
                             style={{ color: "var(--erp-danger)" }}
-                            onClick={() => handleDeleteRawCat(c.id)}
+                            onClick={() => handleDeleteVendor(v.id)}
                           >
                             {copy.common.delete}
                           </button>
-                        </>
-                      )}
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination nav */}
+          {vendorTotalPages > 1 && (
+            <div className="erp-table-pagination">
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={vendorPage === 0} onClick={() => setVendorPage((p) => p - 1)}>‹</button>
+              <span style={{ fontSize: 13 }}>{vendorPage + 1} / {vendorTotalPages}</span>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={vendorPage >= vendorTotalPages - 1} onClick={() => setVendorPage((p) => p + 1)}>›</button>
+            </div>
+          )}
+        </>
+      )}
+
+      {tab === "categories" && (
+        <>
+          {catImportMsg && (
+            <div className={`erp-import-msg${catImportMsg.ok ? " erp-import-msg--ok" : " erp-import-msg--err"}`}>
+              {catImportMsg.text}
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setCatImportMsg(null)}>✕</button>
+            </div>
+          )}
+
+          {isOwner && selectedCatIds.size > 0 && (
+            <div className="erp-bulk-bar">
+              <span>{selectedCatIds.size} {copy.common.selected}</span>
+              <button
+                className="erp-btn erp-btn--danger erp-btn--sm"
+                onClick={() => { setDeleteCatTarget(null); setShowCatBulkConfirm(true); }}
+              >
+                {copy.purchasing.bulkDelete}
+              </button>
+            </div>
+          )}
+
+          {/* Pagination controls */}
+          <div className="erp-table-header-row">
+            <div className="erp-table-controls">
+              <span className="erp-text-muted" style={{ fontSize: 13 }}>{copy.purchasing.rowsPerPage}:</span>
+              {([10, 25, 50] as const).map((n) => (
+                <span
+                  key={n}
+                  className={`erp-chip${catPageSize === n ? " erp-chip--active" : ""}`}
+                  onClick={() => { setCatPageSize(n); setCatPage(0); setSelectedCatIds(new Set()); }}
+                >
+                  {n}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="erp-table-wrap">
+            <table className="erp-table">
+              <thead>
+                <tr>
+                  {isOwner && <th style={{ width: 36 }}>
+                    <input
+                      type="checkbox"
+                      checked={pagedRawCategories.length > 0 && pagedRawCategories.every((c) => selectedCatIds.has(c.id))}
+                      onChange={(e) => {
+                        const next = new Set(selectedCatIds);
+                        pagedRawCategories.forEach((c) => e.target.checked ? next.add(c.id) : next.delete(c.id));
+                        setSelectedCatIds(next);
+                      }}
+                    />
+                  </th>}
+                  <th>{copy.products.categoryName}</th>
+                  <th>{copy.products.sortOrder}</th>
+                  <th>{copy.purchasing.itemCount}</th>
+                  <th>{copy.common.actions}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedRawCategories.length === 0 ? (
+                  <tr>
+                    <td colSpan={isOwner ? 5 : 4} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
+                      {copy.purchasing.noCategories}
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                ) : (
+                  pagedRawCategories.map((c) => (
+                    <tr key={c.id} className={selectedCatIds.has(c.id) ? "erp-table-row--selected" : ""}>
+                      {isOwner && (
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedCatIds.has(c.id)}
+                            onChange={(e) => {
+                              const next = new Set(selectedCatIds);
+                              e.target.checked ? next.add(c.id) : next.delete(c.id);
+                              setSelectedCatIds(next);
+                            }}
+                          />
+                        </td>
+                      )}
+                      <td><strong>{c.name}</strong></td>
+                      <td>{c.sort_order}</td>
+                      <td>{rawMaterials.filter((p) => p.category_id === c.id).length}</td>
+                      <td className="erp-td-actions">
+                        {isOwner && (
+                          <>
+                            <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => openEditRawCat(c)}>
+                              {copy.common.edit}
+                            </button>
+                            <button
+                              className="erp-btn erp-btn--ghost erp-btn--sm"
+                              style={{ color: "var(--erp-danger)" }}
+                              onClick={() => handleDeleteRawCat(c.id)}
+                            >
+                              {copy.common.delete}
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination nav */}
+          {catTotalPages > 1 && (
+            <div className="erp-table-pagination">
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={catPage === 0} onClick={() => setCatPage((p) => p - 1)}>‹</button>
+              <span style={{ fontSize: 13 }}>{catPage + 1} / {catTotalPages}</span>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={catPage >= catTotalPages - 1} onClick={() => setCatPage((p) => p + 1)}>›</button>
+            </div>
+          )}
+        </>
       )}
 
       {/* Goods Receiving Form */}
@@ -1202,8 +2069,112 @@ export default function PurchasingScreen() {
               <button className="erp-btn erp-btn--secondary" onClick={() => setShowRawForm(false)}>
                 {copy.common.cancel}
               </button>
-              <button className="erp-btn erp-btn--primary" onClick={handleSaveRaw} disabled={saving || !rawName}>
+              <button className="erp-btn erp-btn--primary" onClick={() => handleSaveRaw()} disabled={saving || !rawName}>
                 {saving ? copy.common.loading : copy.common.save}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Raw Material pre-save warning */}
+      {showRawWarning && (
+        <div className="erp-overlay" onClick={() => setShowRawWarning(false)}>
+          <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.purchasing.warnRawTitle}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowRawWarning(false)}>
+                {copy.common.close}
+              </button>
+            </div>
+            <div className="erp-dialog-body">
+              <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
+                <li style={{ marginBottom: "0.5rem" }}>{copy.purchasing.warnRawNoCategory}</li>
+              </ul>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowRawWarning(false)}>
+                {copy.common.cancel}
+              </button>
+              <button
+                className="erp-btn erp-btn--primary"
+                onClick={() => { setShowRawWarning(false); handleSaveRaw(true); }}
+              >
+                {copy.common.save}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Vendor Bulk Delete Confirm */}
+      {showVendorBulkConfirm && (
+        <div className="erp-overlay" onClick={() => setShowVendorBulkConfirm(false)}>
+          <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.purchasing.bulkDelete}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowVendorBulkConfirm(false)}>{copy.common.close}</button>
+            </div>
+            <div className="erp-dialog-body">
+              <p>{copy.purchasing.bulkDeleteConfirm}</p>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowVendorBulkConfirm(false)}>{copy.common.cancel}</button>
+              <button className="erp-btn erp-btn--danger" onClick={handleVendorBulkDelete} disabled={vendorBulkDeleting}>
+                {vendorBulkDeleting ? copy.common.loading : copy.common.delete}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Vendor CSV Import Preview */}
+      {vendorImportPreview && (
+        <div className="erp-overlay" onClick={() => setVendorImportPreview(null)}>
+          <div className="erp-dialog erp-dialog--wide" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.purchasing.importPreviewTitle}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setVendorImportPreview(null)}>{copy.common.close}</button>
+            </div>
+            <div className="erp-dialog-body">
+              <p style={{ fontSize: 13, color: "var(--erp-ink-secondary)", marginBottom: 12 }}>{copy.purchasing.importPreviewHint}</p>
+              <div className="erp-table-wrap">
+                <table className="erp-table">
+                  <thead>
+                    <tr>
+                      <th>{copy.purchasing.vendorName}</th>
+                      <th>{copy.purchasing.phone}</th>
+                      <th>{copy.purchasing.address}</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {vendorImportPreview.map((row, i) => (
+                      <tr key={i} style={{ opacity: row.isDuplicate ? 0.5 : 1 }}>
+                        <td><strong>{row.name}</strong></td>
+                        <td>{row.phone || "—"}</td>
+                        <td>{row.address || "—"}</td>
+                        <td>
+                          {row.isDuplicate && (
+                            <span className="erp-badge erp-badge--danger" style={{ fontSize: 11 }}>
+                              {copy.purchasing.importDuplicate}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setVendorImportPreview(null)}>{copy.common.cancel}</button>
+              <button
+                className="erp-btn erp-btn--primary"
+                onClick={handleConfirmVendorImport}
+                disabled={vendorImportSaving || vendorImportPreview.every((r) => r.isDuplicate)}
+              >
+                {vendorImportSaving ? copy.common.loading : copy.purchasing.importConfirm}
               </button>
             </div>
           </div>
@@ -1234,7 +2205,7 @@ export default function PurchasingScreen() {
               {editRawCatId && isOwner && (
                 <button
                   className="erp-btn erp-btn--danger erp-btn--sm"
-                  onClick={() => { handleDeleteRawCat(editRawCatId); setShowRawCatForm(false); }}
+                  onClick={() => handleDeleteRawCat(editRawCatId!)}
                   style={{ marginRight: "auto" }}
                 >
                   {copy.common.delete}
@@ -1245,6 +2216,217 @@ export default function PurchasingScreen() {
               </button>
               <button className="erp-btn erp-btn--primary" onClick={handleSaveRawCat} disabled={saving || !rawCatName}>
                 {saving ? copy.common.loading : copy.common.save}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Category Bulk Delete Confirm */}
+      {showCatBulkConfirm && (() => {
+        const bulkRawCount = rawMaterials.filter((p) => p.category_id && selectedCatIds.has(p.category_id)).length;
+        return (
+          <div className="erp-overlay" onClick={() => setShowCatBulkConfirm(false)}>
+            <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+              <div className="erp-dialog-header">
+                <h3>{copy.purchasing.bulkDelete}</h3>
+                <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowCatBulkConfirm(false)}>{copy.common.close}</button>
+              </div>
+              <div className="erp-dialog-body">
+                <p style={{ fontSize: 13, color: "var(--erp-ink-secondary)", marginBottom: 12 }}>
+                  {bulkRawCount > 0
+                    ? `${bulkRawCount} ${copy.purchasing.deleteCategoryRawCount}`
+                    : copy.purchasing.catBulkDeleteConfirm}
+                </p>
+              </div>
+              <div className="erp-dialog-footer" style={{ flexDirection: "column", gap: 8 }}>
+                {bulkRawCount > 0 ? (
+                  <>
+                    <button className="erp-btn erp-btn--danger" style={{ width: "100%" }} onClick={() => handleCatBulkDelete(true)} disabled={catBulkDeleting}>
+                      {catBulkDeleting ? copy.common.loading : copy.purchasing.deleteCategoryWithRaws}
+                    </button>
+                    <button className="erp-btn erp-btn--danger" style={{ width: "100%" }} onClick={() => handleCatBulkDelete(false)} disabled={catBulkDeleting}>
+                      {catBulkDeleting ? copy.common.loading : copy.purchasing.deleteCategoryKeepRaws}
+                    </button>
+                  </>
+                ) : (
+                  <button className="erp-btn erp-btn--danger" style={{ width: "100%" }} onClick={() => handleCatBulkDelete(false)} disabled={catBulkDeleting}>
+                    {catBulkDeleting ? copy.common.loading : copy.common.delete}
+                  </button>
+                )}
+                <button className="erp-btn erp-btn--secondary" style={{ width: "100%" }} onClick={() => setShowCatBulkConfirm(false)}>{copy.common.cancel}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Category CSV Import Preview */}
+      {catImportPreview && (
+        <div className="erp-overlay" onClick={() => setCatImportPreview(null)}>
+          <div className="erp-dialog erp-dialog--wide" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.purchasing.importPreviewTitle}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setCatImportPreview(null)}>{copy.common.close}</button>
+            </div>
+            <div className="erp-dialog-body">
+              <p style={{ fontSize: 13, color: "var(--erp-ink-secondary)", marginBottom: 12 }}>{copy.purchasing.catImportPreviewHint}</p>
+              <div className="erp-table-wrap">
+                <table className="erp-table">
+                  <thead>
+                    <tr>
+                      <th>{copy.products.categoryName}</th>
+                      <th>{copy.products.sortOrder}</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {catImportPreview.map((row, i) => (
+                      <tr key={i} style={{ opacity: row.isDuplicate ? 0.5 : 1 }}>
+                        <td><strong>{row.name}</strong></td>
+                        <td>{row.sort_order}</td>
+                        <td>
+                          {row.isDuplicate && (
+                            <span className="erp-badge erp-badge--danger" style={{ fontSize: 11 }}>
+                              {copy.purchasing.importDuplicate}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setCatImportPreview(null)}>{copy.common.cancel}</button>
+              <button
+                className="erp-btn erp-btn--primary"
+                onClick={handleConfirmCatImport}
+                disabled={catImportSaving || catImportPreview.every((r) => r.isDuplicate)}
+              >
+                {catImportSaving ? copy.common.loading : copy.purchasing.importConfirm}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Raw Material Bulk Delete Confirm */}
+      {showRawBulkConfirm && (
+        <div className="erp-overlay" onClick={() => setShowRawBulkConfirm(false)}>
+          <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.purchasing.rawBulkDelete}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowRawBulkConfirm(false)}>{copy.common.close}</button>
+            </div>
+            <div className="erp-dialog-body">
+              <p>{copy.purchasing.rawBulkDeleteConfirm}</p>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowRawBulkConfirm(false)}>{copy.common.cancel}</button>
+              <button className="erp-btn erp-btn--danger" onClick={handleRawBulkDelete} disabled={rawBulkDeleting}>
+                {rawBulkDeleting ? copy.common.loading : copy.common.delete}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Raw Material CSV Import Preview */}
+      {rawImportPreview && (
+        <div className="erp-overlay" onClick={() => setRawImportPreview(null)}>
+          <div className="erp-dialog erp-dialog--wide" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.purchasing.rawImportPreviewTitle}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setRawImportPreview(null)}>{copy.common.close}</button>
+            </div>
+            <div className="erp-dialog-body">
+              <p style={{ fontSize: 13, color: "var(--erp-ink-secondary)", marginBottom: 12 }}>{copy.purchasing.rawImportPreviewHint}</p>
+              <div className="erp-table-wrap">
+                <table className="erp-table">
+                  <thead>
+                    <tr>
+                      <th>{copy.products.name}</th>
+                      <th>{copy.products.category}</th>
+                      <th>{copy.products.unit}</th>
+                      <th>{copy.products.description}</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rawImportPreview.map((row, i) => (
+                      <tr key={i} style={{ opacity: row.isDuplicate ? 0.5 : 1 }}>
+                        <td><strong>{row.name}</strong></td>
+                        <td>
+                          {row.category || "—"}
+                          {row.isNewCategory && !row.isDuplicate && (
+                            <span className="erp-badge erp-badge--warning" style={{ fontSize: 11, marginLeft: 4 }}>
+                              {copy.purchasing.rawImportNewCategory}
+                            </span>
+                          )}
+                        </td>
+                        <td>{row.unit}</td>
+                        <td>{row.description || "—"}</td>
+                        <td>
+                          {row.isDuplicate && (
+                            <span className="erp-badge erp-badge--danger" style={{ fontSize: 11 }}>
+                              {copy.purchasing.rawImportDuplicate}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setRawImportPreview(null)}>{copy.common.cancel}</button>
+              <button
+                className="erp-btn erp-btn--primary"
+                onClick={handleConfirmRawImport}
+                disabled={rawImportSaving || rawImportPreview.every((r) => r.isDuplicate)}
+              >
+                {rawImportSaving ? copy.common.loading : copy.purchasing.rawImportConfirm}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Category Options Dialog */}
+      {deleteCatTarget && (
+        <div className="erp-overlay" onClick={() => setDeleteCatTarget(null)}>
+          <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.purchasing.deleteCategoryTitle}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setDeleteCatTarget(null)}>{copy.common.close}</button>
+            </div>
+            <div className="erp-dialog-body">
+              <p style={{ fontSize: 13, color: "var(--erp-ink-secondary)", marginBottom: 12 }}>
+                {deleteCatTarget.rawMaterialCount > 0
+                  ? `${deleteCatTarget.rawMaterialCount} ${copy.purchasing.deleteCategoryRawCount}`
+                  : copy.common.deleteWarning}
+              </p>
+            </div>
+            <div className="erp-dialog-footer" style={{ flexDirection: "column", gap: 8 }}>
+              {deleteCatTarget.rawMaterialCount > 0 ? (
+                <>
+                  <button className="erp-btn erp-btn--danger" style={{ width: "100%" }} onClick={handleConfirmDeleteCatWithRaws}>
+                    {copy.purchasing.deleteCategoryWithRaws}
+                  </button>
+                  <button className="erp-btn erp-btn--danger" style={{ width: "100%" }} onClick={handleConfirmDeleteCatKeepRaws}>
+                    {copy.purchasing.deleteCategoryKeepRaws}
+                  </button>
+                </>
+              ) : (
+                <button className="erp-btn erp-btn--danger" style={{ width: "100%" }} onClick={handleConfirmDeleteCatKeepRaws}>
+                  {copy.common.delete}
+                </button>
+              )}
+              <button className="erp-btn erp-btn--secondary" style={{ width: "100%" }} onClick={() => setDeleteCatTarget(null)}>
+                {copy.common.cancel}
               </button>
             </div>
           </div>

@@ -93,7 +93,7 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
       subtitle:
         "Running a small business is already hard enough. AyaKasir keeps things simple — one app for your FnB, retail, or service business. No complicated setup, no extra cost. Just what you need to run smoothly, every day.",
       ctaPlayStore: "Get it on Google Play",
-      ctaLogin: "Open Dashboard"
+      ctaLogin: "Register for Free!"
     },
     features: {
       eyebrow: "One Flow, End to End",
@@ -133,7 +133,7 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
     },
     metrics: {
       eyebrow: "Live Growth",
-      title: "Trusted by businesses across Indonesia.",
+      title: "Trusted by SMEs across Indonesia.",
       subtitle:
         "Real activity from registered tenants and their daily transactions.",
       items: [
@@ -295,7 +295,7 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
       subtitle:
         "Bisnis kecil sudah cukup banyak tantangannya. AyaKasir bikin semuanya simpel — satu aplikasi untuk usaha FnB, retail, atau jasa kamu. Tanpa setup ribet, tanpa biaya tambahan. Cukup yang kamu butuhkan untuk jalan tiap hari.",
       ctaPlayStore: "Unduh di Google Play",
-      ctaLogin: "Buka Dashboard"
+      ctaLogin: "Daftar Gratis!"
     },
     features: {
       eyebrow: "Satu Alur, Dari Awal Sampai Akhir",
@@ -335,7 +335,7 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
     },
     metrics: {
       eyebrow: "Pertumbuhan Nyata",
-      title: "Dipercaya bisnis di seluruh Indonesia.",
+      title: "Dipercaya oleh UMKM di seluruh Indonesia.",
       subtitle:
         "Aktivitas riil dari tenant terdaftar dan transaksi harian mereka.",
       items: [

@@ -251,7 +251,7 @@ const featureIllustrations = [
     <circle cx="87" cy="32" r="10" fill="#37A454" opacity="0.5"/>
     <rect x="72" y="46" width="30" height="5" rx="2.5" fill="#37A454" opacity="0.4"/>
     <rect x="72" y="54" width="20" height="4" rx="2" fill="#37A454" opacity="0.25"/>
-    <rect x="30" y="72" width="60" height="20" rx="8" fill="#1D72E9"/>
+    <rect x="20" y="72" width="80" height="20" rx="8" fill="#1D72E9"/>
     <text x="60" y="86" textAnchor="middle" fontSize="9" fill="white" fontWeight="600">+ Add Variant</text>
   </svg>,
 
@@ -382,7 +382,7 @@ function CrossPlatformIllo() {
       <rect x="20" y="22" width="76" height="134" rx="14" fill="#1e2230" filter="url(#cpShadow)"/>
       <rect x="27" y="35" width="62" height="100" rx="8" fill="#f0f4ff"/>
       <rect x="47" y="27" width="24" height="6" rx="3" fill="#111827"/>
-      <circle cx="58" cy="151" r="5.5" fill="#2d3346"/>
+      <circle cx="58" cy="145" r="5.5" fill="#2d3346"/>
       {/* App bar */}
       <rect x="27" y="35" width="62" height="14" rx="8" fill="#1D72E9" opacity="0.15"/>
       <text x="58" y="45" textAnchor="middle" fontSize="6.5" fill="#1D72E9" fontWeight="700">AyaKasir</text>
@@ -398,8 +398,8 @@ function CrossPlatformIllo() {
       <rect x="30" y="87" width="59" height="7" rx="3" fill="#e8f0fe"/>
       <rect x="30" y="98" width="42" height="7" rx="3" fill="#e6f4ea"/>
       {/* Checkout */}
-      <rect x="30" y="111" width="59" height="15" rx="6" fill="#1D72E9"/>
-      <text x="59" y="122" textAnchor="middle" fontSize="6" fill="white" fontWeight="700">Bayar</text>
+      <rect x="28" y="111" width="59" height="15" rx="6" fill="#1D72E9"/>
+      <text x="57" y="120" textAnchor="middle" fontSize="6" fill="white" fontWeight="700">Bayar</text>
 
       {/* Android label */}
       <rect x="22" y="162" width="72" height="18" rx="9" fill="#f3f4f6"/>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import { useErp } from "../store";
 import { getErpCopy } from "../i18n";
 import { formatRupiah } from "../utils";
@@ -22,7 +22,78 @@ interface FormComponent {
   unit: InventoryUnit;
 }
 
-type Tab = "products" | "categories";
+type Tab = "products" | "variants" | "categories";
+
+// ── CSV helpers ──────────────────────────────────────────────────────────────
+
+function parseProdCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  let i = 0;
+  while (i < line.length) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < line.length && line[i + 1] === '"') {
+          cur += '"';
+          i += 2;
+        } else {
+          inQuotes = false;
+          i++;
+        }
+      } else {
+        cur += ch;
+        i++;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+        i++;
+      } else if (ch === ",") {
+        fields.push(cur);
+        cur = "";
+        i++;
+      } else {
+        cur += ch;
+        i++;
+      }
+    }
+  }
+  fields.push(cur);
+  return fields;
+}
+
+interface ProdCsvRow {
+  name: string;
+  category: string;
+  price: number;
+  description: string;
+  active: boolean;
+  isDuplicate: boolean;
+  isNewCategory: boolean;
+  // variants: "Name:PriceAdj|Name2:PriceAdj2" raw string for display
+  variantsRaw: string;
+  // bom_materials: "RawName:Qty:Unit|..." raw string for display
+  bomRaw: string;
+  parsedVariants: { name: string; priceAdj: number }[];
+  parsedBom: { rawName: string; qty: number; unit: string; isMissing: boolean; isUnitMismatch: boolean }[];
+  hasMissingRaw: boolean;
+  hasUnitMismatch: boolean;
+}
+
+// ── Unit normalization ───────────────────────────────────────────────────────
+
+function normalizeToBaseUnit(qty: number, fromUnit: string, toUnit: string): number | null {
+  if (fromUnit === toUnit) return qty;
+  if (fromUnit === "kg" && toUnit === "g") return qty * 1000;
+  if (fromUnit === "g" && toUnit === "kg") return qty / 1000;
+  if (fromUnit === "L" && toUnit === "mL") return qty * 1000;
+  if (fromUnit === "mL" && toUnit === "L") return qty / 1000;
+  return null;
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
 
 export default function ProductsScreen() {
   const { state, dispatch, supabase, tenantId, locale } = useErp();
@@ -36,6 +107,21 @@ export default function ProductsScreen() {
   const [editId, setEditId] = useState<string | null>(null);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [editCategoryId, setEditCategoryId] = useState<string | null>(null);
+
+  // Pagination
+  const [prodPage, setProdPage] = useState(0);
+  const [prodPageSize, setProdPageSize] = useState(10);
+
+  // Bulk delete
+  const [selectedProdIds, setSelectedProdIds] = useState<Set<string>>(new Set());
+  const [showProdBulkConfirm, setShowProdBulkConfirm] = useState(false);
+
+  // CSV import
+  const csvInputRef = useRef<HTMLInputElement>(null);
+  const [csvRows, setCsvRows] = useState<ProdCsvRow[]>([]);
+  const [showImportPreview, setShowImportPreview] = useState(false);
+  const [importMsg, setImportMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [importing, setImporting] = useState(false);
 
   // Form state
   const [formName, setFormName] = useState("");
@@ -51,9 +137,34 @@ export default function ProductsScreen() {
   // BOM state
   const [formComponents, setFormComponents] = useState<FormComponent[]>([]);
 
+  // Warning dialog state
+  const [productWarnings, setProductWarnings] = useState<string[]>([]);
+  const [showProductWarning, setShowProductWarning] = useState(false);
+
   // Category form state
   const [catName, setCatName] = useState("");
   const [catOrder, setCatOrder] = useState("0");
+
+  // Variant name form state (Variants tab)
+  const [showVariantNameForm, setShowVariantNameForm] = useState(false);
+  const [editVariantNameKey, setEditVariantNameKey] = useState<string | null>(null); // null = add new
+  const [variantNameInput, setVariantNameInput] = useState("");
+  const [variantNameError, setVariantNameError] = useState("");
+
+  // Variant name templates — persisted in localStorage so new names survive page reload
+  const localStorageKey = `ayakasir_variant_templates_${tenantId}`;
+  const [variantNameTemplates, setVariantNameTemplates] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      return JSON.parse(localStorage.getItem(localStorageKey) ?? "[]");
+    } catch { return []; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(localStorageKey, JSON.stringify(variantNameTemplates)); }
+    catch { /* ignore */ }
+  }, [variantNameTemplates, localStorageKey]);
+
+  // ── Derived data ────────────────────────────────────────────────────────────
 
   const filteredProducts = useMemo(() => {
     let list = state.products.filter((p) => p.product_type === "MENU_ITEM");
@@ -64,11 +175,30 @@ export default function ProductsScreen() {
       const q = search.toLowerCase();
       list = list.filter((p) => p.name.toLowerCase().includes(q));
     }
-    return list;
-  }, [state.products, filterCategory, search]);
+    const catMap = new Map(state.categories.map((c) => [c.id, c]));
+    return [...list].sort((a, b) => {
+      const catA = a.category_id ? catMap.get(a.category_id) : undefined;
+      const catB = b.category_id ? catMap.get(b.category_id) : undefined;
+      const nameA = (catA?.name ?? "\uFFFF").toLowerCase();
+      const nameB = (catB?.name ?? "\uFFFF").toLowerCase();
+      const cmp = nameA.localeCompare(nameB);
+      if (cmp !== 0) return cmp;
+      return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    });
+  }, [state.products, state.categories, filterCategory, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / prodPageSize));
+  const safePage = Math.min(prodPage, totalPages - 1);
+  const pagedProducts = filteredProducts.slice(safePage * prodPageSize, safePage * prodPageSize + prodPageSize);
 
   const categories = useMemo(
-    () => state.categories.filter((c) => c.category_type === "MENU"),
+    () =>
+      state.categories
+        .filter((c) => c.category_type === "MENU")
+        .sort((a, b) => {
+          if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+          return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+        }),
     [state.categories]
   );
 
@@ -82,6 +212,21 @@ export default function ProductsScreen() {
     [state.products]
   );
 
+  // Unique variant names: union of DB variants + localStorage templates, alphabetically sorted
+  const uniqueVariantNames = useMemo(() => {
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const v of state.variants) {
+      const key = v.name.toLowerCase();
+      if (!seen.has(key)) { seen.add(key); names.push(v.name); }
+    }
+    for (const t of variantNameTemplates) {
+      const key = t.toLowerCase();
+      if (!seen.has(key)) { seen.add(key); names.push(t); }
+    }
+    return names.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  }, [state.variants, variantNameTemplates]);
+
   const getInventoryUnit = (productId: string): InventoryUnit => {
     const inv = state.inventory.find((i) => i.product_id === productId && i.variant_id === "");
     return inv?.unit || "pcs";
@@ -90,8 +235,17 @@ export default function ProductsScreen() {
   const getCompatibleUnits = (baseUnit: InventoryUnit): InventoryUnit[] => {
     if (baseUnit === "g" || baseUnit === "kg") return ["g", "kg"];
     if (baseUnit === "mL" || baseUnit === "L") return ["mL", "L"];
-    return [baseUnit]; // pcs or unknown — no conversion
+    return [baseUnit];
   };
+
+  // ── Reset helpers ───────────────────────────────────────────────────────────
+
+  const resetPageAndSelection = () => {
+    setProdPage(0);
+    setSelectedProdIds(new Set());
+  };
+
+  // ── Product form ────────────────────────────────────────────────────────────
 
   const openCreate = () => {
     setEditId(null);
@@ -150,7 +304,6 @@ export default function ProductsScreen() {
       prev.map((c, i) => {
         if (i !== idx) return c;
         const updated = { ...c, [field]: value };
-        // Auto-fill unit from selected raw material's inventory (read-only)
         if (field === "component_product_id") {
           updated.unit = value ? getInventoryUnit(value) : "pcs";
         }
@@ -159,7 +312,37 @@ export default function ProductsScreen() {
     );
   };
 
-  const handleSaveProduct = async () => {
+  const handleSaveProduct = async (skipWarnings = false) => {
+    // Req 7: duplicate name check (case-insensitive) against MENU_ITEM products, excluding current editId
+    const nameLower = formName.trim().toLowerCase();
+    const duplicate = state.products.find(
+      (p) =>
+        p.product_type === "MENU_ITEM" &&
+        p.name.toLowerCase() === nameLower &&
+        p.id !== editId
+    );
+    if (duplicate) {
+      alert(copy.products.duplicateProduct);
+      return;
+    }
+
+    // Block saving if any two variants in the form share the same name (case-insensitive)
+    const variantNamesLower = formVariants.map((v) => v.name.trim().toLowerCase()).filter(Boolean);
+    if (new Set(variantNamesLower).size !== variantNamesLower.length) {
+      alert(copy.products.duplicateVariantName);
+      return;
+    }
+
+    if (!editId && !skipWarnings) {
+      const warnings: string[] = [];
+      if (!formCategory) warnings.push(copy.products.warnNoCategory);
+      if (formComponents.length === 0) warnings.push(copy.products.warnNoBom);
+      if (warnings.length > 0) {
+        setProductWarnings(warnings);
+        setShowProductWarning(true);
+        return;
+      }
+    }
     setSaving(true);
     try {
       const now = Date.now();
@@ -212,10 +395,20 @@ export default function ProductsScreen() {
         dispatch({ type: "UPSERT", table: "variants", payload: saved as unknown as Record<string, unknown> });
       }
 
-      // Save BOM components
-      const validComponents = formComponents.filter(
-        (c) => c.component_product_id && parseFloat(c.required_qty) > 0
-      );
+      // Req 8 & 9: Save BOM components with unit normalization
+      const validComponents: typeof formComponents = [];
+      for (const c of formComponents) {
+        if (!c.component_product_id || !(parseFloat(c.required_qty) > 0)) continue;
+        const baseUnit = getInventoryUnit(c.component_product_id);
+        const normalized = normalizeToBaseUnit(parseFloat(c.required_qty), c.unit, baseUnit);
+        if (normalized === null) {
+          // Incompatible units — skip with warning
+          alert(`Unit mismatch: cannot convert "${c.unit}" to "${baseUnit}" for raw material. Row skipped.`);
+          continue;
+        }
+        validComponents.push({ ...c, required_qty: String(normalized), unit: baseUnit });
+      }
+
       const savedComponents = await repo.setProductComponents(
         supabase,
         productId,
@@ -256,6 +449,50 @@ export default function ProductsScreen() {
     }
   };
 
+  // ── Bulk delete ─────────────────────────────────────────────────────────────
+
+  const handleBulkDelete = async () => {
+    try {
+      for (const id of selectedProdIds) {
+        await repo.deleteProduct(supabase, id);
+        dispatch({ type: "DELETE", table: "products", id });
+      }
+    } catch (err) {
+      console.error("Bulk delete failed:", err);
+    }
+    setSelectedProdIds(new Set());
+    setShowProdBulkConfirm(false);
+  };
+
+  const toggleSelectProduct = (id: string) => {
+    setSelectedProdIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const isAllPageSelected = pagedProducts.length > 0 && pagedProducts.every((p) => selectedProdIds.has(p.id));
+
+  const toggleSelectAll = () => {
+    if (isAllPageSelected) {
+      setSelectedProdIds((prev) => {
+        const next = new Set(prev);
+        pagedProducts.forEach((p) => next.delete(p.id));
+        return next;
+      });
+    } else {
+      setSelectedProdIds((prev) => {
+        const next = new Set(prev);
+        pagedProducts.forEach((p) => next.add(p.id));
+        return next;
+      });
+    }
+  };
+
+  // ── Clone ───────────────────────────────────────────────────────────────────
+
   const handleCloneProduct = async (product: DbProduct) => {
     try {
       const now = Date.now();
@@ -268,7 +505,6 @@ export default function ProductsScreen() {
       });
       dispatch({ type: "UPSERT", table: "products", payload: cloned as unknown as Record<string, unknown> });
 
-      // Clone variants
       const variants = state.variants.filter((v) => v.product_id === product.id);
       for (const v of variants) {
         const clonedV = await repo.createVariant(supabase, {
@@ -282,7 +518,6 @@ export default function ProductsScreen() {
         dispatch({ type: "UPSERT", table: "variants", payload: clonedV as unknown as Record<string, unknown> });
       }
 
-      // Clone BOM components
       const components = state.productComponents.filter((c) => c.parent_product_id === product.id);
       if (components.length > 0) {
         const clonedComponents = await repo.setProductComponents(
@@ -309,7 +544,264 @@ export default function ProductsScreen() {
     }
   };
 
-  // Category CRUD
+  // ── CSV template download ───────────────────────────────────────────────────
+
+  const handleDownloadTemplate = () => {
+    const BOM = "\uFEFF";
+    const header = "name,category,price,description,active,variants,bom_materials";
+    // variants format: "VariantName:PriceAdjustment|VariantName2:PriceAdjustment2"  (leave empty if none)
+    // bom_materials format: "RawMaterialName:Qty:Unit|RawMaterialName2:Qty2:Unit2"  (leave empty if none)
+    const example = `"Fried Chicken","Food","15000","Crispy fried chicken","true","Small:0|Large:5000","Chicken:200:g|Cooking Oil:10:mL"`;
+    const csv = BOM + header + "\n" + example;
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "ayakasir_products_template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ── CSV parse & preview ─────────────────────────────────────────────────────
+
+  const handleCsvFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = (ev.target?.result as string) || "";
+      // Strip UTF-8 BOM if present
+      const stripped = text.startsWith("\uFEFF") ? text.slice(1) : text;
+      const lines = stripped.split(/\r?\n/).filter((l) => l.trim() !== "");
+      if (lines.length < 2) return;
+
+      const headerFields = parseProdCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+      const colName = headerFields.indexOf("name");
+      const colCategory = headerFields.indexOf("category");
+      const colPrice = headerFields.indexOf("price");
+      const colDescription = headerFields.indexOf("description");
+      const colActive = headerFields.indexOf("active");
+      const colVariants = headerFields.indexOf("variants");
+      const colBom = headerFields.indexOf("bom_materials");
+
+      if (colName === -1) return;
+
+      // Build case-insensitive map of existing MENU categories
+      const catByNameLower = new Map<string, string>();
+      for (const c of state.categories) {
+        if (c.category_type === "MENU") {
+          catByNameLower.set(c.name.toLowerCase(), c.id);
+        }
+      }
+
+      // Existing product names (MENU_ITEM) for duplicate detection
+      const existingNames = new Set(
+        state.products
+          .filter((p) => p.product_type === "MENU_ITEM")
+          .map((p) => p.name.toLowerCase())
+      );
+
+      const batchNames = new Set<string>();
+      const rows: ProdCsvRow[] = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        const fields = parseProdCsvLine(lines[i]);
+        const name = (fields[colName] ?? "").trim();
+        if (!name) continue;
+
+        const category = colCategory >= 0 ? (fields[colCategory] ?? "").trim() : "";
+        const priceRaw = colPrice >= 0 ? (fields[colPrice] ?? "").trim() : "";
+        const price = parseInt(priceRaw.replace(/\D/g, ""), 10) || 0;
+        const description = colDescription >= 0 ? (fields[colDescription] ?? "").trim() : "";
+        const activeRaw = colActive >= 0 ? (fields[colActive] ?? "").trim().toLowerCase() : "";
+        const active = activeRaw === "" ? true : activeRaw === "true" || activeRaw === "1" || activeRaw === "yes";
+
+        const nameLower = name.toLowerCase();
+        const isDuplicate = existingNames.has(nameLower) || batchNames.has(nameLower);
+        if (!isDuplicate) batchNames.add(nameLower);
+
+        const isNewCategory =
+          category !== "" && !catByNameLower.has(category.toLowerCase());
+
+        // Parse variants: "Name:PriceAdj|Name2:PriceAdj2"
+        const variantsRaw = colVariants >= 0 ? (fields[colVariants] ?? "").trim() : "";
+        const parsedVariants: { name: string; priceAdj: number }[] = variantsRaw
+          ? variantsRaw.split("|").flatMap((seg) => {
+              const parts = seg.split(":");
+              const vName = parts[0]?.trim();
+              if (!vName) return [];
+              return [{ name: vName, priceAdj: parseInt(parts[1] ?? "0", 10) || 0 }];
+            })
+          : [];
+
+        // Parse bom_materials: "RawName:Qty:Unit|..."
+        const bomRaw = colBom >= 0 ? (fields[colBom] ?? "").trim() : "";
+        const rawByNameLower = new Map(
+          state.products
+            .filter((p) => p.product_type === "RAW_MATERIAL")
+            .map((p) => [p.name.toLowerCase(), p])
+        );
+        const parsedBom: { rawName: string; qty: number; unit: string; isMissing: boolean; isUnitMismatch: boolean }[] = bomRaw
+          ? bomRaw.split("|").flatMap((seg) => {
+              const parts = seg.split(":");
+              const rawName = parts[0]?.trim();
+              const qty = parseFloat(parts[1] ?? "0") || 0;
+              const unit = (parts[2]?.trim() || "pcs").toLowerCase();
+              if (!rawName || qty <= 0) return [];
+              const isMissing = !rawByNameLower.has(rawName.toLowerCase());
+              let isUnitMismatch = false;
+              if (!isMissing) {
+                const rm = rawByNameLower.get(rawName.toLowerCase())!;
+                const invUnit = state.inventory.find((iv) => iv.product_id === rm.id && iv.variant_id === "")?.unit || "pcs";
+                isUnitMismatch = normalizeToBaseUnit(qty, unit, invUnit) === null;
+              }
+              return [{ rawName, qty, unit, isMissing, isUnitMismatch }];
+            })
+          : [];
+        const hasMissingRaw = parsedBom.some((b) => b.isMissing);
+        const hasUnitMismatch = parsedBom.some((b) => b.isUnitMismatch);
+
+        rows.push({ name, category, price, description, active, isDuplicate, isNewCategory, variantsRaw, bomRaw, parsedVariants, parsedBom, hasMissingRaw, hasUnitMismatch });
+      }
+
+      setCsvRows(rows);
+      setShowImportPreview(true);
+    };
+    reader.readAsText(file, "utf-8");
+    // Reset input so same file can be re-selected
+    e.target.value = "";
+  };
+
+  // ── CSV confirm & save ──────────────────────────────────────────────────────
+
+  const handleImportConfirm = async () => {
+    setImporting(true);
+    setShowImportPreview(false);
+    try {
+      const now = Date.now();
+
+      // Build catByName map (case-insensitive) from MENU categories
+      const catByName = new Map<string, string>();
+      for (const c of state.categories) {
+        if (c.category_type === "MENU") {
+          catByName.set(c.name.toLowerCase(), c.id);
+        }
+      }
+
+      let imported = 0;
+      let skipped = 0;
+
+      for (const row of csvRows) {
+        if (row.isDuplicate) {
+          skipped++;
+          continue;
+        }
+
+        let categoryId: string | null = null;
+
+        if (row.category) {
+          const catKey = row.category.toLowerCase();
+          if (catByName.has(catKey)) {
+            categoryId = catByName.get(catKey)!;
+          } else {
+            // Create new MENU category
+            const newCatId = crypto.randomUUID();
+            const createdCat = await repo.createCategory(supabase, {
+              id: newCatId,
+              tenant_id: tenantId,
+              name: row.category,
+              sort_order: 0,
+              category_type: "MENU",
+              updated_at: now,
+            });
+            dispatch({ type: "UPSERT", table: "categories", payload: createdCat as unknown as Record<string, unknown> });
+            catByName.set(catKey, newCatId);
+            categoryId = newCatId;
+          }
+        }
+
+        const newProdId = crypto.randomUUID();
+        const created = await repo.createProduct(supabase, {
+          id: newProdId,
+          tenant_id: tenantId,
+          name: row.name,
+          price: row.price,
+          category_id: categoryId,
+          description: row.description || null,
+          image_path: null,
+          is_active: row.active,
+          product_type: "MENU_ITEM",
+          updated_at: now,
+        });
+        dispatch({ type: "UPSERT", table: "products", payload: created as unknown as Record<string, unknown> });
+
+        // Save variants
+        for (const fv of row.parsedVariants) {
+          if (!fv.name) continue;
+          const savedV = await repo.createVariant(supabase, {
+            id: crypto.randomUUID(),
+            tenant_id: tenantId,
+            product_id: newProdId,
+            name: fv.name,
+            price_adjustment: fv.priceAdj,
+            updated_at: now,
+          });
+          dispatch({ type: "UPSERT", table: "variants", payload: savedV as unknown as Record<string, unknown> });
+        }
+
+        // Save BOM components — match raw material name to existing RAW_MATERIAL products
+        if (row.parsedBom.length > 0) {
+          const rawByName = new Map(
+            state.products
+              .filter((p) => p.product_type === "RAW_MATERIAL")
+              .map((p) => [p.name.toLowerCase(), p])
+          );
+          const components: Parameters<typeof repo.setProductComponents>[2] = [];
+          for (let ci = 0; ci < row.parsedBom.length; ci++) {
+            const b = row.parsedBom[ci];
+            const rm = rawByName.get(b.rawName.toLowerCase());
+            if (!rm) continue; // skip unknown raw materials
+            const invUnit = getInventoryUnit(rm.id);
+            const normalizedQty = normalizeToBaseUnit(b.qty, b.unit, invUnit);
+            if (normalizedQty === null) continue; // incompatible units — skip
+            components.push({
+              id: crypto.randomUUID(),
+              tenant_id: tenantId,
+              parent_product_id: newProdId,
+              component_product_id: rm.id,
+              component_variant_id: "",
+              required_qty: normalizedQty,
+              unit: invUnit,
+              sort_order: ci,
+              updated_at: now,
+            });
+          }
+          if (components.length > 0) {
+            const savedComps = await repo.setProductComponents(supabase, newProdId, components);
+            for (const sc of savedComps) {
+              dispatch({ type: "UPSERT", table: "productComponents", payload: sc as unknown as Record<string, unknown> });
+            }
+          }
+        }
+
+        imported++;
+      }
+
+      const msg =
+        skipped > 0
+          ? `${copy.products.importSuccess} (${skipped} ${copy.products.importSkipped})`
+          : copy.products.importSuccess;
+      setImportMsg({ text: msg, ok: true });
+    } catch (err) {
+      console.error("Import failed:", err);
+      setImportMsg({ text: copy.products.importError, ok: false });
+    }
+    setImporting(false);
+    setCsvRows([]);
+  };
+
+  // ── Category CRUD ───────────────────────────────────────────────────────────
+
   const openCreateCategory = () => {
     setEditCategoryId(null);
     setCatName("");
@@ -361,20 +853,56 @@ export default function ProductsScreen() {
     }
   };
 
+  // ── Render ──────────────────────────────────────────────────────────────────
+
   return (
     <div>
       <div className="erp-page-header">
         <h1 className="erp-page-title">{copy.products.title}</h1>
         {tab === "products" ? (
-          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreate}>
-            {copy.products.addProduct}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={handleDownloadTemplate}>
+              ↓ {copy.products.downloadTemplate}
+            </button>
+            <label className="erp-btn erp-btn--ghost erp-btn--sm" style={{ cursor: "pointer", margin: 0 }}>
+              ↑ {copy.products.importCsv}
+              <input
+                ref={csvInputRef}
+                type="file"
+                accept=".csv"
+                style={{ display: "none" }}
+                onChange={handleCsvFile}
+              />
+            </label>
+            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreate}>
+              + {copy.products.addProduct}
+            </button>
+          </div>
+        ) : tab === "variants" && isOwner ? (
+          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={() => {
+            setEditVariantNameKey(null);
+            setVariantNameInput("");
+            setVariantNameError("");
+            setShowVariantNameForm(true);
+          }}>
+            {copy.products.addVariantName}
           </button>
-        ) : isOwner ? (
+        ) : tab === "categories" && isOwner ? (
           <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateCategory}>
             {copy.products.addCategory}
           </button>
         ) : null}
       </div>
+
+      {/* Import message banner */}
+      {importMsg && (
+        <div className={`erp-import-msg${importMsg.ok ? " erp-import-msg--ok" : " erp-import-msg--err"}`}>
+          <span>{importMsg.text}</span>
+          <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setImportMsg(null)}>
+            {copy.common.close}
+          </button>
+        </div>
+      )}
 
       {/* Tab selector */}
       <div className="erp-tabs">
@@ -383,6 +911,12 @@ export default function ProductsScreen() {
           onClick={() => setTab("products")}
         >
           {copy.products.title}
+        </button>
+        <button
+          className={`erp-tab${tab === "variants" ? " erp-tab--active" : ""}`}
+          onClick={() => setTab("variants")}
+        >
+          {copy.products.variantsTab}
         </button>
         <button
           className={`erp-tab${tab === "categories" ? " erp-tab--active" : ""}`}
@@ -398,7 +932,7 @@ export default function ProductsScreen() {
           <div className="erp-filter-bar">
             <span
               className={`erp-chip${filterCategory === "" ? " erp-chip--active" : ""}`}
-              onClick={() => setFilterCategory("")}
+              onClick={() => { setFilterCategory(""); resetPageAndSelection(); }}
             >
               {copy.pos.allCategories}
             </span>
@@ -406,7 +940,7 @@ export default function ProductsScreen() {
               <span
                 key={c.id}
                 className={`erp-chip${filterCategory === c.id ? " erp-chip--active" : ""}`}
-                onClick={() => setFilterCategory(filterCategory === c.id ? "" : c.id)}
+                onClick={() => { setFilterCategory(filterCategory === c.id ? "" : c.id); resetPageAndSelection(); }}
               >
                 {c.name}
               </span>
@@ -421,15 +955,38 @@ export default function ProductsScreen() {
               type="text"
               placeholder={copy.common.search}
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); resetPageAndSelection(); }}
             />
           </div>
+
+          {/* Bulk bar */}
+          {isOwner && selectedProdIds.size > 0 && (
+            <div className="erp-bulk-bar">
+              <span>{selectedProdIds.size} {copy.common.selected}</span>
+              <button
+                className="erp-btn erp-btn--danger erp-btn--sm"
+                onClick={() => setShowProdBulkConfirm(true)}
+              >
+                {copy.products.bulkDelete}
+              </button>
+            </div>
+          )}
 
           {/* Products table */}
           <div className="erp-table-wrap">
             <table className="erp-table">
               <thead>
                 <tr>
+                  {isOwner && (
+                    <th style={{ width: 36 }}>
+                      <input
+                        type="checkbox"
+                        checked={isAllPageSelected}
+                        onChange={toggleSelectAll}
+                        aria-label="Select all on page"
+                      />
+                    </th>
+                  )}
                   <th>{copy.products.name}</th>
                   <th>{copy.products.category}</th>
                   <th>{copy.products.price}</th>
@@ -438,15 +995,24 @@ export default function ProductsScreen() {
                 </tr>
               </thead>
               <tbody>
-                {filteredProducts.length === 0 ? (
+                {pagedProducts.length === 0 ? (
                   <tr>
-                    <td colSpan={5} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
+                    <td colSpan={isOwner ? 6 : 5} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
                       {copy.products.noProducts}
                     </td>
                   </tr>
                 ) : (
-                  filteredProducts.map((p) => (
-                    <tr key={p.id}>
+                  pagedProducts.map((p) => (
+                    <tr key={p.id} className={selectedProdIds.has(p.id) ? "erp-table-row--selected" : undefined}>
+                      {isOwner && (
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedProdIds.has(p.id)}
+                            onChange={() => toggleSelectProduct(p.id)}
+                          />
+                        </td>
+                      )}
                       <td>
                         <strong>{p.name}</strong>
                         {state.variants.filter((v) => v.product_id === p.id).length > 0 && (
@@ -492,7 +1058,129 @@ export default function ProductsScreen() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination */}
+          <div className="erp-table-pagination">
+            <div className="erp-table-pagination-info">
+              <span>{copy.products.rowsPerPage}:</span>
+              {[10, 25, 50].map((size) => (
+                <span
+                  key={size}
+                  className={`erp-chip${prodPageSize === size ? " erp-chip--active" : ""}`}
+                  onClick={() => { setProdPageSize(size); setProdPage(0); setSelectedProdIds(new Set()); }}
+                  style={{ cursor: "pointer" }}
+                >
+                  {size}
+                </span>
+              ))}
+              <span>
+                {safePage * prodPageSize + 1}–{Math.min((safePage + 1) * prodPageSize, filteredProducts.length)} / {filteredProducts.length}
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: "0.25rem" }}>
+              <button
+                className="erp-btn erp-btn--ghost erp-btn--sm"
+                disabled={safePage === 0}
+                onClick={() => { setProdPage((p) => Math.max(0, p - 1)); setSelectedProdIds(new Set()); }}
+              >
+                ‹
+              </button>
+              <button
+                className="erp-btn erp-btn--ghost erp-btn--sm"
+                disabled={safePage >= totalPages - 1}
+                onClick={() => { setProdPage((p) => Math.min(totalPages - 1, p + 1)); setSelectedProdIds(new Set()); }}
+              >
+                ›
+              </button>
+            </div>
+          </div>
         </>
+      )}
+
+      {tab === "variants" && (
+        <div className="erp-table-wrap">
+          <table className="erp-table">
+            <thead>
+              <tr>
+                <th>{copy.products.variantName}</th>
+                <th>{copy.products.variantUsedIn}</th>
+                {isOwner && <th>{copy.common.actions}</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                // Deduplicate by name — group products that use each variant name
+                const nameMap = new Map<string, string[]>();
+                for (const v of state.variants) {
+                  const key = v.name.toLowerCase();
+                  const product = state.products.find((p) => p.id === v.product_id);
+                  const productName = product?.name ?? "—";
+                  if (!nameMap.has(key)) nameMap.set(key, []);
+                  const existing = nameMap.get(key)!;
+                  if (!existing.includes(productName)) existing.push(productName);
+                }
+                const uniqueNames = [...nameMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+                if (uniqueNames.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan={isOwner ? 3 : 2} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
+                        {copy.products.noVariants}
+                      </td>
+                    </tr>
+                  );
+                }
+                return uniqueNames.map(([nameLower, productNames]) => {
+                  // Get the display-case name from any variant with this name
+                  const displayName = state.variants.find((v) => v.name.toLowerCase() === nameLower)?.name ?? nameLower;
+                  return (
+                    <tr key={nameLower}>
+                      <td><strong>{displayName}</strong></td>
+                      <td style={{ color: "var(--erp-muted)", fontSize: "0.875rem" }}>
+                        {productNames.join(", ")}
+                      </td>
+                      {isOwner && (
+                        <td className="erp-td-actions">
+                          <button
+                            className="erp-btn erp-btn--ghost erp-btn--sm"
+                            onClick={() => {
+                              setEditVariantNameKey(nameLower);
+                              setVariantNameInput(displayName);
+                              setVariantNameError("");
+                              setShowVariantNameForm(true);
+                            }}
+                          >
+                            {copy.common.edit}
+                          </button>
+                          <button
+                            className="erp-btn erp-btn--ghost erp-btn--sm"
+                            style={{ color: "var(--erp-danger)" }}
+                            onClick={async () => {
+                              if (!confirm(copy.common.deleteWarning)) return;
+                              // Delete all variants with this name across all products
+                              const toDelete = state.variants.filter((v) => v.name.toLowerCase() === nameLower);
+                              for (const v of toDelete) {
+                                try {
+                                  await repo.deleteVariant(supabase, v.id);
+                                  dispatch({ type: "DELETE", table: "variants", id: v.id });
+                                } catch (err) {
+                                  console.error("Delete variant failed:", err);
+                                }
+                              }
+                              // Also remove from localStorage templates
+                              setVariantNameTemplates((prev) => prev.filter((t) => t.toLowerCase() !== nameLower));
+                            }}
+                          >
+                            {copy.common.delete}
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                });
+              })()}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {tab === "categories" && (
@@ -545,7 +1233,7 @@ export default function ProductsScreen() {
         </div>
       )}
 
-      {/* Product form dialog */}
+      {/* ── Product form dialog ──────────────────────────────────────────────── */}
       {showForm && (
         <div className="erp-overlay" onClick={() => setShowForm(false)}>
           <div className="erp-dialog" onClick={(e) => e.stopPropagation()}>
@@ -562,7 +1250,17 @@ export default function ProductsScreen() {
               </div>
               <div className="erp-input-group">
                 <label className="erp-label">{copy.products.price}</label>
-                <input className="erp-input" type="number" value={formPrice} onChange={(e) => setFormPrice(e.target.value)} />
+                <input
+                  className="erp-input"
+                  type="text"
+                  inputMode="numeric"
+                  value={formPrice ? parseInt(formPrice.replace(/\./g, ""), 10).toLocaleString("id-ID") : ""}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/\./g, "").replace(/\D/g, "");
+                    setFormPrice(raw);
+                  }}
+                  placeholder="0"
+                />
               </div>
               <div className="erp-input-group">
                 <label className="erp-label">{copy.products.category}</label>
@@ -595,31 +1293,44 @@ export default function ProductsScreen() {
                 </div>
                 {formVariants.length > 0 && (
                   <div className="erp-variant-list">
-                    {formVariants.map((fv, idx) => (
-                      <div key={idx} className="erp-variant-row">
-                        <input
-                          className="erp-input erp-variant-name"
-                          placeholder={copy.products.variantName}
-                          value={fv.name}
-                          onChange={(e) => updateVariant(idx, "name", e.target.value)}
-                        />
-                        <input
-                          className="erp-input erp-variant-price"
-                          type="number"
-                          placeholder={copy.products.priceAdjustment}
-                          value={fv.price_adjustment}
-                          onChange={(e) => updateVariant(idx, "price_adjustment", e.target.value)}
-                        />
-                        <button
-                          type="button"
-                          className="erp-btn erp-btn--ghost erp-btn--sm erp-btn--icon"
-                          style={{ color: "var(--erp-danger)" }}
-                          onClick={() => removeVariant(idx)}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
+                    {formVariants.map((fv, idx) => {
+                      const isDupName = formVariants.some(
+                        (other, i) => i !== idx && other.name.trim().toLowerCase() === fv.name.trim().toLowerCase() && fv.name.trim() !== ""
+                      );
+                      const usedNames = formVariants
+                        .filter((_, i) => i !== idx)
+                        .map((v) => v.name.trim().toLowerCase());
+                      return (
+                        <div key={idx} className="erp-variant-row">
+                          <select
+                            className="erp-select erp-variant-name"
+                            value={fv.name}
+                            onChange={(e) => updateVariant(idx, "name", e.target.value)}
+                            style={isDupName ? { borderColor: "var(--erp-danger)" } : undefined}
+                          >
+                            <option value="">{copy.products.variantName}</option>
+                            {uniqueVariantNames
+                              .filter((n) => !usedNames.includes(n.toLowerCase()) || n === fv.name)
+                              .map((n) => <option key={n} value={n}>{n}</option>)}
+                          </select>
+                          <input
+                            className="erp-input erp-variant-price"
+                            type="number"
+                            placeholder={copy.products.priceAdjustment}
+                            value={fv.price_adjustment}
+                            onChange={(e) => updateVariant(idx, "price_adjustment", e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            className="erp-btn erp-btn--ghost erp-btn--sm erp-btn--icon"
+                            style={{ color: "var(--erp-danger)" }}
+                            onClick={() => removeVariant(idx)}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -696,7 +1407,7 @@ export default function ProductsScreen() {
               <button className="erp-btn erp-btn--secondary" onClick={() => setShowForm(false)}>
                 {copy.common.cancel}
               </button>
-              <button className="erp-btn erp-btn--primary" onClick={handleSaveProduct} disabled={saving || !formName}>
+              <button className="erp-btn erp-btn--primary" onClick={() => handleSaveProduct()} disabled={saving || !formName}>
                 {saving ? copy.common.loading : copy.common.save}
               </button>
             </div>
@@ -704,7 +1415,239 @@ export default function ProductsScreen() {
         </div>
       )}
 
-      {/* Category form dialog */}
+      {/* ── Product warning dialog ───────────────────────────────────────────── */}
+      {showProductWarning && (
+        <div className="erp-overlay" onClick={() => setShowProductWarning(false)}>
+          <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.products.warnProductTitle}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowProductWarning(false)}>
+                {copy.common.close}
+              </button>
+            </div>
+            <div className="erp-dialog-body">
+              <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
+                {productWarnings.map((w, i) => (
+                  <li key={i} style={{ marginBottom: "0.5rem" }}>{w}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowProductWarning(false)}>
+                {copy.common.cancel}
+              </button>
+              <button
+                className="erp-btn erp-btn--primary"
+                onClick={() => { setShowProductWarning(false); handleSaveProduct(true); }}
+              >
+                {copy.common.save}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bulk delete confirm dialog ───────────────────────────────────────── */}
+      {showProdBulkConfirm && (
+        <div className="erp-overlay" onClick={() => setShowProdBulkConfirm(false)}>
+          <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.common.confirmDelete}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowProdBulkConfirm(false)}>
+                {copy.common.close}
+              </button>
+            </div>
+            <div className="erp-dialog-body">
+              <p>{copy.products.bulkDeleteConfirm}</p>
+              <p style={{ color: "var(--erp-muted)", fontSize: "0.85rem" }}>
+                {selectedProdIds.size} {copy.common.selected}
+              </p>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowProdBulkConfirm(false)}>
+                {copy.common.cancel}
+              </button>
+              <button className="erp-btn erp-btn--danger" onClick={handleBulkDelete}>
+                {copy.common.delete}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CSV import preview dialog ────────────────────────────────────────── */}
+      {showImportPreview && (
+        <div className="erp-overlay" onClick={() => setShowImportPreview(false)}>
+          <div className="erp-dialog erp-dialog--wide" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.products.importPreviewTitle}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowImportPreview(false)}>
+                {copy.common.close}
+              </button>
+            </div>
+            <div className="erp-dialog-body">
+              <p style={{ color: "var(--erp-muted)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>
+                {copy.products.importPreviewHint}
+              </p>
+              {csvRows.some((r) => r.hasMissingRaw) && (
+                <div className="erp-import-msg erp-import-msg--err" style={{ marginBottom: "0.5rem" }}>
+                  {copy.products.importBomMissingWarning}
+                </div>
+              )}
+              {csvRows.some((r) => r.hasUnitMismatch) && (
+                <div className="erp-import-msg erp-import-msg--err" style={{ marginBottom: "0.75rem" }}>
+                  {copy.products.importBomUnitMismatchWarning}
+                </div>
+              )}
+              <div className="erp-table-wrap">
+                <table className="erp-table">
+                  <thead>
+                    <tr>
+                      <th>{copy.products.name}</th>
+                      <th>{copy.products.category}</th>
+                      <th>{copy.products.price}</th>
+                      <th>{copy.products.active}</th>
+                      <th>{copy.products.variants}</th>
+                      <th>{copy.products.bom}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {csvRows.map((row, i) => (
+                      <tr key={i}>
+                        <td>
+                          {row.name}
+                          {row.isDuplicate && (
+                            <span className="erp-badge erp-badge--danger" style={{ marginLeft: 6 }}>
+                              {copy.products.importDuplicate}
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          {row.category || "—"}
+                          {row.isNewCategory && !row.isDuplicate && (
+                            <span className="erp-badge erp-badge--warning" style={{ marginLeft: 6 }}>
+                              {copy.products.importNewCategory}
+                            </span>
+                          )}
+                        </td>
+                        <td>{formatRupiah(row.price)}</td>
+                        <td>
+                          <span className={`erp-badge ${row.active ? "erp-badge--success" : "erp-badge--danger"}`}>
+                            {row.active ? copy.products.active : copy.products.inactive}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: "0.8rem", color: "var(--erp-muted)" }}>
+                          {row.parsedVariants.length > 0
+                            ? row.parsedVariants.map((v) => `${v.name}${v.priceAdj !== 0 ? ` (+${v.priceAdj})` : ""}`).join(", ")
+                            : "—"}
+                        </td>
+                        <td style={{ fontSize: "0.8rem" }}>
+                          {row.parsedBom.length > 0
+                            ? row.parsedBom.map((b, bi) => {
+                                const isErr = b.isMissing || b.isUnitMismatch;
+                                return (
+                                  <span key={bi} style={{ color: isErr ? "var(--erp-danger)" : "var(--erp-muted)", marginRight: 4 }}>
+                                    {b.rawName} {b.qty}{b.unit}{b.isMissing ? " ✗" : b.isUnitMismatch ? " ⚠︎" : ""}
+                                    {bi < row.parsedBom.length - 1 ? ", " : ""}
+                                  </span>
+                                );
+                              })
+                            : <span style={{ color: "var(--erp-muted)" }}>—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowImportPreview(false)}>
+                {copy.common.cancel}
+              </button>
+              <button
+                className="erp-btn erp-btn--primary"
+                onClick={handleImportConfirm}
+                disabled={importing || csvRows.every((r) => r.isDuplicate)}
+              >
+                {importing ? copy.common.loading : copy.products.importConfirm}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Variant name form dialog ─────────────────────────────────────────── */}
+      {showVariantNameForm && (
+        <div className="erp-overlay" onClick={() => setShowVariantNameForm(false)}>
+          <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{editVariantNameKey ? copy.products.editVariantName : copy.products.addVariantName}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowVariantNameForm(false)}>
+                {copy.common.close}
+              </button>
+            </div>
+            <div className="erp-dialog-body">
+              <div className="erp-input-group">
+                <label className="erp-label">{copy.products.variantName}</label>
+                <input
+                  className="erp-input"
+                  value={variantNameInput}
+                  onChange={(e) => { setVariantNameInput(e.target.value); setVariantNameError(""); }}
+                  autoFocus
+                />
+                {variantNameError && (
+                  <span style={{ color: "var(--erp-danger)", fontSize: "0.8rem" }}>{variantNameError}</span>
+                )}
+              </div>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowVariantNameForm(false)}>
+                {copy.common.cancel}
+              </button>
+              <button
+                className="erp-btn erp-btn--primary"
+                disabled={saving || !variantNameInput.trim()}
+                onClick={async () => {
+                  const newName = variantNameInput.trim();
+                  if (!newName) return;
+                  // Duplicate check (exclude current if editing)
+                  const isDup = uniqueVariantNames.some(
+                    (n) => n.toLowerCase() === newName.toLowerCase() && n.toLowerCase() !== editVariantNameKey
+                  );
+                  if (isDup) { setVariantNameError(copy.products.duplicateVariantNameGlobal); return; }
+
+                  if (editVariantNameKey) {
+                    // Rename all DB variants with old name
+                    setSaving(true);
+                    const toRename = state.variants.filter((v) => v.name.toLowerCase() === editVariantNameKey);
+                    for (const v of toRename) {
+                      try {
+                        const updated = await repo.updateVariant(supabase, v.id, { name: newName });
+                        if (updated) dispatch({ type: "UPSERT", table: "variants", payload: updated as unknown as Record<string, unknown> });
+                      } catch (err) {
+                        console.error("Rename variant failed:", err);
+                      }
+                    }
+                    // Update localStorage template if it was a template-only name
+                    setVariantNameTemplates((prev) =>
+                      prev.map((t) => (t.toLowerCase() === editVariantNameKey ? newName : t))
+                    );
+                    setSaving(false);
+                  } else {
+                    // Add to localStorage templates (no DB row needed)
+                    setVariantNameTemplates((prev) => [...prev, newName]);
+                  }
+                  setShowVariantNameForm(false);
+                }}
+              >
+                {saving ? copy.common.loading : copy.common.save}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Category form dialog ─────────────────────────────────────────────── */}
       {showCategoryForm && (
         <div className="erp-overlay" onClick={() => setShowCategoryForm(false)}>
           <div className="erp-dialog" onClick={(e) => e.stopPropagation()}>

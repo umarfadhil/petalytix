@@ -1800,7 +1800,7 @@ main {
   text-align: center;
   padding: 28px 20px;
   position: relative;
-  background: white;
+  background: rgba(255, 255, 255, 0.021);
   border-radius: 16px;
   border: 1px solid #f3f4f6;
   margin: 8px;

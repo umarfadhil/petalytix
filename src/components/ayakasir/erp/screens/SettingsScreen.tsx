@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { useErp } from "../store";
 import { getErpCopy } from "../i18n";
-import { formatRupiah } from "../utils";
-import { createLedgerEntry, deleteInitialBalanceEntries } from "@/lib/supabase/repositories/general-ledger";
+import { formatRupiah, formatDateTime } from "../utils";
+import { createLedgerEntry, deleteInitialBalanceEntries, calculateCashBalance } from "@/lib/supabase/repositories/general-ledger";
+import { createCashWithdrawal } from "@/lib/supabase/repositories/cash-withdrawals";
 import {
   changeErpPasswordAction,
   upsertTenantUserAction,
@@ -27,6 +29,7 @@ function parseFeatureAccess(raw: string | null | undefined): UserFeature[] {
 export default function SettingsScreen() {
   const { state, dispatch, supabase, tenantId, locale } = useErp();
   const copy = getErpCopy(locale);
+  const router = useRouter();
 
   // ── Common ───────────────────────────────────────────────────
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -86,6 +89,164 @@ export default function SettingsScreen() {
     state.transactionItems,
     state.tenantUsers,
   ]);
+
+  // ── Close Cashier ────────────────────────────────────────────
+  const [showCloseCashier, setShowCloseCashier] = useState(false);
+  const [closeMatch, setCloseMatch] = useState<boolean | null>(null);
+  const [closeMismatchNote, setCloseMismatchNote] = useState("");
+  const [showCashReset, setShowCashReset] = useState(false);
+  const [showCloseReport, setShowCloseReport] = useState(false);
+
+  const closeCashierSummary = useMemo(() => {
+    const now = Date.now();
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const fromMs = todayStart.getTime();
+
+    const todayTx = state.transactions.filter(
+      (t) => t.date >= fromMs && t.date <= now && t.status === "COMPLETED"
+    );
+
+    const byMethod: Record<string, number> = {};
+    for (const tx of todayTx) {
+      const m = tx.payment_method || "CASH";
+      byMethod[m] = (byMethod[m] || 0) + tx.total;
+    }
+
+    // Closing balance = all-time cash balance, same formula as Dashboard
+    const closingBalance = calculateCashBalance(state.generalLedger);
+
+    return {
+      closeTime: now,
+      cashier: state.user?.name || state.user?.email || "—",
+      openingBalance: currentInitialBalance,
+      closingBalance,
+      totalTransactions: todayTx.length,
+      byMethod,
+    };
+  }, [state.transactions, state.generalLedger, state.user, currentInitialBalance]);
+
+  const handleOpenCloseCashier = () => {
+    setCloseMatch(null);
+    setCloseMismatchNote("");
+    setShowCloseCashier(true);
+  };
+
+  // After match confirmed → ask about cash reset before showing report
+  const handleConfirmClose = () => {
+    setShowCloseCashier(false);
+    setShowCashReset(true);
+  };
+
+  const handleCashResetChoice = async (resetToZero: boolean) => {
+    setShowCashReset(false);
+    if (resetToZero) {
+      const currentBalance = closeCashierSummary.closingBalance;
+      if (currentBalance !== 0) {
+        const now = Date.now();
+        const userId = state.user?.id || "";
+        const reason = locale === "id"
+          ? `Ambil kas — tutup kasir (${new Date(now).toLocaleDateString("id-ID")})`
+          : `Cash withdrawal — cashier close (${new Date(now).toLocaleDateString("en-US")})`;
+
+        // 1. Record in cash_withdrawals table (positive amount = how much was taken out)
+        const withdrawal = await createCashWithdrawal(supabase, {
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          user_id: userId,
+          amount: currentBalance,
+          reason,
+          date: now,
+          updated_at: now,
+        });
+        dispatch({ type: "UPSERT", table: "cashWithdrawals", payload: withdrawal as unknown as Record<string, unknown> });
+
+        // 2. Record WITHDRAWAL in general_ledger (negative amount — reduces cash balance to 0)
+        const entry: Omit<DbGeneralLedger, "sync_status"> = {
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          type: "WITHDRAWAL",
+          amount: -currentBalance,
+          reference_id: null,
+          description: reason,
+          date: now,
+          user_id: userId,
+          updated_at: now,
+        };
+        const saved = await createLedgerEntry(supabase, entry);
+        dispatch({ type: "UPSERT", table: "generalLedger", payload: saved as unknown as Record<string, unknown> });
+      }
+    }
+    setShowCloseReport(true);
+  };
+
+  const handleDownloadReport = () => {
+    const s = closeCashierSummary;
+    const matchText = closeMatch === true
+      ? copy.settings.matchYes
+      : closeMatch === false
+      ? `${copy.settings.matchNo}${closeMismatchNote ? ` — ${closeMismatchNote}` : ""}`
+      : "—";
+
+    const methodRows = Object.entries(s.byMethod)
+      .map(([m, amt]) => `      <tr><td>${m}</td><td style="text-align:right">${formatRupiah(amt)}</td></tr>`)
+      .join("\n");
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>${copy.settings.closeCashierReport}</title>
+  <style>
+    body { font-family: 'Courier New', monospace; font-size: 13px; padding: 32px; max-width: 480px; margin: 0 auto; }
+    h2 { text-align: center; margin-bottom: 4px; }
+    .sub { text-align: center; color: #666; margin-bottom: 24px; font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+    td { padding: 6px 4px; border-bottom: 1px solid #eee; font-size: 13px; }
+    td:last-child { text-align: right; }
+    .section { font-weight: bold; padding: 10px 4px 4px; border-top: 2px solid #000; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; }
+    .total td { font-weight: bold; border-top: 2px solid #000; }
+    .match { margin-top: 20px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+    .match-label { font-weight: bold; margin-bottom: 4px; }
+    @media print { body { padding: 0; } }
+  </style>
+</head>
+<body>
+  <h2>${state.restaurant?.name || "AyaKasir"}</h2>
+  <p class="sub">${copy.settings.closeCashierReport}</p>
+  <table>
+    <tr><td>${copy.settings.closeTime}</td><td>${formatDateTime(s.closeTime, locale)}</td></tr>
+    <tr><td>${copy.settings.cashierInCharge}</td><td>${s.cashier}</td></tr>
+    <tr><td>${copy.settings.totalTransactions}</td><td>${s.totalTransactions}</td></tr>
+  </table>
+  <table>
+    <tr><td class="section" colspan="2">${copy.settings.paymentBreakdown}</td></tr>
+    ${methodRows}
+  </table>
+  <table>
+    <tr><td>${copy.settings.openingBalance}</td><td>${formatRupiah(s.openingBalance)}</td></tr>
+    <tr class="total"><td>${copy.settings.closingBalance}</td><td>${formatRupiah(s.closingBalance)}</td></tr>
+  </table>
+  <div class="match">
+    <div class="match-label">${copy.settings.matchQuestion}</div>
+    <div>${matchText}</div>
+  </div>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const dateStr = new Date(s.closeTime).toISOString().split("T")[0];
+    a.href = url;
+    a.download = `kasir_report_${dateStr}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePrintReport = () => {
+    window.print();
+  };
 
   // ── Change password ──────────────────────────────────────────
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -154,11 +315,22 @@ export default function SettingsScreen() {
 
   const handleTogglePaymentMethod = async (method: PaymentMethod) => {
     if (!state.restaurant) return;
-    if (method === "CASH" && enabledMethods.has("CASH")) return;
-    setTogglingMethod(method);
+    setTogglingMethod(null);
     const next = new Set(enabledMethods);
-    if (next.has(method)) next.delete(method);
-    else next.add(method);
+    if (next.has(method)) {
+      // Would be disabling — ensure at least 1 non-UTANG method remains
+      const afterDisable = new Set(next);
+      afterDisable.delete(method);
+      const hasNonUtang = [...afterDisable].some((m) => m !== "UTANG");
+      if (!hasNonUtang) {
+        setTogglingMethod(null);
+        return;
+      }
+      next.delete(method);
+    } else {
+      next.add(method);
+    }
+    setTogglingMethod(method);
     const newValue = Array.from(next).join(",");
     try {
       const { data, error } = await supabase
@@ -452,22 +624,25 @@ export default function SettingsScreen() {
             ] as const
           ).map(({ key, label }) => {
             const isEnabled = enabledMethods.has(key);
-            const isCash = key === "CASH";
+            // Disable toggle if it's the last non-UTANG method
+            const wouldLeaveNoNonUtang = isEnabled && key !== "UTANG" &&
+              [...enabledMethods].filter((m) => m !== "UTANG" && m !== key).length === 0;
+            const isDisabled = togglingMethod !== null || wouldLeaveNoNonUtang;
             return (
               <div key={key} className="erp-settings-row">
                 <div>
                   <span className="erp-settings-row-label">{label}</span>
-                  {isCash && (
+                  {wouldLeaveNoNonUtang && (
                     <span style={{ fontSize: 12, color: "var(--erp-muted)", marginLeft: 8 }}>
-                      ({locale === "id" ? "selalu aktif" : "always on"})
+                      ({locale === "id" ? "min. 1 aktif" : "min. 1 required"})
                     </span>
                   )}
                 </div>
-                <label className={`erp-toggle${isCash ? " erp-toggle--disabled" : ""}`}>
+                <label className={`erp-toggle${isDisabled ? " erp-toggle--disabled" : ""}`}>
                   <input
                     type="checkbox"
                     checked={isEnabled}
-                    disabled={isCash || togglingMethod !== null}
+                    disabled={isDisabled}
                     onChange={() => handleTogglePaymentMethod(key)}
                   />
                   <span className="erp-toggle-slider" />
@@ -587,6 +762,43 @@ export default function SettingsScreen() {
           </button>
         </div>
       )}
+
+      {/* Language */}
+      <div className="erp-settings-section">
+        <h3>{copy.settings.language}</h3>
+        <p style={{ color: "var(--erp-muted)", fontSize: 14, marginBottom: 16 }}>
+          {copy.settings.languageHint}
+        </p>
+        <div style={{ display: "flex", gap: 8 }}>
+          {(["id", "en"] as const).map((lang) => (
+            <button
+              key={lang}
+              className={`erp-btn erp-btn--sm${locale === lang ? " erp-btn--primary" : " erp-btn--secondary"}`}
+              onClick={() => {
+                if (locale !== lang) {
+                  const newPath = window.location.pathname.replace(`/${locale}/`, `/${lang}/`);
+                  router.push(newPath);
+                }
+              }}
+            >
+              {lang === "id" ? "Indonesia" : "English"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Close Cashier */}
+      <div className="erp-settings-section">
+        <h3>{copy.settings.closeCashier}</h3>
+        <p style={{ color: "var(--erp-muted)", fontSize: 14, marginBottom: 16 }}>
+          {locale === "id"
+            ? "Tutup sesi kasir hari ini dan cetak laporan akhir hari."
+            : "Close today's cashier session and generate an end-of-day report."}
+        </p>
+        <button className="erp-btn erp-btn--danger erp-btn--sm" onClick={handleOpenCloseCashier}>
+          {copy.settings.closeCashier}
+        </button>
+      </div>
 
       {/* CSV Export (owner only) */}
       {isOwner && (
@@ -936,6 +1148,186 @@ export default function SettingsScreen() {
               </button>
               <button className="erp-btn erp-btn--primary" onClick={handleExportCsv} disabled={!csvFrom || !csvTo}>
                 {copy.settings.downloadCsv}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Close Cashier confirm dialog */}
+      {showCloseCashier && (
+        <div className="erp-overlay" onClick={() => setShowCloseCashier(false)}>
+          <div className="erp-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.settings.closeCashierTitle}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowCloseCashier(false)}>
+                {copy.common.close}
+              </button>
+            </div>
+            <div className="erp-dialog-body">
+              <p style={{ color: "var(--erp-muted)", fontSize: 14, marginBottom: 16 }}>
+                {copy.settings.closeCashierConfirmHint}
+              </p>
+              {/* Summary table */}
+              <table className="erp-close-report-table">
+                <tbody>
+                  <tr><td>{copy.settings.closeTime}</td><td>{formatDateTime(closeCashierSummary.closeTime, locale)}</td></tr>
+                  <tr><td>{copy.settings.cashierInCharge}</td><td>{closeCashierSummary.cashier}</td></tr>
+                  <tr><td>{copy.settings.totalTransactions}</td><td>{closeCashierSummary.totalTransactions}</td></tr>
+                  <tr><td>{copy.settings.openingBalance}</td><td>{formatRupiah(closeCashierSummary.openingBalance)}</td></tr>
+                  <tr className="erp-close-report-total"><td>{copy.settings.closingBalance}</td><td>{formatRupiah(closeCashierSummary.closingBalance)}</td></tr>
+                </tbody>
+              </table>
+              {/* Payment breakdown */}
+              <div className="erp-close-report-section">{copy.settings.paymentBreakdown}</div>
+              <table className="erp-close-report-table">
+                <tbody>
+                  {Object.entries(closeCashierSummary.byMethod).length === 0 ? (
+                    <tr><td colSpan={2} style={{ color: "var(--erp-muted)" }}>{copy.common.noData}</td></tr>
+                  ) : (
+                    Object.entries(closeCashierSummary.byMethod).map(([m, amt]) => (
+                      <tr key={m}><td>{m}</td><td>{formatRupiah(amt)}</td></tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+              {/* Match question */}
+              <div className="erp-close-match-row">
+                <span style={{ fontSize: 14, fontWeight: 500 }}>{copy.settings.matchQuestion}</span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className={`erp-btn erp-btn--sm${closeMatch === true ? " erp-btn--primary" : " erp-btn--secondary"}`}
+                    onClick={() => setCloseMatch(true)}
+                  >
+                    {copy.settings.matchYes}
+                  </button>
+                  <button
+                    className={`erp-btn erp-btn--sm${closeMatch === false ? " erp-btn--danger" : " erp-btn--secondary"}`}
+                    onClick={() => setCloseMatch(false)}
+                  >
+                    {copy.settings.matchNo}
+                  </button>
+                </div>
+              </div>
+              {closeMatch === false && (
+                <div className="erp-input-group" style={{ marginTop: 12 }}>
+                  <label className="erp-label">{copy.settings.mismatchNote}</label>
+                  <textarea
+                    className="erp-input"
+                    rows={3}
+                    value={closeMismatchNote}
+                    onChange={(e) => setCloseMismatchNote(e.target.value)}
+                    placeholder={copy.settings.mismatchPlaceholder}
+                    style={{ resize: "vertical" }}
+                  />
+                </div>
+              )}
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowCloseCashier(false)}>
+                {copy.common.cancel}
+              </button>
+              <button
+                className="erp-btn erp-btn--danger"
+                onClick={handleConfirmClose}
+                disabled={closeMatch === null}
+              >
+                {copy.settings.closeCashierConfirmBtn}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cash reset dialog */}
+      {showCashReset && (
+        <div className="erp-overlay">
+          <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.settings.cashResetTitle}</h3>
+            </div>
+            <div className="erp-dialog-body">
+              <p style={{ fontSize: 14, color: "var(--erp-muted)", marginBottom: 16 }}>
+                {copy.settings.cashResetHint}
+              </p>
+              <div className="erp-close-report-table" style={{ marginBottom: 12 }}>
+                <strong style={{ fontSize: 15 }}>
+                  {copy.settings.closingBalance}: {formatRupiah(closeCashierSummary.closingBalance)}
+                </strong>
+              </div>
+            </div>
+            <div className="erp-dialog-footer" style={{ flexDirection: "column", gap: 8 }}>
+              <button
+                className="erp-btn erp-btn--danger"
+                style={{ width: "100%" }}
+                onClick={() => handleCashResetChoice(true)}
+              >
+                {copy.settings.cashResetEmpty}
+              </button>
+              <button
+                className="erp-btn erp-btn--secondary"
+                style={{ width: "100%" }}
+                onClick={() => handleCashResetChoice(false)}
+              >
+                {copy.settings.cashResetKeep}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Close Cashier report dialog */}
+      {showCloseReport && (
+        <div className="erp-overlay" onClick={() => setShowCloseReport(false)}>
+          <div className="erp-dialog erp-dialog--wide erp-close-report-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.settings.closeCashierReport}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowCloseReport(false)}>
+                {copy.common.close}
+              </button>
+            </div>
+            <div className="erp-dialog-body erp-printable">
+              <div className="erp-close-report-print-header">
+                <div className="erp-close-report-biz">{state.restaurant?.name || "AyaKasir"}</div>
+                <div className="erp-close-report-subtitle">{copy.settings.closeCashierReport}</div>
+              </div>
+              <table className="erp-close-report-table">
+                <tbody>
+                  <tr><td>{copy.settings.closeTime}</td><td>{formatDateTime(closeCashierSummary.closeTime, locale)}</td></tr>
+                  <tr><td>{copy.settings.cashierInCharge}</td><td>{closeCashierSummary.cashier}</td></tr>
+                  <tr><td>{copy.settings.totalTransactions}</td><td>{closeCashierSummary.totalTransactions}</td></tr>
+                  <tr><td>{copy.settings.openingBalance}</td><td>{formatRupiah(closeCashierSummary.openingBalance)}</td></tr>
+                  <tr className="erp-close-report-total"><td>{copy.settings.closingBalance}</td><td>{formatRupiah(closeCashierSummary.closingBalance)}</td></tr>
+                </tbody>
+              </table>
+              <div className="erp-close-report-section">{copy.settings.paymentBreakdown}</div>
+              <table className="erp-close-report-table">
+                <tbody>
+                  {Object.entries(closeCashierSummary.byMethod).length === 0 ? (
+                    <tr><td colSpan={2} style={{ color: "var(--erp-muted)" }}>{copy.common.noData}</td></tr>
+                  ) : (
+                    Object.entries(closeCashierSummary.byMethod).map(([m, amt]) => (
+                      <tr key={m}><td>{m}</td><td>{formatRupiah(amt)}</td></tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+              <div className="erp-close-match-box">
+                <div className="erp-close-match-label">{copy.settings.matchQuestion}</div>
+                <div className={`erp-close-match-value${closeMatch === false ? " erp-close-match-value--no" : ""}`}>
+                  {closeMatch === true ? copy.settings.matchYes : copy.settings.matchNo}
+                </div>
+                {closeMatch === false && closeMismatchNote && (
+                  <div className="erp-close-match-note">{closeMismatchNote}</div>
+                )}
+              </div>
+            </div>
+            <div className="erp-dialog-footer erp-no-print">
+              <button className="erp-btn erp-btn--secondary" onClick={handleDownloadReport}>
+                {copy.settings.downloadReport}
+              </button>
+              <button className="erp-btn erp-btn--primary" onClick={handlePrintReport}>
+                {copy.settings.printReport}
               </button>
             </div>
           </div>

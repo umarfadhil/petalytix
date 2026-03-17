@@ -3,6 +3,174 @@
 > AI development context â€” not used at runtime.
 > Record insights, gotchas, and decisions discovered during development sessions.
 
+## 2026-03-17 — ERP Settings: Close Cashier + Language switcher
+
+### Close Cashier
+- **Bug fixes**: `tx.total_amount` → `tx.total` (field doesn't exist; correct field is `total`). Closing balance now uses `calculateCashBalance(state.generalLedger)` (all-time, same formula as Dashboard Cash Balance card) instead of a today-only ledger filter.
+- **"Close Cashier" section** visible to all roles (not owner-only). Button opens a confirm dialog.
+- **Confirm dialog**: shows summary table (close time, cashier name, total transactions, opening/closing balance), payment method breakdown, and a Match/Doesn't Match toggle.
+- If "Doesn't Match" is selected, a freetext note textarea appears.
+- Confirm button disabled until match status is chosen.
+- **Cash reset dialog**: shown between confirm and report. Displays closing balance and two options: (1) "Empty cash balance" — writes both a `cash_withdrawals` row (positive `amount` = cash taken out) and a `WITHDRAWAL` general_ledger entry (`amount = -currentBalance`). Both share the same `reason` string and `date`. Both dispatched via UPSERT so Dashboard + Cash Flow update immediately. Brings `calculateCashBalance` to exactly 0. (2) "Keep cash balance" — no action. After choice, report dialog opens.
+- **Why WITHDRAWAL not delete**: deleting INITIAL_BALANCE entries only removes one part of the ledger; SALE entries remain and `calculateCashBalance` would still be non-zero. A negative WITHDRAWAL offsets the full balance cleanly and is auditable.
+- **cash_withdrawals parity**: mirrors the Dashboard "Cash Withdrawal" flow — same table, same dispatch pattern (`cashWithdrawals` state key).
+- **Report dialog**: opens after cash reset choice — shows the same data in printable monospace layout (`.erp-close-report-dialog`, `.erp-printable`). Two action buttons: Download (HTML file) and Print (`window.print()`).
+- **Download** generates a standalone HTML file with embedded styles, named `kasir_report_YYYY-MM-DD.html`.
+- **Print CSS**: `.erp-no-print` hides footer buttons; `.erp-close-report-dialog` renders borderless.
+- Summary computed entirely from `state.transactions` + `state.generalLedger` filtered to today (midnight→now). Closing balance = SALE+INITIAL_BALANCE ledger − WITHDRAWAL ledger for today.
+- New CSS: `.erp-close-report-table`, `.erp-close-report-section`, `.erp-close-report-total`, `.erp-close-match-row`, `.erp-close-match-box`, `.erp-close-match-value`, `.erp-close-report-dialog`, etc.
+- New i18n keys in `settings`: `closeCashier`, `closeCashierTitle`, `closeCashierConfirmHint`, `closeCashierReport`, `closeTime`, `cashierInCharge`, `openingBalance`, `closingBalance`, `totalTransactions`, `paymentBreakdown`, `matchQuestion`, `matchYes`, `matchNo`, `mismatchNote`, `mismatchPlaceholder`, `closeCashierConfirmBtn`, `downloadReport`, `printReport` (EN + ID).
+
+### Language switcher
+- **"Language" section** in Settings visible to all roles.
+- Two buttons: "Indonesia" and "English". Active locale highlighted with `erp-btn--primary`.
+- Switching navigates via `router.push()` replacing `/{locale}/` in the current URL path.
+- No new i18n keys needed beyond `language`/`languageHint`.
+
+## 2026-03-17 — ERP Settings: payment method toggle — CASH can be disabled
+
+- **Rule changed**: CASH is no longer "always on". Any non-UTANG method (CASH, QRIS, TRANSFER) can be toggled off.
+- **Constraint**: at least 1 non-UTANG method must remain enabled. The last active non-UTANG toggle is auto-disabled (can't be turned off).
+- **Visual hint**: when a toggle is the last non-UTANG method enabled, it shows `(min. 1 aktif / min. 1 required)` label next to it and the toggle is greyed out.
+- **Guard logic**: computed inline in render via `wouldLeaveNoNonUtang = isEnabled && key !== "UTANG" && [...enabledMethods].filter(m => m !== "UTANG" && m !== key).length === 0`. Same check in `handleTogglePaymentMethod` as a safety net.
+- **i18n**: `paymentMethodsHint` updated in both EN and ID to mention the 1-non-debt constraint.
+
+## 2026-03-17 — ERP POS: cash calculator dialog + change dialog
+
+- **Flow**: CASH confirm payment → cash calculator dialog → `handleCheckout()` → change dialog → Print Receipt / Skip.
+- **Cash calculator dialog** (`.erp-dialog--calc`, 360px wide):
+  - Screen section: shows Total (static), Cash Paid (updates live), Change (appears once paid entered; green if ≥0, red if negative).
+  - Quick-amount chips: 4 smart round-up values computed from `cartTotal` (nearest 1k/5k/10k/50k/100k, deduped).
+  - Numpad: 3×4 grid (7–9, 4–6, 1–3, C / 0 / ⌫). C clears, ⌫ removes last digit. Input stored as plain string in `cashPaid` state.
+  - Confirm button disabled if `cashPaid` entered and `paidNum < cartTotal`. If `cashPaid` left blank, defaults to `cartTotal` on confirm (exact change = 0).
+  - Cancel returns to checkout dialog (`setShowCheckout(true)`).
+- **Change dialog** (`.erp-dialog--sm`): appears after successful `handleCheckout()` for CASH only. Shows paid amount row + large change amount block (`.erp-change-value`, 32px bold primary). Two full-width buttons: "Print Receipt" → opens receipt dialog; "New Transaction" → `handleNewTransaction()`.
+- **Non-CASH flow unchanged**: QRIS/TRANSFER/UTANG skip the calculator and go directly to `handleCheckout()` → receipt as before.
+- **Stock warning bypass**: stock re-confirm also routes to cash calc (not direct checkout) when payment is CASH.
+- **Receipt unchanged**: cash paid/change rows still print on receipt if `cashPaid` was set.
+- New states: `showCashCalc`, `showChangeDialog`.
+- New CSS classes: `.erp-dialog--calc`, `.erp-calc-body`, `.erp-calc-screen`, `.erp-calc-screen-*`, `.erp-calc-quick`, `.erp-calc-quick-btn`, `.erp-calc-numpad`, `.erp-calc-key` (+`--clear`/`--back`), `.erp-change-paid-row`, `.erp-change-amount-block`, `.erp-change-label`, `.erp-change-value`.
+
+## 2026-03-17 — ERP Products tab: CSV import, bulk delete, pagination, alphabetical sort, unit normalization, BOM unit mismatch guard, auto-create category, duplicate prevention
+
+- **Sort**: `filteredProducts` useMemo now sorts purely alphabetically — category name (case-insensitive localeCompare, uncategorized → `\uFFFF` sorts last), then product name. Replaces previous sort-order-first logic.
+- **Pagination**: `pagedProducts` slices `filteredProducts` by `prodPage × prodPageSize`. Page size chips (10/25/50) + ‹/› nav in `.erp-table-pagination`. Page + selection reset on search/filter/page-size change.
+- **Bulk delete** (OWNER only): `selectedProdIds: Set<string>` + checkbox column (per-row + select-all for current page). `.erp-bulk-bar` → `showProdBulkConfirm` → `repo.deleteProduct` per id + DELETE dispatch. Selection clears after confirm.
+- **Download Template**: generates `ayakasir_products_template.csv` (UTF-8 BOM) with columns: `name, category, price, description, active` + one example row.
+- **Import CSV**: two-step flow — (1) parse → `prodImportPreview` dialog (`.erp-dialog--wide`); (2) confirm → save to Supabase. Uses `parseProdCsvLine()` (character-by-character). Header-name-based, order-independent. Duplicate detection case-insensitive vs existing MENU_ITEM names + within batch (`.erp-badge--danger`). New categories flagged with `.erp-badge--warning` "New" badge.
+- **Auto-create category**: on import confirm, categories not in `catByName` (MENU type) are created via `repo.createCategory` + dispatched. Map rebuilt at confirm time.
+- **Duplicate prevention (manual save)**: `handleSaveProduct` checks case-insensitive name collision vs existing MENU_ITEM products (excluding `editId`) before saving; alerts and returns if found.
+- **BOM unit normalization**: `normalizeToBaseUnit(qty, fromUnit, toUnit)` helper — kg↔g (×/÷1000), L↔mL (×/÷1000), same unit → passthrough. Applied in `handleSaveProduct` before `setProductComponents`; stores normalized qty + inventory's base unit.
+- **BOM unit mismatch warning**: if `normalizeToBaseUnit` returns `null` (incompatible families, e.g. g vs mL), BOM row is skipped with an alert. Prevents incorrect inventory deduction.
+- **active field**: `"true"/"1"/"yes"` (case-insensitive) → true; empty → true (default); anything else → false.
+- New i18n keys in `products`: `importCsv`, `downloadTemplate`, `importPreviewTitle`, `importPreviewHint`, `importConfirm`, `importDuplicate`, `importSuccess`, `importSkipped`, `importError`, `bulkDelete`, `bulkDeleteConfirm`, `rowsPerPage`, `importNewCategory`, `duplicateProduct` (EN + ID).
+
+## 2026-03-16 — ERP Purchasing Raw Materials tab: CSV import, bulk delete, pagination, alphabetical sort, unit normalization, auto-create category
+
+- **Sort**: `filteredRawMaterials` useMemo sorts by category name alphabetically first, then name alphabetically within — uses `state.categories` lookup for category name. Implemented via spread + `.sort()` at end of filter chain.
+- **Pagination**: `pagedRawMaterials` + `rawTotalPages` useMemos. State: `rawPage`, `rawPageSize` (10/25/50). Page, selection reset on filter/search/category/page-size change.
+- **Bulk delete** (OWNER only): `selectedRawIds` Set + select-all checkbox for current page. `.erp-bulk-bar` appears when rows checked → `showRawBulkConfirm` → `handleRawBulkDelete` calls `deleteGoodsReceivingItemsByProductId`, `deleteComponentsByProductId`, `deleteInventoryByProductId`, `deleteProduct` per id + dispatches DELETE.
+- **Download Template**: generates `ayakasir_raw_materials_template.csv` (UTF-8 BOM) with columns: `name, category, unit, description` + one example row.
+- **Import CSV**: two-step flow — (1) parse → `rawImportPreview` dialog; (2) confirm → save to Supabase. Uses `parseRawCsvLine()` (same character-by-character pattern). Duplicate detection case-insensitive vs existing raw materials + within batch.
+- **Unit normalization**: `normalizeUnit()` maps common case variants (KG→kg, G→g, ML/ml→mL, l→L, pcs/pc→pcs) at parse time so preview and stored unit are always canonical.
+- **Auto-create category**: if a CSV row has a `category` value that doesn't exist in `rawCategories`, it is created via `repo.createCategory` (RAW_MATERIAL type) at confirm time. `catByName` map rebuilt at confirm time (not parse time). New categories shown with "New" badge in preview.
+- **Duplicate prevention**: case-insensitive check vs existing raw material names + within batch — flagged with "duplicate" badge, skipped on confirm. Same as manual add (already blocked in `handleSaveRaw`).
+- New i18n keys in `purchasing`: `rawImportCsv`, `rawDownloadTemplate`, `rawImportPreviewTitle`, `rawImportPreviewHint`, `rawImportConfirm`, `rawImportDuplicate`, `rawImportSuccess`, `rawImportSkipped`, `rawImportError`, `rawBulkDelete`, `rawBulkDeleteConfirm`, `rawRowsPerPage`, `rawImportNewCategory` (EN + ID).
+
+## 2026-03-16 — ERP Purchasing Categories tab: CSV import, bulk delete, pagination, alphabetical sort, delete options
+
+- **Sort**: `sortedRawCategories` useMemo calls `.sort((a, b) => a.name.localeCompare(b.name))` — always alphabetical.
+- **Pagination**: `pagedRawCategories` useMemo slices `sortedRawCategories` by `catPage × catPageSize`. Page size chips (10/25/50) + ‹/› nav. Page + selection reset on page-size change.
+- **Bulk delete** (OWNER only): checkbox column (per-row + select-all for current page). `.erp-bulk-bar` appears when rows checked → `showCatBulkConfirm` → `handleCatBulkDelete` loops `deleteCategory` + dispatches DELETE per id.
+- **Download Template**: generates `ayakasir_raw_categories_template.csv` (UTF-8 BOM) with columns: `name, sort_order` + one example row.
+- **Import CSV**: two-step flow — (1) parse → `catImportPreview` dialog; (2) confirm → save to Supabase. Uses `parseCatCsvLine()` (same pattern). Duplicate detection case-insensitive vs existing categories + within batch. New keys: `catImportSuccess`, `catImportPreviewHint`.
+- **Delete with options**: `handleDeleteRawCat` is now synchronous — sets `deleteCatTarget { id, name, rawMaterialCount }`. Dialog shows two buttons: (1) delete category + all raw materials; (2) delete category only (patches `category_id → null` on raw materials). New i18n keys: `deleteCategoryTitle`, `deleteCategoryWithRaws`, `deleteCategoryKeepRaws`, `deleteCategoryRawCount`.
+- **Duplicate prevention on import**: case-insensitive check vs existing raw categories and within batch — flagged with "duplicate" badge, skipped on confirm.
+- **Duplicate prevention on manual add/edit**: existing check in `handleSaveRawCat` already blocks duplicate names.
+- New i18n keys in `purchasing`: `catImportSuccess`, `catImportPreviewHint`, `catBulkDeleteConfirm`, `deleteCategoryTitle`, `deleteCategoryWithRaws`, `deleteCategoryKeepRaws`, `deleteCategoryRawCount` (EN + ID).
+
+## 2026-03-16 — ERP Purchasing Vendors: CSV import, bulk delete, pagination, alphabetical sort
+
+- **Sort**: `sortedVendors` useMemo calls `.sort((a, b) => a.name.localeCompare(b.name))` — always alphabetical.
+- **Pagination**: `pagedVendors` useMemo slices `sortedVendors` by `vendorPage × vendorPageSize`. Page size chips (10/25/50) + ‹/› nav. Page + selection reset on page-size change.
+- **Bulk delete** (OWNER only): checkbox column (per-row + select-all for current page). `.erp-bulk-bar` appears when rows checked → `showVendorBulkConfirm` → deletes via `deleteVendor` loop + dispatches DELETE per id.
+- **Download Template**: generates `ayakasir_vendors_template.csv` (UTF-8 BOM) with columns: `name, phone, address` + one example row.
+- **Import CSV**: two-step flow — (1) parse → preview dialog; (2) confirm → save to Supabase. Uses `parseVendorCsvLine()` character-by-character parser (same pattern as customers). Duplicate detection by name (case-insensitive), checked against existing vendors + within the batch itself.
+- **Phone normalization**: `normalizeVendorPhone()` — if number starts with digit 1–9 (not 0), prepend `0`. e.g. `856115060123` → `0856115060123`. Applied at parse time so preview shows corrected number.
+- **Duplicate prevention on import**: rows with names matching existing vendors OR duplicate within the same CSV are flagged with a "duplicate" badge and skipped on confirm. Not possible to import vendors with an existing name.
+- **Duplicate prevention on manual add**: existing case-insensitive check in `handleSaveVendor` already blocks duplicate names.
+- New i18n keys in `purchasing`: `importCsv`, `downloadTemplate`, `importPreviewTitle`, `importPreviewHint`, `importConfirm`, `importDuplicate`, `importSuccess`, `importSkipped`, `importError`, `bulkDelete`, `bulkDeleteConfirm`, `rowsPerPage` (EN + ID).
+- CSS reuses: `.erp-bulk-bar`, `.erp-import-msg`, `.erp-dialog--wide`, `.erp-chip`, `.erp-table-row--selected`, `.erp-table-pagination`, `.erp-badge--danger` — all already defined in `erp.css`.
+
+## 2026-03-16 — ERP Customers: bulk delete, pagination, category delete options, alphabetical sort
+
+- **Sort**: `filteredCustomers` useMemo now calls `.sort((a, b) => a.name.localeCompare(b.name))` — always alphabetical regardless of category/search filter.
+- **Pagination**: `pagedCustomers` useMemo slices `filteredCustomers` by `page × pageSize`. Page size chips (10/25/50) + ‹/› nav in `.erp-table-pagination`. Page, selection, and pageSize all reset on filter/search/category change.
+- **Bulk delete** (OWNER only): checkbox column in table (per-row + select-all for current page). When any rows are checked, `.erp-bulk-bar` appears with count + "Delete Selected" button → confirm dialog → deletes all selected via `deleteCustomer` loop + dispatches DELETE per id. Detail panel clears if selected customer is among deleted.
+- **Category delete with options**: delete button now passes `customerCount` (count of customers with that `category_id`) to `deleteTarget`. Delete dialog shows two action buttons when `customerCount > 0`: (1) "Delete category and all its customers" — deletes customers first then category; (2) "Delete category only" — patches each customer's `category_id` to null via `updateCustomer` then deletes category. When `customerCount === 0`, only the keep-customers button is shown.
+- New i18n keys in `customers`: `bulkDelete`, `bulkDeleteConfirm`, `rowsPerPage`, `deleteCategoryTitle`, `deleteCategoryWithCustomers`, `deleteCategoryKeepCustomers`, `deleteCategoryCustomerCount` (EN + ID).
+- New i18n key in `common`: `selected` (EN + ID).
+- New CSS: `.erp-bulk-bar` in `erp.css`.
+
+## 2026-03-16 — ERP Customers: CSV import + preview + template download
+
+- **Download Template** button generates `ayakasir_customers_template.csv` (UTF-8 BOM for Excel) with columns: `name, phone, email, birthday, gender, category, notes` + one example row.
+- **Import CSV** is a two-step flow: (1) parse file → show preview dialog; (2) user confirms → save to Supabase.
+- **Root bug fixed**: original regex-based CSV parser `("(?:[^"]|"")*"|[^,]*)` produced phantom empty matches between fields, shifting every column after `name` by +1 (phone→email, birthday→notes, etc.). Replaced with a proper character-by-character `parseCsvLine()` function that handles quoted fields, embedded commas, and escaped `""` quotes correctly.
+- **Preview dialog** (`.erp-dialog--wide`, 860px): shows a full table of parsed rows before any data is written. Rows with category names not yet in the tenant's category list are flagged with a "New" badge (`.erp-badge--warning`).
+- **Auto-create category**: on confirm, categories that don't exist are created via `createCustomerCategory` and dispatched to ERP state; the new `category_id` is then used for the customer row. A live `catByName` map is rebuilt at confirm time (not at parse time) to avoid stale state.
+- Column mapping is **header-name-based and order-independent** — any column order in the CSV works.
+- `birthday`: ISO date string `YYYY-MM-DD` → `new Date().getTime()` milliseconds.
+- `gender`: `MALE/FEMALE/OTHER` (case-insensitive) → stored as-is; invalid → null.
+- Rows with empty `name` are silently skipped during parse (not shown in preview).
+- After confirm, a dismissable `.erp-import-msg` banner shows success count or error.
+- New i18n keys in `customers`: `importCsv`, `downloadTemplate`, `importSuccess`, `importError`, `importInvalidRow`, `importPreviewTitle`, `importPreviewHint`, `importConfirm`, `importNewCategory` (EN + ID).
+- New CSS: `.erp-import-msg` / `--ok` / `--err`, `.erp-dialog--wide` in `erp.css`.
+
+## 2026-03-16 — ERP Inventory: avg_cogs formula per movement type (mirrors Android)
+
+- `computeNewAvgCogs` in `InventoryScreen.tsx` now handles 3 types differently:
+  - `adjustment_in` (bonus/found stock, no cost): `Math.floor((oldAvg × oldQty) / newQty)` — dilutes cost over more units; floor prevents inflation.
+  - `adjustment_out` (stock count correction): `oldAvg` unchanged — per-unit cost is unaffected, stock value drops proportionally with qty. **Mirrors Android `InventoryRepository.kt` line 96-97.**
+  - `waste` (expired/damaged — cost already incurred): `Math.ceil((oldAvg × oldQty) / newQty)` — total cost preserved and absorbed by remaining units → higher HPP. ceil prevents rounding below original total.
+- Android source confirmed at `repos/ayakasir/.../InventoryRepository.kt`: `adjustment_out`/`waste` both used `currentAvgCogs` unchanged (no recalc). Web ERP now differentiates: `waste` absorbs cost, `adjustment_out` preserves per-unit avg.
+- Call site no longer double-wraps with `Math.round` — `computeNewAvgCogs` returns integers directly.
+
+## 2026-03-16 — ERP Purchasing: pre-save warning for uncategorized raw material
+
+- On **new raw material** creation only (not on edit), `handleSaveRaw` checks if `rawCategory` is empty.
+- If empty, a `.erp-dialog--sm` warning dialog (`showRawWarning` state) appears with `copy.purchasing.warnRawNoCategory`.
+- User can Cancel (stay in form) or Save Anyway (calls `handleSaveRaw(true)` to skip the check).
+- `handleSaveRaw` now accepts `skipWarnings = false` param — warning only fires when `!editRawId && !skipWarnings && !rawCategory`.
+- New i18n keys in `purchasing`: `warnRawTitle`, `warnRawNoCategory` in EN + ID in `src/components/ayakasir/erp/i18n.ts`.
+
+## 2026-03-16 — ERP Products: pre-save warning for uncategorized / no BOM
+
+- On **new product** creation only (not on edit), `handleSaveProduct` checks two conditions before proceeding:
+  1. `!formCategory` → warns category is not selected (product will be Uncategorized).
+  2. `formComponents.length === 0` → warns BOM is empty (inventory won't auto-deduct on sale).
+- If any warnings exist, a `.erp-dialog--sm` warning dialog appears listing them. User can Cancel (stay in form) or Save Anyway (calls `handleSaveProduct(true)` to skip checks).
+- `handleSaveProduct` now accepts `skipWarnings = false` param — warnings only fire when `!editId && !skipWarnings`.
+- New i18n keys in `products`: `warnProductTitle`, `warnNoCategory`, `warnNoBom` in EN + ID in `src/components/ayakasir/erp/i18n.ts`.
+
+## 2026-03-16 — ERP POS: out-of-stock warning + re-confirm before checkout
+
+- `outOfStockWarnings` useMemo in `PosScreen.tsx` mirrors the `handleCheckout` BOM-deduction logic to detect insufficient stock *before* payment is confirmed.
+- For BOM items: accumulates required base-unit qty per raw material across all cart items; warns if `currentBase < requiredBase`.
+- For non-BOM items: compares cart qty directly against `inventory.current_qty`.
+- Warning banner (`.erp-stock-warning`) renders inside the checkout dialog body, above the total, listing affected item/raw-material names.
+- When warnings exist, "Confirm Payment" button opens a `showStockConfirm` re-confirm dialog (`.erp-dialog--sm`) before calling `handleCheckout`. No warnings → calls `handleCheckout` directly.
+- Re-confirm dialog shows `pos.stockConfirmProceed` message + Cancel / Confirm buttons.
+- New i18n keys `pos.stockWarning` + `pos.stockConfirmProceed` in EN + ID in `src/components/ayakasir/erp/i18n.ts`.
+- CSS `.erp-stock-warning` added to `erp.css` (amber background, soft warning — not a hard block).
+
+## 2026-03-16 — ERP POS: discount decimal handling fix
+
+- `discount_value` in `transaction_items` is BIGINT (matches Android `CartItem.discountValue: Long`) — decimals cause `22P02`.
+- Fix: `Math.round(item.discountValue)` when writing `discount_value` to DB in `handleCheckout`. Cart state keeps the float for accurate `discountPerUnit` calculation via `calcDiscountPerUnit`.
+- AMOUNT mode: blocked decimal input in the discount dialog via `onChange` guard (`v.includes(".")` → no-op) + `step="1"`, `inputMode="numeric"`.
+- PERCENT mode: allows decimal input (`step="0.01"`, `inputMode="decimal"`); stored as rounded integer in DB. Display in cart shows the pre-rounded float while editing, but stored as integer.
+
 ## 2026-03-14 — AyaKasir registration improvements
 
 - Updated `erp-auth-card` to be scrollable with a viewport max-height to avoid overlap on smaller screens.

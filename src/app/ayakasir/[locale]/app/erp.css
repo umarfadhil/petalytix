@@ -151,15 +151,25 @@ body:has(.erp-root) {
 .erp-auth-card {
   position: relative;
   z-index: 1;
-  background: var(--erp-surface);
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: var(--erp-radius-xl);
-  box-shadow: var(--erp-shadow-lg);
+  box-shadow: 0 8px 32px rgba(29, 114, 233, 0.10), 0 1.5px 8px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.8);
   padding: 48px 40px;
   width: 100%;
   max-width: 420px;
   max-height: calc(100vh - 48px);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+a.erp-auth-logo {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
 }
 
 .erp-auth-logo {
@@ -461,12 +471,13 @@ body:has(.erp-root) {
 }
 
 .erp-btn--secondary {
-  background: var(--erp-line-light);
+  background: #5555553b;
   color: var(--erp-ink);
 }
 
 .erp-btn--secondary:hover:not(:disabled) {
-  background: var(--erp-line);
+  background: #555555b0;
+  color: #ffffff;
 }
 
 .erp-btn--danger {
@@ -641,6 +652,7 @@ body:has(.erp-root) {
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 16px;
+  margin-top: 16px;
 }
 
 .erp-chip {
@@ -673,6 +685,7 @@ body:has(.erp-root) {
   gap: 6px;
   flex-wrap: wrap;
   margin-bottom: 12px;
+  margin-top: 12px;
 }
 
 .erp-btn--xs {
@@ -710,6 +723,215 @@ body:has(.erp-root) {
 
 .erp-dialog--sm {
   max-width: 400px;
+}
+.erp-dialog--wide {
+  max-width: 860px;
+  width: 95vw;
+}
+
+.erp-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--erp-surface);
+  border: 1px solid var(--erp-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.erp-import-msg {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.erp-import-msg--ok {
+  background: #e8f5e9;
+  border: 1px solid #4caf50;
+  color: #1b5e20;
+}
+.erp-import-msg--err {
+  background: #ffebee;
+  border: 1px solid #f44336;
+  color: #7f0000;
+}
+
+.erp-stock-warning {
+  background: #fff8e1;
+  border: 1px solid #f9a825;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #7a5c00;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ── Cash calculator dialog ─────────────────────────────────────────── */
+
+.erp-dialog--calc {
+  width: 360px;
+  max-width: 95vw;
+}
+
+.erp-calc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 8px !important;
+}
+
+/* Screen */
+.erp-calc-screen {
+  background: var(--erp-bg);
+  border: 1px solid var(--erp-line);
+  border-radius: 10px;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.erp-calc-screen-total,
+.erp-calc-screen-paid {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-top: 8px;
+}
+
+.erp-calc-screen-label {
+  font-size: 12px;
+  color: var(--erp-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.erp-calc-screen-total-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--erp-text);
+}
+
+.erp-calc-screen-paid-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--erp-primary);
+}
+
+.erp-calc-screen-change {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 0px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--erp-line);
+}
+
+.erp-calc-screen-change-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #2e7d32;
+}
+
+.erp-calc-screen-change--neg .erp-calc-screen-change-value {
+  color: #e53e3e;
+}
+
+/* Quick amount chips */
+.erp-calc-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.erp-calc-quick-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px;
+  background: var(--erp-surface);
+  border: 1px solid var(--erp-border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--erp-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.erp-calc-quick-btn:hover {
+  background: var(--erp-primary-light, #e8f0fd);
+}
+
+/* Numpad grid */
+.erp-calc-numpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.erp-calc-key {
+  padding: 14px 0;
+  font-size: 20px;
+  font-weight: 600;
+  background: var(--erp-surface);
+  border: 1px solid var(--erp-border);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--erp-text);
+  transition: background 0.12s;
+  line-height: 1;
+}
+
+.erp-calc-key:hover {
+  background: var(--erp-line);
+}
+
+.erp-calc-key:active {
+  background: var(--erp-border);
+}
+
+.erp-calc-key--clear {
+  color: #e53e3e;
+}
+
+.erp-calc-key--back {
+  color: var(--erp-muted);
+}
+
+/* ── Cash change result dialog ──────────────────────────────────────── */
+
+.erp-change-paid-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: var(--erp-muted);
+  margin-bottom: 12px;
+}
+
+.erp-change-amount-block {
+  background: var(--erp-bg);
+  border: 2px solid var(--erp-primary);
+  border-radius: 12px;
+  padding: 16px 24px;
+  margin-bottom: 4px;
+}
+
+.erp-change-label {
+  font-size: 13px;
+  color: var(--erp-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.erp-change-value {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--erp-primary);
 }
 
 .erp-dialog-header {
@@ -891,7 +1113,7 @@ body:has(.erp-root) {
   padding: 16px;
   cursor: pointer;
   transition: all var(--erp-transition);
-  border: 2px solid transparent;
+  border: 2px solid #6ea5f167;
   height: 80px;
   display: flex;
   flex-direction: column;
@@ -899,8 +1121,9 @@ body:has(.erp-root) {
 }
 
 .erp-pos-card:hover {
-  border-color: var(--erp-primary);
+  border-color: #6ea5f167;
   transform: translateY(-1px);
+  background-color: #6ea5f167;
 }
 
 .erp-pos-card-name {
@@ -1118,6 +1341,7 @@ body:has(.erp-root) {
   opacity: 0.35;
   cursor: not-allowed;
   border-color: var(--erp-line);
+  background-color: #a7a7a8;
 }
 
 /* ── POS customer search list ── */
@@ -1300,7 +1524,7 @@ body:has(.erp-root) {
   position: absolute;
   cursor: pointer;
   inset: 0;
-  background: var(--erp-line);
+  background: #55555580;
   border-radius: 24px;
   transition: all var(--erp-transition);
 }
@@ -1357,6 +1581,103 @@ body:has(.erp-root) {
   font-weight: 500;
 }
 
+
+/* ── Close Cashier Report ── */
+.erp-close-report-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.erp-close-report-table td {
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--erp-line-light);
+}
+
+.erp-close-report-table td:last-child {
+  text-align: right;
+  font-weight: 500;
+}
+
+.erp-close-report-total td {
+  font-weight: 700;
+  border-top: 2px solid var(--erp-line);
+  border-bottom: none;
+  font-size: 15px;
+}
+
+.erp-close-report-section {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--erp-muted);
+  padding: 10px 4px 4px;
+  border-top: 1px solid var(--erp-line);
+  margin-bottom: 2px;
+}
+
+.erp-close-match-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0 4px;
+  border-top: 1px solid var(--erp-line-light);
+  margin-top: 4px;
+}
+
+.erp-close-match-box {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--erp-line);
+  border-radius: var(--erp-radius);
+  background: var(--erp-bg);
+}
+
+.erp-close-match-label {
+  font-size: 12px;
+  color: var(--erp-muted);
+  margin-bottom: 6px;
+}
+
+.erp-close-match-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--erp-success);
+}
+
+.erp-close-match-value--no {
+  color: var(--erp-danger);
+}
+
+.erp-close-match-note {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--erp-text);
+  white-space: pre-wrap;
+}
+
+.erp-close-report-print-header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.erp-close-report-biz {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.erp-close-report-subtitle {
+  font-size: 13px;
+  color: var(--erp-muted);
+  margin-top: 2px;
+}
+
+.erp-close-report-dialog .erp-dialog-body {
+  font-family: 'Courier New', monospace;
+}
 
 /* ── Receipt dialog ── */
 .erp-receipt {
@@ -1755,6 +2076,7 @@ body:has(.erp-root) {
 @media print {
   .erp-sidebar,
   .erp-page-header,
+  .erp-no-print,
   .erp-dialog-footer {
     display: none !important;
   }
@@ -1766,4 +2088,9 @@ body:has(.erp-root) {
     border: none;
     max-width: 100%;
   }
+  /* Print close cashier report fullscreen */
+  body > * { display: none !important; }
+  .erp-overlay { display: block !important; position: static !important; background: none !important; }
+  .erp-close-report-dialog { box-shadow: none !important; border: none !important; max-width: 100% !important; }
+  .erp-printable { display: block !important; }
 }

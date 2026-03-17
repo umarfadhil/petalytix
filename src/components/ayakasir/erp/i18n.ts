@@ -83,6 +83,11 @@ export interface ErpCopy {
     noDiscount: string;
     amountDiscount: string;
     percentDiscount: string;
+    stockWarning: string;
+    stockConfirmProceed: string;
+    cashPaid: string;
+    cashChange: string;
+    cashPaidInsufficient: string;
   };
   products: {
     title: string;
@@ -114,6 +119,33 @@ export interface ErpCopy {
     editCategory: string;
     categoryName: string;
     sortOrder: string;
+    warnProductTitle: string;
+    warnNoCategory: string;
+    warnNoBom: string;
+    importCsv: string;
+    downloadTemplate: string;
+    importPreviewTitle: string;
+    importPreviewHint: string;
+    importConfirm: string;
+    importDuplicate: string;
+    importSuccess: string;
+    importSkipped: string;
+    importError: string;
+    bulkDelete: string;
+    bulkDeleteConfirm: string;
+    rowsPerPage: string;
+    importNewCategory: string;
+    duplicateProduct: string;
+    duplicateVariantName: string;
+    newVariantOption: string;
+    importBomMissingWarning: string;
+    importBomUnitMismatchWarning: string;
+    variantsTab: string;
+    variantUsedIn: string;
+    noVariants: string;
+    addVariantName: string;
+    editVariantName: string;
+    duplicateVariantNameGlobal: string;
   };
   inventory: {
     title: string;
@@ -167,6 +199,40 @@ export interface ErpCopy {
     duplicateVendor: string;
     duplicateRawMaterial: string;
     duplicateRawCategory: string;
+    warnRawTitle: string;
+    warnRawNoCategory: string;
+    importCsv: string;
+    downloadTemplate: string;
+    importPreviewTitle: string;
+    importPreviewHint: string;
+    importConfirm: string;
+    importDuplicate: string;
+    importSuccess: string;
+    importSkipped: string;
+    importError: string;
+    bulkDelete: string;
+    bulkDeleteConfirm: string;
+    rowsPerPage: string;
+    catImportSuccess: string;
+    catImportPreviewHint: string;
+    catBulkDeleteConfirm: string;
+    deleteCategoryTitle: string;
+    deleteCategoryWithRaws: string;
+    deleteCategoryKeepRaws: string;
+    deleteCategoryRawCount: string;
+    rawImportCsv: string;
+    rawDownloadTemplate: string;
+    rawImportPreviewTitle: string;
+    rawImportPreviewHint: string;
+    rawImportConfirm: string;
+    rawImportDuplicate: string;
+    rawImportSuccess: string;
+    rawImportSkipped: string;
+    rawImportError: string;
+    rawBulkDelete: string;
+    rawBulkDeleteConfirm: string;
+    rawRowsPerPage: string;
+    rawImportNewCategory: string;
   };
   settings: {
     title: string;
@@ -218,6 +284,30 @@ export interface ErpCopy {
     currentPassword: string;
     newPassword: string;
     confirmPassword: string;
+    language: string;
+    languageHint: string;
+    closeCashier: string;
+    closeCashierTitle: string;
+    closeCashierConfirmHint: string;
+    closeCashierReport: string;
+    closeTime: string;
+    cashierInCharge: string;
+    openingBalance: string;
+    closingBalance: string;
+    totalTransactions: string;
+    paymentBreakdown: string;
+    matchQuestion: string;
+    matchYes: string;
+    matchNo: string;
+    mismatchNote: string;
+    mismatchPlaceholder: string;
+    closeCashierConfirmBtn: string;
+    downloadReport: string;
+    printReport: string;
+    cashResetTitle: string;
+    cashResetHint: string;
+    cashResetEmpty: string;
+    cashResetKeep: string;
   };
   customers: {
     title: string;
@@ -246,8 +336,26 @@ export interface ErpCopy {
     transactions: string;
     totalSpent: string;
     duplicateCategory: string;
+    duplicatePhone: string;
+    importDuplicatePhone: string;
     transactionHistory: string;
     customerStats: string;
+    importCsv: string;
+    downloadTemplate: string;
+    importSuccess: string;
+    importError: string;
+    importInvalidRow: string;
+    importPreviewTitle: string;
+    importPreviewHint: string;
+    importConfirm: string;
+    importNewCategory: string;
+    bulkDelete: string;
+    bulkDeleteConfirm: string;
+    rowsPerPage: string;
+    deleteCategoryTitle: string;
+    deleteCategoryWithCustomers: string;
+    deleteCategoryKeepCustomers: string;
+    deleteCategoryCustomerCount: string;
   };
   auth: {
     registerTitle: string;
@@ -315,6 +423,7 @@ export interface ErpCopy {
     close: string;
     back: string;
     actions: string;
+    selected: string;
   };
 }
 
@@ -403,6 +512,11 @@ const en: ErpCopy = {
     noDiscount: "None",
     amountDiscount: "Amount",
     percentDiscount: "Percent",
+    stockWarning: "Some items have insufficient raw material stock:",
+    stockConfirmProceed: "Stock is insufficient for some items. Proceed with payment anyway?",
+    cashPaid: "Cash Paid",
+    cashChange: "Change",
+    cashPaidInsufficient: "Amount paid is less than total",
   },
   products: {
     title: "Products",
@@ -434,6 +548,33 @@ const en: ErpCopy = {
     editCategory: "Edit Category",
     categoryName: "Category Name",
     sortOrder: "Sort Order",
+    warnProductTitle: "Incomplete Product",
+    warnNoCategory: "Category is not selected (product will be Uncategorized).",
+    warnNoBom: "Bill of Materials (BOM) is not filled. Inventory won't be deducted automatically on sale.",
+    importCsv: "Import CSV",
+    downloadTemplate: "Download Template",
+    importPreviewTitle: "Preview Import",
+    importPreviewHint: "Review data before importing. Duplicate product names will be skipped. New categories will be created automatically.",
+    importConfirm: "Import",
+    importDuplicate: "duplicate",
+    importSuccess: "Products imported successfully",
+    importSkipped: "skipped (duplicate)",
+    importError: "Failed to import CSV",
+    bulkDelete: "Delete Selected",
+    bulkDeleteConfirm: "Delete selected products? This cannot be undone.",
+    rowsPerPage: "Rows",
+    importNewCategory: "New",
+    duplicateProduct: "A product with this name already exists.",
+    duplicateVariantName: "Variant names within a product must be unique.",
+    newVariantOption: "New variant name",
+    importBomMissingWarning: "Some raw materials (✗) do not exist in the system and will be skipped on import.",
+    importBomUnitMismatchWarning: "Some raw materials (⚠) have incompatible units with inventory and will be skipped on import.",
+    variantsTab: "Variants",
+    variantUsedIn: "Used in",
+    noVariants: "No variants yet",
+    addVariantName: "Add Variant",
+    editVariantName: "Edit Variant",
+    duplicateVariantNameGlobal: "A variant with this name already exists.",
   },
   inventory: {
     title: "Inventory",
@@ -491,6 +632,40 @@ const en: ErpCopy = {
     duplicateVendor: "A vendor with this name already exists.",
     duplicateRawMaterial: "A raw material with this name already exists.",
     duplicateRawCategory: "A category with this name already exists.",
+    warnRawTitle: "Incomplete Raw Material",
+    warnRawNoCategory: "Category is not selected (raw material will be Uncategorized).",
+    importCsv: "Import CSV",
+    downloadTemplate: "Download Template",
+    importPreviewTitle: "Preview Import",
+    importPreviewHint: "Review the data below before importing. Duplicate vendors will be skipped.",
+    importConfirm: "Import",
+    importDuplicate: "duplicate",
+    importSuccess: "Vendors imported successfully",
+    importSkipped: "skipped (duplicate)",
+    importError: "Failed to import CSV",
+    bulkDelete: "Delete Selected",
+    bulkDeleteConfirm: "Delete selected vendors? This cannot be undone.",
+    rowsPerPage: "Rows",
+    catImportSuccess: "Categories imported successfully",
+    catImportPreviewHint: "Review the data below before importing. Duplicate categories will be skipped.",
+    catBulkDeleteConfirm: "Delete selected categories? This cannot be undone.",
+    deleteCategoryTitle: "Delete Category",
+    deleteCategoryWithRaws: "Delete category and all its raw materials",
+    deleteCategoryKeepRaws: "Delete category only, keep raw materials",
+    deleteCategoryRawCount: "raw materials in this category",
+    rawImportCsv: "Import CSV",
+    rawDownloadTemplate: "Download Template",
+    rawImportPreviewTitle: "Preview Import",
+    rawImportPreviewHint: "Review the data below before importing. Duplicates will be skipped. New categories will be created automatically.",
+    rawImportConfirm: "Import",
+    rawImportDuplicate: "duplicate",
+    rawImportSuccess: "Raw materials imported successfully",
+    rawImportSkipped: "skipped (duplicate)",
+    rawImportError: "Failed to import CSV",
+    rawBulkDelete: "Delete Selected",
+    rawBulkDeleteConfirm: "Delete selected raw materials? This cannot be undone.",
+    rawRowsPerPage: "Rows",
+    rawImportNewCategory: "New",
   },
   settings: {
     title: "Settings",
@@ -500,7 +675,7 @@ const en: ErpCopy = {
     enableQris: "QRIS",
     enableTransfer: "Transfer",
     enableUtang: "Debt (UTANG)",
-    paymentMethodsHint: "Enable or disable payment methods available at checkout.",
+    paymentMethodsHint: "Enable or disable payment methods. At least 1 non-debt method must remain active.",
     qrisSettings: "QRIS Settings",
     qrisMerchantName: "QRIS Merchant Name",
     qrisImageUrl: "QRIS Image URL",
@@ -542,6 +717,30 @@ const en: ErpCopy = {
     currentPassword: "Current Password",
     newPassword: "New Password",
     confirmPassword: "Confirm Password",
+    language: "Language",
+    languageHint: "Switch display language",
+    closeCashier: "Close Cashier",
+    closeCashierTitle: "End of Day Report",
+    closeCashierConfirmHint: "Review the summary below before closing the cashier session.",
+    closeCashierReport: "Cashier Report",
+    closeTime: "Close Time",
+    cashierInCharge: "Cashier",
+    openingBalance: "Opening Balance",
+    closingBalance: "Closing Balance",
+    totalTransactions: "Total Transactions",
+    paymentBreakdown: "Payment Breakdown",
+    matchQuestion: "Does the cash balance match?",
+    matchYes: "Match",
+    matchNo: "Doesn't Match",
+    mismatchNote: "Mismatch Note",
+    mismatchPlaceholder: "Describe the discrepancy...",
+    closeCashierConfirmBtn: "Close Cashier",
+    downloadReport: "Download",
+    printReport: "Print",
+    cashResetTitle: "Cash Balance After Close",
+    cashResetHint: "Have you collected all the cash? Choose what to do with the closing balance.",
+    cashResetEmpty: "Empty cash balance (reset to Rp0)",
+    cashResetKeep: "Keep cash balance as opening balance",
   },
   customers: {
     title: "Customers",
@@ -570,8 +769,26 @@ const en: ErpCopy = {
     transactions: "Transactions",
     totalSpent: "Total Spent",
     duplicateCategory: "A category with this name already exists.",
+    duplicatePhone: "A customer with this phone number already exists.",
+    importDuplicatePhone: "skipped (duplicate phone)",
     transactionHistory: "Transaction History",
     customerStats: "Customer Stats",
+    importCsv: "Import CSV",
+    downloadTemplate: "Download Template",
+    importSuccess: "Customers imported successfully",
+    importError: "Failed to import CSV",
+    importInvalidRow: "Invalid row skipped",
+    importPreviewTitle: "Preview Import",
+    importPreviewHint: "Review the data below before importing. New categories will be created automatically.",
+    importConfirm: "Import",
+    importNewCategory: "New",
+    bulkDelete: "Delete Selected",
+    bulkDeleteConfirm: "Delete selected customers? This cannot be undone.",
+    rowsPerPage: "Rows",
+    deleteCategoryTitle: "Delete Category",
+    deleteCategoryWithCustomers: "Delete category and all its customers",
+    deleteCategoryKeepCustomers: "Delete category only, keep customers",
+    deleteCategoryCustomerCount: "customers in this category",
   },
   auth: {
     registerTitle: "Create a new account",
@@ -639,6 +856,7 @@ const en: ErpCopy = {
     close: "Close",
     back: "Back",
     actions: "Actions",
+    selected: "selected",
   },
 };
 
@@ -727,6 +945,11 @@ const id: ErpCopy = {
     noDiscount: "Tanpa",
     amountDiscount: "Nominal",
     percentDiscount: "Persen",
+    stockWarning: "Beberapa item memiliki stok bahan baku tidak mencukupi:",
+    stockConfirmProceed: "Stok tidak mencukupi untuk beberapa item. Tetap lanjutkan pembayaran?",
+    cashPaid: "Uang Diterima",
+    cashChange: "Kembalian",
+    cashPaidInsufficient: "Jumlah yang dibayar kurang dari total",
   },
   products: {
     title: "Produk",
@@ -758,6 +981,33 @@ const id: ErpCopy = {
     editCategory: "Edit Kategori",
     categoryName: "Nama Kategori",
     sortOrder: "Urutan",
+    warnProductTitle: "Produk Belum Lengkap",
+    warnNoCategory: "Kategori belum dipilih (produk akan masuk ke Tanpa Kategori).",
+    warnNoBom: "Bahan Baku (BOM) belum diisi. Stok tidak akan terpotong otomatis saat produk terjual.",
+    importCsv: "Impor CSV",
+    downloadTemplate: "Unduh Template",
+    importPreviewTitle: "Pratinjau Impor",
+    importPreviewHint: "Periksa data sebelum mengimpor. Produk dengan nama duplikat akan dilewati. Kategori baru akan dibuat otomatis.",
+    importConfirm: "Impor",
+    importDuplicate: "duplikat",
+    importSuccess: "Produk berhasil diimpor",
+    importSkipped: "dilewati (duplikat)",
+    importError: "Gagal mengimpor CSV",
+    bulkDelete: "Hapus Terpilih",
+    bulkDeleteConfirm: "Hapus produk yang dipilih? Tindakan ini tidak dapat dibatalkan.",
+    rowsPerPage: "Baris",
+    importNewCategory: "Baru",
+    duplicateProduct: "Produk dengan nama ini sudah ada.",
+    duplicateVariantName: "Nama varian dalam satu produk harus unik.",
+    newVariantOption: "Nama varian baru",
+    importBomMissingWarning: "Beberapa bahan baku (✗) tidak ditemukan di sistem dan akan dilewati saat impor.",
+    importBomUnitMismatchWarning: "Beberapa bahan baku (⚠) memiliki satuan ukuran yang tidak sama dengan inventori dan akan dilewati saat impor.",
+    variantsTab: "Varian",
+    variantUsedIn: "Dipakai di",
+    noVariants: "Belum ada varian",
+    addVariantName: "Tambah Varian",
+    editVariantName: "Edit Varian",
+    duplicateVariantNameGlobal: "Varian dengan nama ini sudah ada.",
   },
   inventory: {
     title: "Inventori",
@@ -815,6 +1065,40 @@ const id: ErpCopy = {
     duplicateVendor: "Vendor dengan nama ini sudah ada.",
     duplicateRawMaterial: "Bahan baku dengan nama ini sudah ada.",
     duplicateRawCategory: "Kategori dengan nama ini sudah ada.",
+    warnRawTitle: "Bahan Baku Belum Lengkap",
+    warnRawNoCategory: "Kategori belum dipilih (bahan baku akan masuk ke Tanpa Kategori).",
+    importCsv: "Impor CSV",
+    downloadTemplate: "Unduh Template",
+    importPreviewTitle: "Pratinjau Impor",
+    importPreviewHint: "Periksa data berikut sebelum mengimpor. Vendor duplikat akan dilewati.",
+    importConfirm: "Impor",
+    importDuplicate: "duplikat",
+    importSuccess: "Vendor berhasil diimpor",
+    importSkipped: "dilewati (duplikat)",
+    importError: "Gagal mengimpor CSV",
+    bulkDelete: "Hapus Terpilih",
+    bulkDeleteConfirm: "Hapus vendor yang dipilih? Tindakan ini tidak dapat dibatalkan.",
+    rowsPerPage: "Baris",
+    catImportSuccess: "Kategori berhasil diimpor",
+    catImportPreviewHint: "Periksa data berikut sebelum mengimpor. Kategori duplikat akan dilewati.",
+    catBulkDeleteConfirm: "Hapus kategori yang dipilih? Tindakan ini tidak dapat dibatalkan.",
+    deleteCategoryTitle: "Hapus Kategori",
+    deleteCategoryWithRaws: "Hapus kategori beserta semua bahan bakunya",
+    deleteCategoryKeepRaws: "Hapus kategori saja, pertahankan bahan baku",
+    deleteCategoryRawCount: "bahan baku dalam kategori ini",
+    rawImportCsv: "Impor CSV",
+    rawDownloadTemplate: "Unduh Template",
+    rawImportPreviewTitle: "Pratinjau Impor",
+    rawImportPreviewHint: "Periksa data berikut sebelum mengimpor. Duplikat akan dilewati. Kategori baru akan dibuat otomatis.",
+    rawImportConfirm: "Impor",
+    rawImportDuplicate: "duplikat",
+    rawImportSuccess: "Bahan baku berhasil diimpor",
+    rawImportSkipped: "dilewati (duplikat)",
+    rawImportError: "Gagal mengimpor CSV",
+    rawBulkDelete: "Hapus Terpilih",
+    rawBulkDeleteConfirm: "Hapus bahan baku yang dipilih? Tindakan ini tidak dapat dibatalkan.",
+    rawRowsPerPage: "Baris",
+    rawImportNewCategory: "Baru",
   },
   settings: {
     title: "Pengaturan",
@@ -824,7 +1108,7 @@ const id: ErpCopy = {
     enableQris: "QRIS",
     enableTransfer: "Transfer",
     enableUtang: "Utang (UTANG)",
-    paymentMethodsHint: "Aktifkan atau nonaktifkan metode pembayaran yang tersedia saat kasir.",
+    paymentMethodsHint: "Aktifkan atau nonaktifkan metode pembayaran. Minimal 1 metode selain Utang harus tetap aktif.",
     qrisSettings: "Pengaturan QRIS",
     qrisMerchantName: "Nama Merchant QRIS",
     qrisImageUrl: "URL Gambar QRIS",
@@ -866,6 +1150,30 @@ const id: ErpCopy = {
     currentPassword: "Password Lama",
     newPassword: "Password Baru",
     confirmPassword: "Konfirmasi Password",
+    language: "Bahasa",
+    languageHint: "Ganti bahasa tampilan",
+    closeCashier: "Tutup Kasir",
+    closeCashierTitle: "Laporan Akhir Hari",
+    closeCashierConfirmHint: "Periksa ringkasan berikut sebelum menutup sesi kasir.",
+    closeCashierReport: "Laporan Kasir",
+    closeTime: "Waktu Tutup",
+    cashierInCharge: "Kasir",
+    openingBalance: "Saldo Awal",
+    closingBalance: "Saldo Akhir",
+    totalTransactions: "Total Transaksi",
+    paymentBreakdown: "Rincian Pembayaran",
+    matchQuestion: "Apakah saldo kas sesuai?",
+    matchYes: "Sesuai",
+    matchNo: "Tidak Sesuai",
+    mismatchNote: "Catatan Ketidaksesuaian",
+    mismatchPlaceholder: "Jelaskan ketidaksesuaiannya...",
+    closeCashierConfirmBtn: "Tutup Kasir",
+    downloadReport: "Unduh",
+    printReport: "Cetak",
+    cashResetTitle: "Saldo Kas Setelah Tutup",
+    cashResetHint: "Apakah Anda sudah mengambil semua uang kas? Pilih tindakan untuk saldo akhir.",
+    cashResetEmpty: "Kosongkan saldo kas (reset ke Rp0)",
+    cashResetKeep: "Pertahankan saldo kas sebagai saldo awal",
   },
   customers: {
     title: "Pelanggan",
@@ -894,8 +1202,26 @@ const id: ErpCopy = {
     transactions: "Transaksi",
     totalSpent: "Total Belanja",
     duplicateCategory: "Kategori dengan nama ini sudah ada.",
+    duplicatePhone: "Pelanggan dengan nomor telepon ini sudah ada.",
+    importDuplicatePhone: "dilewati (nomor telepon duplikat)",
     transactionHistory: "Riwayat Transaksi",
     customerStats: "Statistik Pelanggan",
+    importCsv: "Impor CSV",
+    downloadTemplate: "Unduh Template",
+    importSuccess: "Pelanggan berhasil diimpor",
+    importError: "Gagal mengimpor CSV",
+    importInvalidRow: "Baris tidak valid dilewati",
+    importPreviewTitle: "Pratinjau Impor",
+    importPreviewHint: "Periksa data berikut sebelum mengimpor. Kategori baru akan dibuat otomatis.",
+    importConfirm: "Impor",
+    importNewCategory: "Baru",
+    bulkDelete: "Hapus Terpilih",
+    bulkDeleteConfirm: "Hapus pelanggan yang dipilih? Tindakan ini tidak dapat dibatalkan.",
+    rowsPerPage: "Baris",
+    deleteCategoryTitle: "Hapus Kategori",
+    deleteCategoryWithCustomers: "Hapus kategori beserta semua pelanggannya",
+    deleteCategoryKeepCustomers: "Hapus kategori saja, pertahankan pelanggan",
+    deleteCategoryCustomerCount: "pelanggan dalam kategori ini",
   },
   auth: {
     registerTitle: "Daftar akun baru",
@@ -963,6 +1289,7 @@ const id: ErpCopy = {
     close: "Tutup",
     back: "Kembali",
     actions: "Aksi",
+    selected: "terpilih",
   },
 };
 

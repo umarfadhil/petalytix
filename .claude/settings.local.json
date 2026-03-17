@@ -44,7 +44,9 @@
       "Bash(find 'c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/repos/ayakasir' -name *.kt)",
       "Bash(ls \"c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/src/app/ayakasir/[locale]/app/\\(erp\\)\")",
       "Bash(npx vercel:*)",
-      "mcp__claude_ai_Vercel__get_deployment_build_logs"
+      "mcp__claude_ai_Vercel__get_deployment_build_logs",
+      "Bash(grep -v \"//\")",
+      "Bash(grep -v \"^$\")"
     ]
   }
 }

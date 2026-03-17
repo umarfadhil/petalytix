@@ -49,7 +49,7 @@ export default function LoginPage() {
       <div className="erp-auth-orb erp-auth-orb--2" />
       <div className="erp-auth-orb erp-auth-orb--3" />
       <div className="erp-auth-card">
-        <div className="erp-auth-logo">AyaKa$ir</div>
+        <a className="erp-auth-logo" href="https://ayakasir.petalytix.id">AyaKa$ir</a>
         <p className="erp-auth-subtitle">
           {authCopy.loginSubtitle}
         </p>

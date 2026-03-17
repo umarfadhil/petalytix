@@ -61,8 +61,14 @@ export default function PosScreen() {
   const [withdrawing, setWithdrawing] = useState(false);
   const [withdrawalMsg, setWithdrawalMsg] = useState<string | null>(null);
 
+  // Cash payment calculator
+  const [cashPaid, setCashPaid] = useState("");
+  const [showCashCalc, setShowCashCalc] = useState(false);
+  const [showChangeDialog, setShowChangeDialog] = useState(false);
+
   // Checkout / receipt
   const [showCheckout, setShowCheckout] = useState(false);
+  const [showStockConfirm, setShowStockConfirm] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [receiptDate, setReceiptDate] = useState<Date | null>(null);
   const [txNote, setTxNote] = useState("");
@@ -129,6 +135,60 @@ export default function PosScreen() {
     () => cart.reduce((sum, item) => sum + calcSubtotal(item), 0),
     [cart]
   );
+
+  // Check for insufficient raw material stock for BOM items (or direct inventory for non-BOM items)
+  const outOfStockWarnings = useMemo(() => {
+    const toBaseUnit = (qty: number, unit: string): number => {
+      if (unit === "kg") return qty * 1000;
+      if (unit === "L") return qty * 1000;
+      return qty;
+    };
+    const findInv = (productId: string, variantId: string) =>
+      state.inventory.find(
+        (i) => i.product_id === productId && (!i.variant_id || i.variant_id === variantId)
+      );
+
+    // Accumulate required quantities in base units, same logic as handleCheckout
+    const required = new Map<string, { name: string; requiredBase: number; currentBase: number; unit: string }>();
+    for (const item of cart) {
+      const components = state.productComponents.filter((c) => c.parent_product_id === item.productId);
+      if (components.length > 0) {
+        for (const comp of components) {
+          const inv = findInv(comp.component_product_id, "");
+          if (!inv) continue;
+          const reqBase = toBaseUnit(comp.required_qty * item.qty, comp.unit || "pcs");
+          const curBase = inv.current_qty; // already in base (g/mL/pcs) regardless of unit display label
+          const existing = required.get(comp.component_product_id);
+          const rawProduct = state.products.find((p) => p.id === comp.component_product_id);
+          required.set(comp.component_product_id, {
+            name: rawProduct?.name ?? comp.component_product_id,
+            requiredBase: (existing?.requiredBase ?? 0) + reqBase,
+            currentBase: curBase,
+            unit: inv.unit,
+          });
+        }
+      } else {
+        const inv = findInv(item.productId, item.variantId);
+        if (!inv) continue;
+        const key = `${item.productId}__${item.variantId}`;
+        const existing = required.get(key);
+        required.set(key, {
+          name: item.variantName ? `${item.name} (${item.variantName})` : item.name,
+          requiredBase: (existing?.requiredBase ?? 0) + item.qty,
+          currentBase: inv.current_qty,
+          unit: inv.unit,
+        });
+      }
+    }
+
+    const warnings: string[] = [];
+    for (const { name, requiredBase, currentBase } of required.values()) {
+      if (currentBase < requiredBase) {
+        warnings.push(name);
+      }
+    }
+    return warnings;
+  }, [cart, state.inventory, state.productComponents, state.products]);
 
   // Customer search filtered from local state
   const filteredCustomers = useMemo(() => {
@@ -241,7 +301,7 @@ export default function PosScreen() {
           unit_price: item.unitPrice,
           subtotal: calcSubtotal(item),
           discount_type: item.discountType,
-          discount_value: item.discountType === "NONE" ? 0 : item.discountValue,
+          discount_value: item.discountType === "NONE" ? 0 : Math.round(item.discountValue),
           discount_per_unit: item.discountType === "NONE" ? 0 : discountPerUnit,
           updated_at: now,
         };
@@ -315,10 +375,10 @@ export default function PosScreen() {
         const productId = key.includes("__") ? key.split("__")[0] : key;
         const current = findInv(productId, variantId);
         if (!current) continue;
-        // Convert inventory current qty to base unit, subtract, convert back
-        const { qty: currentInBase } = toBaseUnit(current.current_qty, current.unit);
+        // current_qty is always stored in base units (g/mL/pcs) regardless of unit display label
+        const currentInBase = current.current_qty;
         const newBase = Math.max(0, currentInBase - baseQty);
-        const newQty = fromBaseUnit(newBase, current.unit);
+        const newQty = newBase; // store back in base
         try {
           const updated = await adjustInventory(supabase, productId, current.variant_id ?? "", newQty);
           dispatch({ type: "UPSERT", table: "inventory", payload: updated as unknown as Record<string, unknown> });
@@ -328,8 +388,13 @@ export default function PosScreen() {
       }
 
       setShowCheckout(false);
+      setShowCashCalc(false);
       setReceiptDate(new Date());
-      setShowReceipt(true);
+      if (paymentMethod === "CASH") {
+        setShowChangeDialog(true);
+      } else {
+        setShowReceipt(true);
+      }
     } catch (err) {
       console.error("Transaction failed:", err);
     }
@@ -339,9 +404,12 @@ export default function PosScreen() {
   const handleNewTransaction = () => {
     setCart([]);
     setShowReceipt(false);
+    setShowChangeDialog(false);
     setSelectedCustomer(null);
     setTxNote("");
     setPaymentMethod("CASH");
+    setCashPaid("");
+    setShowCashCalc(false);
     setShowCustomerDialog(false);
     setShowCheckout(false);
   };
@@ -594,8 +662,14 @@ export default function PosScreen() {
                       type="number"
                       min="0"
                       max={discountType === "PERCENT" ? 100 : itemPrice}
+                      step={discountType === "PERCENT" ? "0.01" : "1"}
+                      inputMode={discountType === "AMOUNT" ? "numeric" : "decimal"}
                       value={discountValue}
-                      onChange={(e) => setDiscountValue(e.target.value)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (discountType === "AMOUNT" && v.includes(".")) return;
+                        setDiscountValue(v);
+                      }}
                       placeholder="0"
                       autoFocus
                     />
@@ -793,6 +867,16 @@ export default function PosScreen() {
               </button>
             </div>
             <div className="erp-dialog-body">
+              {outOfStockWarnings.length > 0 && (
+                <div className="erp-stock-warning" style={{ marginBottom: 16 }}>
+                  <strong>{copy.pos.stockWarning}</strong>
+                  <ul style={{ margin: "6px 0 0 0", paddingLeft: 18 }}>
+                    {outOfStockWarnings.map((name) => (
+                      <li key={name}>{name}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <div className="erp-pos-total" style={{ marginBottom: 20 }}>
                 <span className="erp-pos-total-label">{copy.pos.total}</span>
                 <span className="erp-pos-total-value">{formatRupiah(cartTotal)}</span>
@@ -848,18 +932,220 @@ export default function PosScreen() {
                   />
                 </div>
               )}
+
             </div>
             <div className="erp-dialog-footer">
               <button className="erp-btn erp-btn--secondary" onClick={() => setShowCheckout(false)}>
                 {copy.common.cancel}
               </button>
-              <button className="erp-btn erp-btn--primary" onClick={handleCheckout} disabled={processing}>
+              <button
+                className="erp-btn erp-btn--primary"
+                onClick={() => {
+                  if (paymentMethod === "CASH") {
+                    setCashPaid("");
+                    setShowCheckout(false);
+                    setShowCashCalc(true);
+                  } else if (outOfStockWarnings.length > 0) {
+                    setShowStockConfirm(true);
+                  } else {
+                    handleCheckout();
+                  }
+                }}
+                disabled={processing}
+              >
                 {processing ? copy.common.loading : copy.pos.confirmPayment}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Stock insufficient re-confirm dialog */}
+      {showStockConfirm && (
+        <div className="erp-overlay" onClick={() => setShowStockConfirm(false)}>
+          <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.pos.confirmPayment}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowStockConfirm(false)}>
+                {copy.common.close}
+              </button>
+            </div>
+            <div className="erp-dialog-body">
+              <p style={{ margin: 0, lineHeight: 1.6 }}>{copy.pos.stockConfirmProceed}</p>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowStockConfirm(false)}>
+                {copy.common.cancel}
+              </button>
+              <button
+                className="erp-btn erp-btn--primary"
+                onClick={() => {
+                  setShowStockConfirm(false);
+                  if (paymentMethod === "CASH") {
+                    setCashPaid("");
+                    setShowCheckout(false);
+                    setShowCashCalc(true);
+                  } else {
+                    handleCheckout();
+                  }
+                }}
+                disabled={processing}
+              >
+                {processing ? copy.common.loading : copy.common.confirm}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cash calculator dialog */}
+      {showCashCalc && (() => {
+        const paidNum = parseFloat(cashPaid) || 0;
+        const change = paidNum - cartTotal;
+        const handleNumpad = (val: string) => {
+          if (val === "⌫") {
+            setCashPaid((prev) => prev.slice(0, -1));
+          } else if (val === "C") {
+            setCashPaid("");
+          } else {
+            setCashPaid((prev) => {
+              if (prev === "0") return val;
+              return prev + val;
+            });
+          }
+        };
+        const quickAmounts = (() => {
+          const base = cartTotal;
+          const candidates = [
+            Math.ceil(base / 1000) * 1000,
+            Math.ceil(base / 5000) * 5000,
+            Math.ceil(base / 10000) * 10000,
+            Math.ceil(base / 50000) * 50000,
+            Math.ceil(base / 100000) * 100000,
+          ];
+          const seen = new Set<number>();
+          return candidates.filter((v) => {
+            if (v <= 0 || seen.has(v)) return false;
+            seen.add(v);
+            return true;
+          }).slice(0, 4);
+        })();
+        return (
+          <div className="erp-overlay">
+            <div className="erp-dialog erp-dialog--calc" onClick={(e) => e.stopPropagation()}>
+              <div className="erp-dialog-header">
+                <h3>{copy.pos.cashPaid}</h3>
+                <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => { setShowCashCalc(false); setShowCheckout(true); }}>
+                  {copy.common.close}
+                </button>
+              </div>
+              <div className="erp-dialog-body erp-calc-body">
+                {/* Screen */}
+                <div className="erp-calc-screen">
+                  <div className="erp-calc-screen-total">
+                    <span className="erp-calc-screen-label">{copy.pos.total}</span>
+                    <span className="erp-calc-screen-total-value">{formatRupiah(cartTotal)}</span>
+                  </div>
+                  <div className="erp-calc-screen-paid">
+                    <span className="erp-calc-screen-label">{copy.pos.cashPaid}</span>
+                    <span className="erp-calc-screen-paid-value">{cashPaid ? formatRupiah(paidNum) : "—"}</span>
+                  </div>
+                  {cashPaid !== "" && (
+                    <div className={`erp-calc-screen-change${change < 0 ? " erp-calc-screen-change--neg" : ""}`}>
+                      <span className="erp-calc-screen-label">{copy.pos.cashChange}</span>
+                      <span className="erp-calc-screen-change-value">
+                        {change < 0 ? `−${formatRupiah(Math.abs(change))}` : formatRupiah(change)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Quick amount chips */}
+                <div className="erp-calc-quick">
+                  {quickAmounts.map((amt) => (
+                    <button key={amt} className="erp-calc-quick-btn" onClick={() => setCashPaid(String(amt))}>
+                      {formatRupiah(amt)}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Numpad */}
+                <div className="erp-calc-numpad">
+                  {["7","8","9","4","5","6","1","2","3","C","0","⌫"].map((k) => (
+                    <button
+                      key={k}
+                      className={`erp-calc-key${k === "C" ? " erp-calc-key--clear" : ""}${k === "⌫" ? " erp-calc-key--back" : ""}`}
+                      onClick={() => handleNumpad(k)}
+                    >
+                      {k}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="erp-dialog-footer">
+                <button className="erp-btn erp-btn--secondary" onClick={() => { setShowCashCalc(false); setShowCheckout(true); }}>
+                  {copy.common.cancel}
+                </button>
+                <button
+                  className="erp-btn erp-btn--primary"
+                  onClick={() => { if (cashPaid === "") setCashPaid(String(cartTotal)); handleCheckout(); }}
+                  disabled={processing || (cashPaid !== "" && paidNum < cartTotal)}
+                >
+                  {processing ? copy.common.loading : copy.pos.confirmPayment}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Cash change dialog */}
+      {showChangeDialog && (() => {
+        const paidNum = parseFloat(cashPaid) || 0;
+        const change = Math.max(0, paidNum - cartTotal);
+        return (
+          <div className="erp-overlay">
+            <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+              <div className="erp-dialog-header">
+                <h3>{copy.pos.paymentSuccess}</h3>
+              </div>
+              <div className="erp-dialog-body" style={{ textAlign: "center" }}>
+                {cashPaid !== "" && paidNum > 0 && (
+                  <>
+                    <div className="erp-change-paid-row">
+                      <span>{copy.pos.cashPaid}</span>
+                      <span>{formatRupiah(paidNum)}</span>
+                    </div>
+                    <div className="erp-change-amount-block">
+                      <div className="erp-change-label">{copy.pos.cashChange}</div>
+                      <div className="erp-change-value">{formatRupiah(change)}</div>
+                    </div>
+                  </>
+                )}
+                {(cashPaid === "" || paidNum === 0) && (
+                  <p style={{ margin: 0, color: "var(--erp-muted)" }}>{copy.pos.paymentSuccess}</p>
+                )}
+              </div>
+              <div className="erp-dialog-footer" style={{ flexDirection: "column", gap: 8 }}>
+                <button
+                  className="erp-btn erp-btn--primary"
+                  style={{ width: "100%" }}
+                  onClick={() => { setShowChangeDialog(false); setShowReceipt(true); }}
+                >
+                  {copy.pos.printReceipt}
+                </button>
+                <button
+                  className="erp-btn erp-btn--secondary"
+                  style={{ width: "100%" }}
+                  onClick={handleNewTransaction}
+                >
+                  {copy.pos.newTransaction}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Tarik Tunai dialog */}
       {showWithdrawal && (
@@ -1005,6 +1291,18 @@ export default function PosScreen() {
                   <span>{locale === "id" ? "Metode Bayar" : "Payment"}</span>
                   <span>{paymentMethod}</span>
                 </div>
+                {paymentMethod === "CASH" && cashPaid !== "" && parseFloat(cashPaid) > 0 && (
+                  <>
+                    <div className="erp-receipt-row" style={{ fontSize: 12, marginTop: 2 }}>
+                      <span>{copy.pos.cashPaid}</span>
+                      <span>{formatRupiah(parseFloat(cashPaid))}</span>
+                    </div>
+                    <div className="erp-receipt-row" style={{ fontSize: 12, marginTop: 2, fontWeight: 600 }}>
+                      <span>{copy.pos.cashChange}</span>
+                      <span>{formatRupiah(Math.max(0, parseFloat(cashPaid) - cartTotal))}</span>
+                    </div>
+                  </>
+                )}
                 {selectedCustomer && (
                   <div style={{ marginTop: 8, fontSize: 12 }}>
                     {copy.pos.customerName}: {selectedCustomer.name}

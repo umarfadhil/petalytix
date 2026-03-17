@@ -56,6 +56,8 @@ export default function AyaKasirHero({
               {displayed}
               <span className="ayakasir-cursor">|</span>
             </span>
+            </h1>
+          <h1 className="title ayakasir-hero-title ayakasir-hero-title-suffix">
             {copy.hero.titleSuffix}
           </h1>
           <p className="subtitle ayakasir-hero-subtitle">{copy.hero.subtitle}</p>
@@ -70,7 +72,7 @@ export default function AyaKasirHero({
             </a>
             <Link
               className="button ghost"
-              href={`/${locale}/app/login`}
+              href={`/${locale}/app/register`}
             >
               {copy.hero.ctaLogin}
             </Link>
@@ -148,13 +150,14 @@ function HeroIllo() {
         <path d="M217 75 l5 5 9-9" stroke="#37A454" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round"/>
         <text x="242" y="68" fontSize="8.5" fill="#111827" fontWeight="700">Pembayaran</text>
         <text x="242" y="80" fontSize="8.5" fill="#37A454" fontWeight="600">Berhasil! ✓</text>
-        <text x="242" y="105" fontSize="7" fill="#9ca3af">QRIS · Rp 48.000</text>
+        <text x="242" y="100" fontSize="7" fill="#9ca3af">QRIS · Rp 48.000</text>
       </g>
 
       {/* ── Floating card: Low stock alert (bottom-left, floats slightly) ── */}
       <g className="ayakasir-hero-float-2">
         <rect x="8" y="152" width="108" height="54" rx="14" fill="white" filter="url(#cardShadow)"/>
         <circle cx="30" cy="173" r="13" fill="#fef2f2"/>
+        <path d="M30 165 L30 180 M30 189 L30 190" stroke="#f72b07" strokeWidth="2.8" strokeLinecap="round"/>
         <text x="30" y="178" textAnchor="middle" fontSize="13">📦</text>
         <text x="48" y="165" fontSize="7.5" fill="#111827" fontWeight="700">Stok Rendah</text>
         <text x="48" y="176" fontSize="6.5" fill="#dc2626">Beras — 2 kg lagi</text>

@@ -2,6 +2,22 @@
 
 ## Changelog
 
+### v1.0.8
+
+- Settings — Close Cashier: new section visible to all roles; confirm dialog shows summary (close time, cashier, total transactions, opening/closing balance, payment breakdown, match/mismatch toggle with optional note); cash reset dialog lets cashier empty or keep balance (`cash_withdrawals` + `WITHDRAWAL` ledger entry); printable report dialog with Download (standalone HTML) and Print actions.
+- Settings — Language switcher: new section (all roles) with Indonesia/English buttons; navigates via `router.push()` replacing `/{locale}/` in the current URL.
+- Settings — Payment methods: CASH can now be disabled; constraint = at least 1 non-UTANG method must remain enabled; last active non-UTANG toggle is greyed out with a `(min. 1 aktif)` hint.
+- POS — Cash calculator dialog: numpad + quick-amount chips (smart round-up) shown after CASH payment selection; displays Total / Cash Paid / Change live; confirm disabled if paid < total; defaults to exact change if left blank.
+- POS — Change dialog: appears after CASH checkout showing paid amount and change; buttons for Print Receipt or New Transaction.
+- Products — CSV import: two-step parse→preview→confirm flow; header-name-based column mapping; duplicate detection (case-insensitive) vs existing products and within batch; auto-creates new categories on confirm; BOM unit normalization (kg↔g, L↔mL) and mismatch guard.
+- Products — Bulk delete (owner only), pagination (10/25/50 rows), alphabetical sort (category then product name), Download Template button.
+- Products — Duplicate prevention on manual save; pre-save warnings for uncategorized product or empty BOM.
+- Purchasing — Raw Materials: CSV import with preview, bulk delete, pagination, alphabetical sort, unit normalization, auto-create category on import, pre-save warning for uncategorized raw material.
+- Purchasing — Categories: CSV import with preview, bulk delete, pagination, alphabetical sort; delete with options (delete category + all raw materials, or delete category only keeping raw materials).
+- Purchasing — Vendors: CSV import with preview, bulk delete, pagination, alphabetical sort; phone normalization (prepend `0` if missing).
+- Inventory — `avg_cogs` formula differentiated by movement type: `adjustment_in` dilutes cost (floor), `adjustment_out` preserves per-unit avg, `waste` absorbs cost into remaining units (ceil) — mirrors Android `InventoryRepository.kt`.
+- Customers — CSV import with preview, bulk delete (owner only), pagination, alphabetical sort; category delete with options (delete with customers or keep customers, patch `category_id → null`).
+
 ### v1.0.7
 
 - Registration: Province/City dependent dropdowns sourced from `src/data/indonesia-provinces.json`; fields appear immediately after business name. Required 6-digit PIN stored as `pin_hash/pin_salt` on the owner user row. Tenant `province`/`city` written on register.

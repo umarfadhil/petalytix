@@ -37,13 +37,12 @@ export default function InventoryScreen() {
     setDisplayUnits((prev) => new Map(prev).set(key, next));
   };
 
-  const convertToDisplayUnit = (qty: number, storedUnit: string, displayUnit: string): number => {
-    if (storedUnit === displayUnit) return qty;
-    if (storedUnit === "L" && displayUnit === "mL") return qty * 1000;
-    if (storedUnit === "mL" && displayUnit === "L") return qty / 1000;
-    if (storedUnit === "kg" && displayUnit === "g") return qty * 1000;
-    if (storedUnit === "g" && displayUnit === "kg") return qty / 1000;
-    return qty;
+  // inv.unit is now the display unit marker (kg/L/g/mL/pcs); current_qty is always in base (g/mL/pcs).
+  // Convert stored base qty to display unit for rendering.
+  const convertToDisplayUnit = (baseQty: number, displayUnit: string): number => {
+    if (displayUnit === "kg") return baseQty / 1000;
+    if (displayUnit === "L") return baseQty / 1000;
+    return baseQty;
   };
 
   const isToggleable = (unit: string) =>
@@ -64,14 +63,18 @@ export default function InventoryScreen() {
    * Compute the new avg_cogs after a stock adjustment.
    *
    * adjustment_in (bonus stock, no cost):
-   *   newAvg = (oldAvg × oldQty) / newQty   → cost spread over more units → lower HPP
+   *   newAvg = floor((oldAvg × oldQty) / newQty)
+   *   → cost diluted over more units → lower HPP; floor prevents total cost inflation.
    *
-   * adjustment_out / waste (shrinkage, spoilage):
-   *   total cost was (oldAvg × oldQty); we lose (oldAvg × lostQty) of cost but
-   *   also lose that stock.  The remaining cost is still (oldAvg × oldQty) because
-   *   lost units were already "paid for", so remaining stock carries the full cost:
-   *   newAvg = (oldAvg × oldQty) / newQty   → cost spread over fewer units → higher HPP
-   *   (If newQty = 0, HPP resets to 0.)
+   * adjustment_out (stock count correction — units simply disappear at their avg cost):
+   *   newAvg = oldAvg (unchanged)
+   *   → stock value drops proportionally with qty; per-unit cost is unaffected.
+   *   Mirrors Android app behaviour.
+   *
+   * waste (expired / damaged — cost was already incurred; absorbed by remaining units):
+   *   newAvg = ceil((oldAvg × oldQty) / newQty)
+   *   → total cost preserved and spread over fewer units → higher HPP.
+   *   ceil prevents the total from rounding below the original cost.
    */
   const computeNewAvgCogs = (
     oldAvg: number,
@@ -81,11 +84,14 @@ export default function InventoryScreen() {
   ): number => {
     if (newQty <= 0) return 0;
     if (type === "adjustment_in") {
-      // Bonus units added at zero cost — existing cost spread over more units
-      return oldQty > 0 ? (oldAvg * oldQty) / newQty : 0;
+      return oldQty > 0 ? Math.floor((oldAvg * oldQty) / newQty) : 0;
     }
-    // adjustment_out / waste — same formula: existing cost / remaining units
-    return oldQty > 0 ? (oldAvg * oldQty) / newQty : 0;
+    if (type === "waste") {
+      // Total cost preserved → ceil so remaining stock absorbs the full original cost
+      return oldQty > 0 ? Math.ceil((oldAvg * oldQty) / newQty) : 0;
+    }
+    // adjustment_out: per-unit cost unchanged, stock value drops with qty
+    return oldAvg;
   };
 
   const inventoryRows = useMemo(() => {
@@ -116,19 +122,24 @@ export default function InventoryScreen() {
 
   const handleAdjust = async () => {
     if (!adjustItem) return;
-    const qtyAfterVal = parseInt(newQty) || 0;
-    if (qtyAfterVal < 0) {
+    // User enters qty in the display unit (adjustItem.unit); convert to base for storage
+    const qtyAfterDisplay = parseFloat(newQty) || 0;
+    if (qtyAfterDisplay < 0) {
       alert(locale === "id" ? "Stok tidak boleh di bawah 0." : "Stock cannot be below 0.");
       return;
     }
+    // Convert display qty to base (e.g. kg→g, L→mL)
+    const qtyAfterVal = Math.round(qtyAfterDisplay * toBaseConversion(adjustItem.unit));
     setSaving(true);
     try {
-      const newAvgCogs = Math.round(computeNewAvgCogs(
+      // computeNewAvgCogs already returns a rounded integer (floor for in, ceil for out/waste)
+      // adjustItem.current_qty and qtyAfterVal are both in base units
+      const newAvgCogs = computeNewAvgCogs(
         adjustItem.avg_cogs ?? 0,
         adjustItem.current_qty,
         qtyAfterVal,
         movementType
-      ));
+      );
       const updated = await adjustInventory(
         supabase,
         adjustItem.product_id,
@@ -239,8 +250,8 @@ export default function InventoryScreen() {
               inventoryRows.map((inv) => {
                 const isLow = inv.current_qty < inv.min_qty && inv.min_qty > 0;
                 const dispUnit = getDisplayUnit(inv);
-                const dispCurrent = convertToDisplayUnit(inv.current_qty, inv.unit, dispUnit);
-                const dispMin = convertToDisplayUnit(inv.min_qty, inv.unit, dispUnit);
+                const dispCurrent = convertToDisplayUnit(inv.current_qty, dispUnit);
+                const dispMin = convertToDisplayUnit(inv.min_qty, dispUnit);
                 const fmt3 = (n: number) => parseFloat(n.toFixed(3)).toString();
                 const fmtDisp = (n: number) => `${fmt3(n)} ${dispUnit}`;
                 // avg_cogs is stored per base unit in the DB; convert to display unit for label
@@ -294,7 +305,8 @@ export default function InventoryScreen() {
                         className="erp-btn erp-btn--ghost erp-btn--sm"
                         onClick={() => {
                           setAdjustItem(inv);
-                          setNewQty(String(inv.current_qty));
+                          // Initialize with display qty (inv.unit is the display unit marker)
+                          setNewQty(String(convertToDisplayUnit(inv.current_qty, inv.unit)));
                           setMovementType("adjustment_in");
                           setReason("");
                         }}
