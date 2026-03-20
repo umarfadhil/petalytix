@@ -1,5 +1,11 @@
 ﻿# Session Learnings
 
+## 2026-03-21 — Build Fix: Type Errors in DashboardScreen + SettingsScreen
+
+- **DashboardScreen.tsx:529** — `copy.settings.openCashier` does not exist; `openCashier` lives in `copy.pos`. Fixed to `copy.pos.openCashier`.
+- **SettingsScreen.tsx:680** — Dynamic key lookup `copy.plan[\`plan${...}\`]` widened to `string | ((days: number) => string)`, which is not assignable to `ReactNode`. Replaced with explicit ternary: `planLimits.plan === "TUMBUH" ? copy.plan.planTumbuh : planLimits.plan === "MAPAN" ? copy.plan.planMapan : copy.plan.planPerintis`.
+- **Lesson:** Avoid dynamic `copy[section][key as keyof ...]` lookups when the section's type contains mixed `string | function` values — TypeScript infers the union and rejects JSX rendering.
+
 ## 2026-03-20 — Registration: TUMBUH Promo + Activation Flow + Days Remaining
 
 - **Register defaults to TUMBUH:** `registerErpAction` in `auth.ts` now inserts tenant with `plan: "TUMBUH"`, `plan_started_at: now`, `plan_expires_at: now + 3 months` (free promo). Previously defaulted to PERINTIS.

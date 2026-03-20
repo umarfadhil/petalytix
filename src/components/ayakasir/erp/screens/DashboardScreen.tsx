@@ -526,7 +526,7 @@ export default function DashboardScreen() {
                           <button
                             className="erp-btn erp-btn--primary erp-btn--sm"
                             disabled={!activeSession}
-                            title={!activeSession ? copy.settings.openCashier : undefined}
+                            title={!activeSession ? copy.pos.openCashier : undefined}
                             onClick={() => { setSettlingTx(t); setSettleError(null); }}
                           >
                             {copy.dashboard.settleDebt}

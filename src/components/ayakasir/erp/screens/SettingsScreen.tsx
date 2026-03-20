@@ -677,7 +677,7 @@ export default function SettingsScreen() {
           <div className="erp-settings-row">
             <span className="erp-settings-row-label">{copy.plan.currentPlan}</span>
             <span className={`erp-badge ${planLimits.plan === "TUMBUH" ? "erp-badge--info" : planLimits.plan === "MAPAN" ? "erp-badge--success" : "erp-badge--muted"}`}>
-              {copy.plan[`plan${planLimits.plan.charAt(0) + planLimits.plan.slice(1).toLowerCase()}` as keyof typeof copy.plan]}
+              {planLimits.plan === "TUMBUH" ? copy.plan.planTumbuh : planLimits.plan === "MAPAN" ? copy.plan.planMapan : copy.plan.planPerintis}
             </span>
           </div>
           {planLimits.planExpired && (
