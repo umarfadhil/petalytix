@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useErp } from "../store";
 import { getErpCopy } from "../i18n";
+import { usePlanLimits } from "../usePlanLimits";
 import { formatRupiah, formatDateTime } from "../utils";
 import {
   createCustomer,
@@ -52,6 +53,7 @@ export default function CustomersScreen() {
   const { state, dispatch, supabase, tenantId, locale } = useErp();
   const copy = getErpCopy(locale);
   const isOwner = state.user?.role === "OWNER";
+  const planLimits = usePlanLimits();
 
   // ── Filters ────────────────────────────────────────────────
   const [search, setSearch] = useState("");
@@ -184,6 +186,10 @@ export default function CustomersScreen() {
   }
 
   async function handleSaveCustomer() {
+    if (!editingCustomer && !planLimits.canAddCustomer) {
+      alert(copy.plan.limitReached);
+      return;
+    }
     if (!formName.trim()) {
       setFormError(locale === "id" ? "Nama pelanggan wajib diisi." : "Customer name is required.");
       return;
@@ -493,8 +499,8 @@ export default function CustomersScreen() {
             {importLoading ? copy.common.loading : `↑ ${copy.customers.importCsv}`}
             <input type="file" accept=".csv" style={{ display: "none" }} onChange={handleImportCsv} disabled={importLoading} />
           </label>
-          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openAddCustomer}>
-            + {copy.customers.addCustomer}
+          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openAddCustomer} disabled={!planLimits.canAddCustomer}>
+            + {copy.customers.addCustomer} {planLimits.limits.maxCustomers < Infinity ? `(${planLimits.counts.customers}/${planLimits.limits.maxCustomers})` : ""}
           </button>
         </div>
       </div>

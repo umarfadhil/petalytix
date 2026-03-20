@@ -44,7 +44,8 @@ Middleware (`src/middleware.ts`) intercepts requests:
 - Hero: client component with typing animation cycling through feature words (`typingWords` in copy). Hero copy shape: `titlePrefix`, `titleSuffix`, `typingWords`, `ctaPlayStore`, `ctaLogin`.
 - Features section: 6-step vertical flow (Purchasing → Inventory → Menu → Customers → Cashier → Dashboard) with inline flat SVG illustrations per step + cross-platform sync illustration.
 - Metrics section: live count-up animation for tenants / provinces / cities / transactions, backed by Supabase queries. Renders current totals on each page load.
-- CSS in `globals.css`: `.ayakasir-hero-*`, `.ayakasir-typing-word`, `.ayakasir-cursor`, `.ayakasir-features-flow`, `.ayakasir-feature-step`, `.ayakasir-sync-badge`, `.ayakasir-crossplatform`, `.ayakasir-metrics-*`.
+- Pricing section: 3-column plan comparison (Perintis/Tumbuh/Mapan) with feature lists, promo badges, and CTAs. Tumbuh highlighted as "Most Popular". Branch features shown as "Coming Soon". CSS: `.ayakasir-pricing-*`.
+- CSS in `globals.css`: `.ayakasir-hero-*`, `.ayakasir-typing-word`, `.ayakasir-cursor`, `.ayakasir-features-flow`, `.ayakasir-feature-step`, `.ayakasir-sync-badge`, `.ayakasir-crossplatform`, `.ayakasir-metrics-*`, `.ayakasir-pricing-*`.
 
 ### ERP Dashboard
 
@@ -73,13 +74,17 @@ Middleware (`src/middleware.ts`) intercepts requests:
   - **POS**: product grid with category grouping (flat when filtered/searching), variant picker, customer search/create dialog, CASH/QRIS/TRANSFER/UTANG payment methods (gated by `tenants.enabled_payment_methods`), clear cart, receipt dialog. BOM-aware inventory deduction on checkout (unit conversion: kg↔g, L↔mL).
   - **Products**: menu items only (MENU_ITEM type) with BOM editor (variants + components per product), category CRUD, clone, search.
   - **Inventory**: stock table, adjust stock dialog (movement type selector + optional notes) → writes to `inventory_movements` table + updates `avg_cogs`.
-  - **Purchasing**: goods receiving (decimal qty, auto inventory apply/reversal on edit/delete, avg_cogs weighted-average, in-form quick-create vendor/raw material) + vendor CRUD. Raw Materials tab: full CRUD for RAW_MATERIAL products + categories.
+  - **Purchasing**: goods receiving (decimal qty, auto inventory apply/reversal on edit/delete, avg_cogs weighted-average, in-form quick-create vendor/raw material, variant picker per item) + vendor CRUD. Raw Materials tab: full CRUD for RAW_MATERIAL products + categories. Variants tab: CRUD for raw material variants (auto-creates inventory row per variant; variant picker in goods receiving form).
   - **Customers**: customer table (category filter + text search), category management panel, customer detail panel (stats + tx history). CRUD for customers and customer categories.
   - **Settings**: profile, change password (hash update + best-effort Supabase Auth sync), initial balance, QRIS config (merchant name + image URL), User Management (add/edit/delete tenant users with role + Feature Access checkboxes for CASHIER), CSV export (date range picker; columns: `id, reference_id, tenant_name, date, type, description, customer_category, customer_name, product_category, product_name, variant_name, qty, unit_price, discount_type, discount_value, discount_per_unit, amount, payment_method, transaction_notes, person_in_charge`).
 - Role-based access: OWNER sees all; CASHIER sees only features in `users.feature_access` (sidebar filtered); CASHIER restricted from delete/category-management in Purchasing, Products, Customers.
-- Repository layer in `src/lib/supabase/repositories/` — 14 files, function-based, mirrors mobile's Kotlin repositories.
+- Plan/subscription: `tenants.plan` field (`PERINTIS`/`TUMBUH`/`MAPAN`) with `plan_started_at`/`plan_expires_at`. Plan limits enforced client-side via `usePlanLimits` hook. Limits: products, customers, raw materials, monthly transactions, staff count. Plan info section in Settings (owner-only) shows usage vs limits. Plan constants in `src/lib/ayakasir-plan.ts`.
+- Repository layer in `src/lib/supabase/repositories/` — 16 files, function-based, mirrors mobile's Kotlin repositories. New files: `cashier-sessions.ts`, `variant-groups.ts`.
 - State: React Context + useReducer in `src/components/ayakasir/erp/store.tsx`, server-side initial data load in `(erp)/layout.tsx`.
 - CSS: `.erp-*` prefix in `src/app/ayakasir/[locale]/app/erp.css`. Sidebar collapsible to icon-only mode. Watermark fixed bottom-right.
 - i18n: `src/components/ayakasir/erp/i18n.ts` (EN/ID).
 - Middleware protects `/app/*` routes, redirects unauthenticated to `/app/login`.
-- Supabase tables: `inventory_movements` (stock adjustment audit trail); `avg_cogs` BIGINT on `inventory` for HPP tracking.
+- Supabase tables: `inventory_movements` (stock adjustment audit trail); `avg_cogs` BIGINT on `inventory` for HPP tracking; `cashier_sessions` (open/close lifecycle with PIN, initial/closing balance, match status); `variant_groups` + `variant_group_values` (reusable variant preset groups for raw materials).
+- Cashier Session Flow: POS locked until session opened (PIN + initial balance); session-scoped Saldo Kas; close writes to `cashier_sessions` row; Dashboard "Shift Aktif" chip filters to `opened_at`.
+- Plan gating: CSV export disabled for PERINTIS plan; `APP_VERSION` constant in `src/lib/ayakasir-plan.ts`; Settings footer shows app version.
+- Variant Preset Groups: `variant_groups` + `variant_group_values` tables; Variants tab in Purchasing manages reusable presets; Apply to raw material creates `DbVariant` + `DbInventory` rows; goods receiving supports per-variant sub-rows.

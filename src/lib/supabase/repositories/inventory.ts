@@ -20,8 +20,43 @@ export async function upsertInventory(supabase: SupabaseClient, item: Omit<DbInv
   return data as DbInventory;
 }
 
+export async function updateMinQty(
+  supabase: SupabaseClient,
+  productId: string,
+  variantId: string,
+  minQty: number
+) {
+  let query = supabase
+    .from("inventory")
+    .update({ min_qty: minQty, updated_at: Date.now(), sync_status: "SYNCED" })
+    .eq("product_id", productId);
+  if (variantId === "" || variantId == null) {
+    query = query.or("variant_id.is.null,variant_id.eq.");
+  } else {
+    query = query.eq("variant_id", variantId);
+  }
+  const { data, error } = await query.select().single();
+  if (error) throw error;
+  return data as DbInventory;
+}
+
 export async function deleteInventoryByProductId(supabase: SupabaseClient, productId: string) {
   const { error } = await supabase.from("inventory").delete().eq("product_id", productId);
+  if (error) throw error;
+}
+
+export async function deleteInventoryByProductVariant(
+  supabase: SupabaseClient,
+  productId: string,
+  variantId: string
+) {
+  let query = supabase.from("inventory").delete().eq("product_id", productId);
+  if (variantId === "" || variantId == null) {
+    query = query.or("variant_id.is.null,variant_id.eq.");
+  } else {
+    query = query.eq("variant_id", variantId);
+  }
+  const { error } = await query;
   if (error) throw error;
 }
 

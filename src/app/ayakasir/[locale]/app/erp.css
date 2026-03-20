@@ -718,7 +718,8 @@ a.erp-auth-logo {
 }
 
 .erp-dialog--lg {
-  max-width: 720px;
+  max-width: min(80vw, 1100px);
+  width: 80vw;
 }
 
 .erp-dialog--sm {
@@ -767,6 +768,44 @@ a.erp-auth-logo {
   color: #7a5c00;
   font-size: 13px;
   line-height: 1.5;
+}
+
+.erp-dialog-unit-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.erp-low-stock-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--erp-danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 6px;
+  line-height: 1;
+  cursor: default;
+}
+
+.erp-low-stock-banner {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  background: var(--erp-warning-light);
+  border: 1px solid var(--erp-warning);
+  border-radius: var(--erp-radius);
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  color: #92400e;
+  font-size: 14px;
+  font-weight: 500;
+  flex-wrap: wrap;
 }
 
 /* ── Cash calculator dialog ─────────────────────────────────────────── */
@@ -1064,6 +1103,7 @@ a.erp-auth-logo {
   grid-template-columns: 1fr 380px;
   gap: 24px;
   height: calc(100vh - 48px);
+  position: relative;
 }
 
 .erp-pos-products {
@@ -1445,6 +1485,14 @@ a.erp-auth-logo {
   color: var(--erp-muted);
 }
 
+/* ── Plan tooltip ── */
+.erp-plan-tooltip-trigger {
+  cursor: help;
+  margin-left: 6px;
+  font-size: 14px;
+  vertical-align: middle;
+}
+
 /* ── Empty state ── */
 .erp-empty {
   text-align: center;
@@ -1677,6 +1725,98 @@ a.erp-auth-logo {
 
 .erp-close-report-dialog .erp-dialog-body {
   font-family: 'Courier New', monospace;
+}
+
+/* ── Receiving form dialog ── */
+.erp-rec-form-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.erp-rec-form-section--full {
+  grid-column: 1 / -1;
+}
+.erp-rec-items-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 20px 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--erp-line);
+}
+.erp-rec-items-header span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--erp-ink-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.erp-rec-item-card {
+  background: var(--erp-bg);
+  border: 1px solid var(--erp-border);
+  border-radius: var(--erp-radius);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.erp-rec-item-row {
+  display: grid;
+  grid-template-columns: 200px 380px 120px 130px 130px 1fr;
+  gap: 8px;
+  align-items: end;
+}
+.erp-rec-col { min-width: 0; }
+.erp-rec-item-qty-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.erp-rec-item-qty-group .erp-bom-unit-label {
+  font-size: 12px;
+  white-space: nowrap;
+  min-width: 28px;
+}
+.erp-rec-col--remove {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.erp-rec-item-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--erp-ink-secondary);
+  margin-bottom: 4px;
+}
+.erp-rec-variant-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--erp-surface);
+  border-radius: var(--erp-radius);
+  border: 1px solid var(--erp-line);
+  align-items: center;
+}
+.erp-rec-variant-name {
+  font-size: 13px;
+  color: var(--erp-ink-secondary);
+  font-style: italic;
+}
+.erp-rec-total-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--erp-line);
+  font-size: 13px;
+  color: var(--erp-ink-secondary);
+}
+.erp-rec-total-amount {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--erp-primary);
 }
 
 /* ── Receipt dialog ── */
@@ -2071,6 +2211,56 @@ a.erp-auth-logo {
   .erp-customers-side {
     position: static;
   }
+}
+
+/* ── Session Lock Overlay ─────────────────────────────────────── */
+.erp-session-lock {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  background: var(--erp-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.erp-session-lock-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 48px 40px;
+  background: var(--erp-surface);
+  border: 1px solid var(--erp-border);
+  border-radius: 12px;
+  max-width: 380px;
+  width: 100%;
+  text-align: center;
+}
+
+.erp-session-lock-icon {
+  color: var(--erp-muted);
+}
+
+.erp-session-lock-title {
+  font-size: 15px;
+  color: var(--erp-muted);
+  font-weight: 400;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Active Shift chip variant */
+.erp-chip--shift {
+  background: color-mix(in srgb, var(--erp-primary) 12%, transparent);
+  color: var(--erp-primary);
+  border-color: color-mix(in srgb, var(--erp-primary) 30%, transparent);
+}
+
+.erp-chip--shift.erp-chip--active {
+  background: var(--erp-primary);
+  color: #fff;
+  border-color: var(--erp-primary);
 }
 
 @media print {

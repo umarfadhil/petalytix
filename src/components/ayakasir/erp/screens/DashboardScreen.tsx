@@ -4,12 +4,11 @@ import { useMemo, useState } from "react";
 import { useErp } from "../store";
 import { getErpCopy } from "../i18n";
 import { formatRupiah, formatDateTime, todayRange, monthRange, yearRange } from "../utils";
-import { calculateCashBalance } from "@/lib/supabase/repositories/general-ledger";
 import { createLedgerEntry } from "@/lib/supabase/repositories/general-ledger";
 import { settleDebt } from "@/lib/supabase/repositories/transactions";
 import type { DbTransaction } from "@/lib/supabase/types";
 
-type Period = "today" | "month" | "year" | "custom";
+type Period = "today" | "month" | "year" | "custom" | "shift";
 type PageSize = 10 | 25 | 50;
 
 export default function DashboardScreen() {
@@ -28,15 +27,22 @@ export default function DashboardScreen() {
   const [settleError, setSettleError] = useState<string | null>(null);
   const [settledReceipt, setSettledReceipt] = useState<{ tx: DbTransaction; paymentMethod: "CASH" | "QRIS" | "TRANSFER" } | null>(null);
 
+  // Active cashier session (null = no open session)
+  const activeSession = state.cashierSessions.find((s) => s.closed_at === null) ?? null;
+
   const range = useMemo<[number, number]>(() => {
     if (period === "today") return todayRange();
     if (period === "month") return monthRange();
     if (period === "year") return yearRange();
+    if (period === "shift") {
+      const from = activeSession ? activeSession.opened_at : todayRange()[0];
+      return [from, Date.now()];
+    }
     // custom
     const from = customFrom ? new Date(customFrom).setHours(0, 0, 0, 0) : 0;
     const to = customTo ? new Date(customTo).setHours(23, 59, 59, 999) : Date.now();
     return [from, to];
-  }, [period, customFrom, customTo]);
+  }, [period, customFrom, customTo, activeSession]);
 
   const filteredTransactions = useMemo(
     () =>
@@ -84,12 +90,16 @@ export default function DashboardScreen() {
     [filteredTransactions]
   );
 
-  const cashBalance = useMemo(
-    () => calculateCashBalance(state.generalLedger),
-    [state.generalLedger]
-  );
+  // Saldo Kas scoped to current cashier session: only ledger entries from session start onward
+  const cashBalance = useMemo(() => {
+    const CASH_TYPES = ["INITIAL_BALANCE", "SALE", "WITHDRAWAL", "ADJUSTMENT"];
+    const entries = activeSession
+      ? state.generalLedger.filter((e) => CASH_TYPES.includes(e.type) && e.date >= activeSession.opened_at)
+      : state.generalLedger.filter((e) => CASH_TYPES.includes(e.type));
+    return entries.reduce((sum, e) => sum + e.amount, 0);
+  }, [state.generalLedger, activeSession]);
 
-  // Cash flow detail modal: mirrors calculateCashBalance types, filtered by period range
+  // Cash flow detail modal: filtered by period range
   const CASH_FLOW_TYPES = ["INITIAL_BALANCE", "SALE", "WITHDRAWAL", "ADJUSTMENT"];
   const cashFlowEntries = useMemo(
     () =>
@@ -208,6 +218,7 @@ export default function DashboardScreen() {
     month: copy.dashboard.thisMonth,
     year: copy.dashboard.thisYear,
     custom: copy.dashboard.customDate,
+    shift: copy.settings.activeShift,
   };
 
   // Adaptive sales card label
@@ -216,6 +227,7 @@ export default function DashboardScreen() {
     if (period === "today") return `${prefix} ${copy.dashboard.today}`;
     if (period === "month") return `${prefix} ${copy.dashboard.thisMonth}`;
     if (period === "year") return `${prefix} ${copy.dashboard.thisYear}`;
+    if (period === "shift") return `${prefix} — ${copy.settings.activeShift}`;
     // custom
     if (!customFrom && !customTo) return `${prefix} ${copy.dashboard.customDate}`;
     const fmt = (d: string) => {
@@ -237,6 +249,15 @@ export default function DashboardScreen() {
 
       {/* Period chips */}
       <div className="erp-chips">
+        {activeSession && (
+          <button
+            className={`erp-chip erp-chip--shift${period === "shift" ? " erp-chip--active" : ""}`}
+            onClick={() => handlePeriodChange("shift")}
+            title={`${copy.settings.shiftFrom}: ${new Date(activeSession.opened_at).toLocaleTimeString(locale === "id" ? "id-ID" : "en-US", { hour: "2-digit", minute: "2-digit" })}`}
+          >
+            {copy.settings.activeShift}
+          </button>
+        )}
         {(["today", "month", "year", "custom"] as Period[]).map((p) => (
           <button
             key={p}
@@ -504,6 +525,8 @@ export default function DashboardScreen() {
                         <td>
                           <button
                             className="erp-btn erp-btn--primary erp-btn--sm"
+                            disabled={!activeSession}
+                            title={!activeSession ? copy.settings.openCashier : undefined}
                             onClick={() => { setSettlingTx(t); setSettleError(null); }}
                           >
                             {copy.dashboard.settleDebt}

@@ -1,7 +1,173 @@
 ﻿# Session Learnings
 
+## 2026-03-20 — Registration: TUMBUH Promo + Activation Flow + Days Remaining
+
+- **Register defaults to TUMBUH:** `registerErpAction` in `auth.ts` now inserts tenant with `plan: "TUMBUH"`, `plan_started_at: now`, `plan_expires_at: now + 3 months` (free promo). Previously defaulted to PERINTIS.
+- **activateAccountAction:** New server action in `auth.ts`. Sets `is_active: true` on both `users` and `tenants` rows matching the confirmed email. Called from `confirm/page.tsx` on successful signup OTP verification.
+- **Confirm page — static success:** On signup confirmation, page no longer auto-redirects to login. Instead shows a static "Account activated!" message with a manual "Sign in now" button. Recovery (reset-password) still auto-redirects as before.
+- **Days remaining in Settings:** `usePlanLimits` now exposes `daysUntilExpiry: number` (Infinity when no expiry). `SettingsScreen` plan section shows a new row "Days remaining" / "Sisa hari" — orange when ≤7 days, red when expired. i18n strings `daysRemaining` + `daysRemainingValue(days)` added to both EN and ID.
+- **Files changed:** `src/app/ayakasir/actions/auth.ts`, `src/app/ayakasir/[locale]/app/confirm/page.tsx`, `src/components/ayakasir/erp/i18n.ts`, `src/components/ayakasir/erp/usePlanLimits.ts`, `src/components/ayakasir/erp/screens/SettingsScreen.tsx`.
+
+## 2026-03-20 — Settings: App Info Footer + CSV Export Plan Gate
+
+- **App version:** Added `APP_VERSION = "1.2.3"` constant to `src/lib/ayakasir-plan.ts`. Comment instructs to keep in sync with `repos/ayakasir/app/build.gradle.kts → versionName`. Imported in `SettingsScreen.tsx` and rendered as `© 2026 AyaKasir by Petalytix | v{APP_VERSION}` at the bottom of the settings page.
+- **CSV Export gate:** Unduh Data button is now `disabled` when `planLimits.plan === "PERINTIS"`. A warning hint is shown above the button explaining the feature requires Tumbuh/Mapan plan.
+- **Files changed:** `src/lib/ayakasir-plan.ts`, `src/components/ayakasir/erp/screens/SettingsScreen.tsx`.
+
+## 2026-03-20 — POS: Tarik Tunai Cash Balance Uses Session-Scoped Ledger
+
+- **Bug:** Saldo Kas in Tarik Tunai dialog showed wrong (e.g. −Rp50.000) while Dashboard showed correct value (e.g. +Rp50.000) for the same period.
+- **Root cause:** PosScreen used `calculateCashBalance(state.generalLedger)` — all-time sum including `WITHDRAWAL` entries from previous session closes. Dashboard correctly scoped to `activeSession.opened_at`.
+- **Fix:** Replaced `calculateCashBalance` call in PosScreen with the same session-scoped formula as Dashboard: filter ledger entries to `e.date >= currentSession.opened_at` when a session is active.
+- **Files changed:** `PosScreen.tsx` only (~line 474).
+
+## 2026-03-20 — POS: Allow Zero Initial Balance When Opening Cashier Session
+
+- **Goal:** Allow `Saldo Kas Awal` to be submitted as 0 (empty field was treated as 0, but typing "0" reset the field back to empty).
+- **Root cause:** `onChange` used `num === 0 ? "" : num.toLocaleString(...)` — typing "0" cleared the input.
+- **Fix:** Separated empty-string case from zero-value case; now `"0"` displays as `"0"` and submits as `0`.
+- **Files changed:** `PosScreen.tsx` only (line ~642).
+
+## 2026-03-20 — POS: Disable QRIS When Not Configured
+
+- **Goal:** QRIS payment button is disabled (greyed out) when the tenant has not configured QRIS (missing `qris_image_url` or `qris_merchant_name`).
+- **Logic:** `qrisReady = !!(qris_image_url?.trim() && qris_merchant_name?.trim())` — both fields must be non-empty.
+- **`enabled` check:** `enabledMethods.has(key) && (key !== "QRIS" || qrisReady)` — QRIS in `enabled_payment_methods` is no longer sufficient alone.
+- **Tooltip:** Shows `"QRIS belum dikonfigurasi"` / `"QRIS not configured"` when disabled due to missing config (distinct from `"Metode tidak aktif"` when toggled off in Settings).
+- **Files changed:** `PosScreen.tsx` only.
+
+## 2026-03-20 — Inventory: Delete Zero-Stock Row
+
+- **Goal:** Allow OWNER to delete an inventory row when `current_qty === 0`.
+- **Delete button:** Rendered in actions cell only when `isOwner && inv.current_qty === 0`. Calls `deleteInventoryByProductVariant` then dispatches `{ type: "DELETE", table: "inventory", compositeKey }`.
+- **Guard:** `confirm()` dialog before deletion. Button disabled while deletion is in-flight (`deleting` state keyed by `"productId|variantId"`).
+- **i18n:** Added `deleteInventory` + `confirmDeleteInventory` to EN/ID sections + `ErpCopy` interface.
+- **Files changed:** `InventoryScreen.tsx`, `i18n.ts`.
+
 > AI development context â€” not used at runtime.
 > Record insights, gotchas, and decisions discovered during development sessions.
+
+## 2026-03-20 — Dashboard: Session-Scoped Saldo Kas & Stat Cards
+
+- **Goal:** Saldo Kas (cash balance) and payment method stat cards (Penjualan Tunai, Transfer, QRIS) should reset per cashier session, not accumulate across sessions.
+- **Problem:** Previously `cashBalance` used `calculateCashBalance(state.generalLedger)` which summed all-time ledger entries. After closing a session and opening a new one on the same day, old session's sales still appeared in “today” period stats.
+- **Changes in `DashboardScreen.tsx`:**
+  - **Saldo Kas**: Now filters `generalLedger` to entries with `date >= activeSession.opened_at` when a session is active. When no session, falls back to all-time sum. This is the only card that is always session-scoped.
+  - **Stat cards & transactions**: Follow the period filter (today/month/year/custom/shift) without session clamping, so historical data is visible when selecting broader periods.
+  - **Cash flow modal**: Follows the period filter normally.
+  - **UTANG total**: Unchanged — remains all-time unpaid debt (mirrors mobile `TransactionDao.getTotalUnpaidDebt`).
+- **Removed** `calculateCashBalance` import (no longer needed; logic inlined with session filter).
+- **Key design decision**: Only Saldo Kas is permanently session-scoped. All other cards respect the selected period chip so users can view historical data across sessions.
+- TypeScript passes clean.
+
+## 2026-03-20 — POS Variant Picker: Remove “None” Option
+
+- **Goal:** When a product has variants, the picker should show only those variants — no “None” fallback button.
+- **Key insight:** `inventory` table only tracks raw materials, NOT menu items. Menu item variants have no inventory rows, so filtering by `state.inventory` would always exclude all menu item variants — wrong approach.
+- **Change:** Removed the “None” button from the variant picker dialog. Picker shows all variants from `state.variants` for the product (same as before), just without the no-variant fallback.
+- **`handleProductClick`:** Unchanged — opens picker if any variants exist, adds directly otherwise.
+- **Files affected:** `PosScreen.tsx` only.
+
+## 2026-03-19 — Products: Inline "Add Category" from Tambah Produk dialog
+
+- **Goal:** Allow creating a new MENU category directly from the product form without leaving the dialog.
+- **Pattern:** Added `+ {copy.products.addCategory}` as a `__NEW_CAT__` sentinel `<option>` at the bottom of the category `<select>` in the product form dialog. When selected, opens the existing category form dialog.
+- **`catFromProductForm` flag:** New boolean state tracks whether the category form was triggered from the product form. When `true`, `handleSaveCategory` auto-selects the new category ID in `formCategory` after saving.
+- **Auto-select:** Uses the `newCatId = crypto.randomUUID()` pre-generated before `repo.createCategory` so the ID is available for `setFormCategory(newCatId)` immediately after dispatch.
+- **Cancel/close:** All close paths (overlay click, close button, cancel button) also reset `catFromProductForm` to `false`.
+- **`openCreateCategory(fromProductForm = false)`:** Param added; call site in categories tab header updated to `() => openCreateCategory()` (arrow wrapper) to avoid TS `MouseEvent` type conflict.
+- **No new i18n keys:** Reuses existing `copy.products.addCategory`.
+- **Files affected:** `ProductsScreen.tsx`. TypeScript passes clean.
+
+## 2026-03-19 — Inventory: Hide base row when product has variants
+
+- **Bug:** When a raw material has a preset variant applied (e.g., Sendal Bakiak → sizes 40/41/42), the base inventory row (`variant_id: ""`) was still shown alongside the variant rows in InventoryScreen.
+- **Root cause:** `handleSaveRaw` always creates a base inventory row (`variant_id: ""`). Applying a variant preset adds variant-specific rows but does not remove the base row.
+- **Fix:** In `InventoryScreen.tsx`, added a `productsWithVariants` Set (derived from `state.variants`) and filtered out base rows (`!inv.variant_id && current_qty === 0`) for any product that has at least one variant. Display-only change — no DB writes.
+- **Rule:** Inventory screen hides the no-variant row for a product only if (a) the product has variants AND (b) the base row has `current_qty === 0` (auto-created placeholder, never received stock). If a receiving is explicitly added without a variant, `current_qty > 0` and the base row remains visible alongside the variant rows.
+
+## 2026-03-19 — Purchasing: Add Receiving Dialog UI Redesign
+
+- **Goal:** Improve visual structure of the Add/Edit Receiving dialog in `PurchasingScreen.tsx`.
+- **Vendor + Notes:** Now rendered in a 2-column grid (`erp-rec-form-section`) side by side instead of stacked.
+- **Items section header:** Replaced raw `div` with `.erp-rec-items-header` — uppercase label + "Add Item" button, separated by a bottom border.
+- **Item rows:** Each row is now a `.erp-rec-item-card` (light bg, border, border-radius) instead of a flat `div`. Remove button is absolutely positioned top-right (`.erp-rec-item-remove`).
+- **Card layout:** Category + raw material in a 3-column header row (`erp-rec-item-card-header`: category | product | spacer). Qty + Total in a 2-column row (`erp-rec-item-card-row`). Each field has a small label above it via `.erp-rec-item-label`.
+- **Qty display:** `erp-rec-item-qty-group` flex row aligns qty input + unit label cleanly.
+- **Preset select:** Moved below qty/total row with its own label — no longer crammed into the main grid column.
+- **Variant sub-rows:** Use `.erp-rec-variant-row` 4-column grid (variant name | spacer | qty | total) with a subtle bordered card treatment.
+- **Grand Total:** Displayed below all items when at least one product is selected — shows `copy.purchasing.totalCost` label + formatted `formatRupiah(grandTotal)` in primary blue.
+- **New CSS classes** in `erp.css`: `.erp-rec-form-section`, `.erp-rec-items-header`, `.erp-rec-item-card`, `.erp-rec-item-card-header`, `.erp-rec-item-card-row`, `.erp-rec-item-qty-group`, `.erp-rec-item-remove`, `.erp-rec-item-label`, `.erp-rec-variant-row`, `.erp-rec-variant-name`, `.erp-rec-total-row`, `.erp-rec-total-amount`.
+- **No logic changes** — all existing state, handlers, and variant behavior untouched. TypeScript passes clean.
+
+## 2026-03-19 — Purchasing: Variant Preset Groups + Goods Receiving Expand-by-Preset
+
+- **Goal:** Replace per-product variant management with reusable preset groups (e.g., "Size" → S/M/L/XL). Apply preset to raw material creates `DbVariant` rows. In goods receiving, toggle "Use Variants" to expand a product row into sub-rows per variant.
+- **New DB tables:** `variant_groups` (id, tenant_id, name, sync_status, updated_at) and `variant_group_values` (id, group_id, tenant_id, name, sort_order, sync_status, updated_at). RLS via `public.users.tenant_id`. `variant_group_values.group_id` references `variant_groups(id) ON DELETE CASCADE`.
+- **Variants tab redesign:** Table shows Group Name | Values (pill badges) | Applied To (product names) | Actions (Apply / Edit / Delete). No more per-product variant list.
+- **Apply preset flow:** "Apply" button opens dialog → select raw material → creates `DbVariant` rows (one per value, skip if already exists by name) + `DbInventory` rows for each new variant.
+- **Delete group:** Removes affected `DbVariant` + `DbInventory` rows for any raw material that had variants matching the group's value names, then deletes group (cascade deletes values).
+- **Edit group values:** Delete all existing values then re-insert — simpler than diffing.
+- **Price adjustment removed from UI** (kept in DB for Android parity).
+- **FormItem extended:** Added `useVariants: boolean` and `variantRows: VariantRow[]`. `VariantRow` = `{variantId, variantName, qty, costPerUnit}`.
+- **Goods receiving toggle:** If product has variants, a "Use Variants" button appears. When active: product row hides qty/cost; variant sub-rows appear (indented with `↳ variantName` label + qty + total cost each). Toggle reseeds sub-rows from current product's variants.
+- **Save receiving:** `useVariants=true` items produce one `DbGoodsReceivingItem` per variant row (skip empty qty rows). Each gets its own inventory effect.
+- **Edit receiving restore:** Items grouped by `product_id`. If any item in the group has a non-empty `variant_id`, the group restores as `useVariants=true` with populated `variantRows`. Recomputes total cost from `qty × cost_per_unit × (1000 if g/mL)`.
+- **New repo file:** `variant-groups.ts` — CRUD for both tables.
+- **New i18n keys:** `addVariantGroup`, `editVariantGroup`, `variantGroupName`, `groupValues`, `addValue`, `noGroups`, `deleteGroupConfirm`, `groupBulkDelete`, `groupBulkDeleteConfirm`, `duplicateGroup`, `duplicateGroupValue`, `applyToProduct`, `applyPreset`, `appliedTo`, `variantGroupRowsPerPage`, `useVariants`, `noGroupValues`.
+- **Files affected:** Supabase DB (migration), `types.ts`, `variant-groups.ts` (new repo), `repositories/index.ts`, `store.tsx`, `(erp)/layout.tsx`, `i18n.ts`, `PurchasingScreen.tsx`. TypeScript passes clean.
+
+## 2026-03-19 — Purchasing: Raw Material Variants Tab + Goods Receiving Integration
+
+- **Goal:** Manage variant presets for raw materials (e.g., T-Shirt sizes S/M/L/XL) and select variants when receiving goods. Each variant gets its own inventory row.
+- **New Purchasing tab:** "Variants" — 5th tab alongside Goods Receiving, Vendors, Raw Materials, Categories.
+- **Variant CRUD:** Add/Edit/Delete variants for raw materials. Form: parent product (select raw material) + variant name + price adjustment (default 0). Duplicate check: same name + same product.
+- **Auto inventory row:** On variant creation, an inventory row `(product_id, variant_id)` with `current_qty: 0` is auto-created, inheriting the parent product's base unit.
+- **Inventory cleanup:** On variant delete, the corresponding inventory row is removed via `deleteInventoryByProductVariant()`.
+- **Bulk delete (OWNER only):** Checkbox column + select-all for current page. Each variant's inventory row cleaned up on delete.
+- **Pagination/search/filter:** Same pattern as other tabs — page size chips (10/25/50), filter by raw material, search by variant name.
+- **Goods receiving integration:** After selecting a raw material in the receiving form, if it has variants, a variant dropdown appears below the product select. `variantId` populates the form item. Resets on product change.
+- **Variant name in receiving detail:** Expanded receiving row shows variant name in parentheses after product name (same pattern as InventoryScreen).
+- **Inventory apply/reversal:** Already worked — `handleSaveReceiving` uses composite key `${product_id}|${variant_id}` for inventory lookups. Just needed `variantId` to be non-empty.
+- **CASHIER role:** Delete/bulk-delete actions hidden (same pattern as other tabs).
+- **No new DB table:** Uses existing `variants` Supabase table. Existing `DbVariant` type and variant repository functions sufficient.
+- **New repo function:** `deleteInventoryByProductVariant(supabase, productId, variantId)` in `inventory.ts` — handles NULL/empty variant_id matching.
+- **New i18n keys (14):** `variants`, `addVariant`, `editVariant`, `variantName`, `parentProduct`, `priceAdjustment`, `noVariants`, `deleteVariantConfirm`, `variantBulkDelete`, `variantBulkDeleteConfirm`, `duplicateVariant`, `selectVariant`, `variantRowsPerPage` (EN + ID).
+- **Files affected:** `i18n.ts`, `inventory.ts` (repo), `PurchasingScreen.tsx`. TypeScript passes clean.
+
+## 2026-03-19 — Cashier Session Flow Redesign (IMPLEMENTED)
+
+- **Goal:** Full open/close cashier session lifecycle: POS locked until opened, initial balance set at open, dashboard shift filter, close writes to session record.
+- **New DB table:** `cashier_sessions` — `id, tenant_id, user_id, opened_at (BIGINT), closed_at (BIGINT nullable), initial_balance, closing_balance, withdrawal_amount, match_status, mismatch_note, sync_status, updated_at`.
+- **POS lock:** `currentSession = null` → show Open Cashier overlay (initial balance + PIN). On confirm → create `cashier_sessions` row + write `INITIAL_BALANCE` general_ledger entry → POS unlocks.
+- **Saldo Awal removed from Settings:** Initial balance is now set exclusively via the Open Cashier dialog in PosScreen, not Settings.
+- **Dashboard shift chip:** "Shift Aktif / Active Shift" chip filters stats + transactions to `session.opened_at → now`. Hidden when no active session.
+- **Close Cashier updated:** Writes `closed_at`, `closing_balance`, `withdrawal_amount`, `match_status`, `mismatch_note` to `cashier_sessions` row. Then performs existing cash-reset steps. After close, `currentSession = null` → POS auto-locks.
+- **Files affected:** `types.ts`, new `cashier-sessions.ts` repo, `store.tsx`, `(erp)/layout.tsx`, `PosScreen.tsx`, `DashboardScreen.tsx`, `SettingsScreen.tsx`, `i18n.ts`, `auth.ts` (new `verifyErpPinAction`), `erp.css`. DB migration applied; TypeScript passes clean.
+- **PIN verification:** `verifyErpPinAction` server action in `auth.ts` — looks up `pin_hash/pin_salt` from `public.users` and uses the same `verifyPassword` helper as login. Called via dynamic import in PosScreen client component.
+- **`currentSession` is derived:** computed as `state.cashierSessions.find(s => s.closed_at === null)` in both PosScreen and SettingsScreen (no extra state needed).
+- **Dashboard `shift` period:** added as a 5th period type alongside today/month/year/custom. Uses `activeSession.opened_at` as the `from` boundary. Chip only rendered when `activeSession !== null`.
+- **Settle debt session gate (2026-03-20):** "Lunasi" button in the Utang modal is disabled when `activeSession === null`. Tooltip shows `copy.settings.openCashier` text on hover. No new i18n key needed.
+
+## 2026-03-20 — End of Day Report: Tarik Tunai row (IMPLEMENTED)
+
+- **Goal:** Show Tarik Tunai (cash withdrawal amount) between Saldo Awal and Saldo Akhir in the close cashier report.
+- **Where it appears:** Report dialog (`showCloseReport`) and downloaded HTML report. Not shown in the confirm dialog (`showCloseCashier`) since the withdrawal decision hasn't been made yet.
+- **`frozenSummary` extended:** Added `withdrawalAmount: number | null` field. `setFrozenSummary` moved to after `withdrawalAmount` is determined inside `handleCashResetChoice` (was set before, now set with full data after withdrawal logic runs).
+- **Label:** Reuses `copy.dashboard.cashWithdrawal` ("Cash Withdrawal" / "Tarik Tunai") — no new i18n key needed.
+- **Condition:** Row only rendered when `withdrawalAmount !== null` (i.e. user chose "empty cash" and balance > 0).
+- **Files affected:** `SettingsScreen.tsx` only. TypeScript passes clean.
+
+## 2026-03-18 — ERP Settings: Close Cashier "empty cash" — correct ledger flow
+
+- **Goal:** After "empty cash balance" on cashier close, both Saldo Kas (Dashboard) and Saldo Awal Saat Ini (Settings) must show Rp0.
+- **Correct flow (3 steps):**
+  1. Write `cash_withdrawals` row with `amount = closingBalance` (full physical cash taken out).
+  2. Reset `INITIAL_BALANCE` to 0: delete existing entries, insert new entry with `amount: 0`.
+  3. Write `WITHDRAWAL` ledger entry with `amount = -(closingBalance - originalInitialBalance)` i.e. only the sales portion. This way: `INITIAL_BALANCE(0) + SALE(x) - WITHDRAWAL(x) = 0`.
+- **Key formula:** WITHDRAWAL amount = `closingBalance - currentInitialBalance` (sales-only). Not the full closing balance.
+- **Edge case:** If `salesPortion <= 0` (only initial balance, no sales), skip the WITHDRAWAL entry — INITIAL_BALANCE reset to 0 is enough.
+- **cash_withdrawals amount stays = full closingBalance** — this represents how much physical cash was actually taken out of the register, which includes the initial float + all sales.
 
 ## 2026-03-17 — ERP Settings: Close Cashier + Language switcher
 
@@ -636,5 +802,129 @@
 
 - Updated erp-auth-card to be scrollable with a viewport max-height to avoid overlap on smaller screens.
 
-- Updated erp-auth-card to be scrollable with a viewport max-height to avoid overlap on smaller screens.
+## 2026-03-17 — AyaKasir Monetization MVP: Plans, Limits, Pricing Page
+
+### Supabase Schema
+- Added 3 columns to `tenants` table: `plan TEXT NOT NULL DEFAULT 'PERINTIS'`, `plan_started_at BIGINT`, `plan_expires_at BIGINT`.
+- `TenantPlan` type: `"PERINTIS" | "TUMBUH" | "MAPAN"` exported from `src/lib/supabase/types.ts`.
+- All existing tenants default to `PERINTIS`. No data migration needed.
+
+### Plan Constants
+- New file `src/lib/ayakasir-plan.ts` — defines `PlanLimits` interface and `PLAN_LIMITS` record.
+- Limits per plan:
+
+| Limit | Perintis | Tumbuh | Mapan |
+|-------|----------|--------|-------|
+| maxProducts (MENU_ITEM) | 100 | 300 | ∞ |
+| maxCustomers | 100 | 300 | ∞ |
+| maxRawMaterials | 100 | 300 | ∞ |
+| maxTransactionsPerMonth | 1000 | 6000 | ∞ |
+| maxStaff (excl. owner) | 1 | 2 | ∞ |
+| allowUtang | true | true | true |
+
+- `getPlanLimits(plan)` helper returns the limits for a given plan.
+
+### usePlanLimits Hook
+- New file `src/components/ayakasir/erp/usePlanLimits.ts`.
+- Reads `state.restaurant?.plan` from ERP context; handles plan expiry (if `plan_expires_at` is past, effective plan = `PERINTIS`).
+- Counts products (MENU_ITEM), customers, raw materials, monthly transactions, staff from state.
+- Returns `{ plan, planExpired, limits, counts, canAddProduct, canAddCustomer, canAddRawMaterial, canTransact, canAddStaff, canUseUtang }`.
+
+### Limit Enforcement (client-side)
+- **PosScreen**: transaction limit check before `handleCheckout`; UTANG filtered from payment methods if `!canUseUtang`.
+- **ProductsScreen**: product count limit on `handleSaveProduct` (new only); "Add Product" button disabled with count badge `(X/100)`.
+- **PurchasingScreen**: raw material count limit on `handleSaveRaw` (new only); "Add Raw Material" button disabled with count badge.
+- **CustomersScreen**: customer count limit on `handleSaveCustomer` (new only); "Add Customer" button disabled with count badge.
+- **SettingsScreen**: staff count limit on `handleSaveUser` (new CASHIER only); "Add User" button disabled with count badge; UTANG toggle hidden if `!canUseUtang`.
+
+### Plan Info Section in Settings
+- Owner-only "Paket Langganan" / "Subscription Plan" section at top of SettingsScreen.
+- Shows current plan badge (colored: Perintis=gray/muted, Tumbuh=blue/info, Mapan=green/success).
+- Usage table: Products, Customers, Raw Materials, Transactions this month, Staff — each showing `current / max`.
+- Shows plan expiry date if applicable; red warning if plan expired.
+
+### i18n
+- New `plan` section in `ErpCopy` interface + EN/ID data: `planSection`, `currentPlan`, `usage`, `validUntil`, `planExpired`, plan names, limit labels, `limitReached`, `unlimited`.
+
+### Pricing Page (Landing)
+- New `pricing` section in `AyaKasirCopy` type + EN/ID data in `src/lib/ayakasir-content.ts`.
+- 3-column pricing grid on landing page (between Metrics and Simulator CTA sections).
+- Tumbuh highlighted as "Paling Populer" with blue border + badge + "Coba Gratis 3 Bulan!" promo tag.
+- Mapan CTA links to WhatsApp. Perintis and Tumbuh CTA link to `/app/register`.
+- Branch features listed with "Coming Soon" / "Segera Hadir" badge (branch support not built yet).
+- CSS: `.ayakasir-pricing-*` classes in `globals.css`. Responsive: stacks to 1-col below 900px with Tumbuh card first.
+
+### Registration
+- `registerErpAction` in `auth.ts` now explicitly sets `plan: "PERINTIS"` on tenant insert.
+
+### What's NOT Built (Deferred)
+- Upgrade flow (no WhatsApp CTA or upgrade dialog in-app yet).
+- Payment gateway integration.
+- Report / CSV export / CSV import gating.
+- Server-side limit enforcement (RPC functions).
+- Multi-branch support.
+- Plan management admin panel.
+- Automatic plan expiry downgrade handling.
+
+## 2026-03-18 — ERP Inventory: low-stock banner + editable min_qty in adjust dialog
+
+- **Low-stock banner**: amber banner above the page header listing all items below their `min_qty`. Computed via `lowStockItems` useMemo filtering `inventoryRows` where `min_qty > 0 && current_qty < min_qty`. Shows count + comma-separated product names. CSS: `.erp-low-stock-banner` in `erp.css`.
+- **Editable min_qty**: adjust stock dialog now includes a "Min Stock" input (`minQtyInput` state). Initialized from `convertToDisplayUnit(inv.min_qty, inv.unit)` when dialog opens. Saved via new `updateMinQty()` repo function only if value changed.
+- **`updateMinQty()`**: new function in `src/lib/supabase/repositories/inventory.ts` — updates `min_qty`, `updated_at`, `sync_status` on the inventory row, handling NULL/empty `variant_id` the same way as `adjustInventory`.
+- **Unit conversion**: `minQtyInput` is entered in the display unit (kg/L) and converted to base (g/mL) via `Math.round(value * toBaseConversion(unit))` before saving — same pattern as `newQty`.
+- New i18n keys in `inventory`: `setMinStock`, `lowStockAlert`, `lowStockCount` (function) in EN + ID.
+
+## 2026-03-18 — ERP Purchasing: inventory unit stored as base unit (mL/g) not display unit (L/kg)
+
+- **Bug**: When creating a new raw material with unit `L` (or `kg`), the initial inventory row was stored with `unit: "L"` (display unit) instead of `unit: "mL"` (base unit). This caused `unit` to be `"L"` in Supabase while `current_qty` was stored in mL — a mismatch.
+- **Root cause**: Two places in `handleSaveRaw` (manual create) and the CSV import confirm loop both passed `rawUnit`/`row.unit` directly to `upsertInventory` without converting to base unit first.
+- **Fix**: Convert display unit to base unit before writing the initial inventory row: `rawUnit === "L" ? "mL" : rawUnit === "kg" ? "g" : rawUnit`.
+- **Cascading fix 1**: `openEditRaw` reads `inv.unit` (now base unit) and must convert back to display unit before setting `rawUnit` form state (`"g"→"kg"`, `"mL"→"L"`).
+- **Cascading fix 2**: Receiving form auto-populate (`updateRecItem` when `field === "productId"`) also reads `inv.unit` and must convert base→display before setting `recItem.unit`.
+- **Rule**: `inventory.unit` in Supabase is always the base unit (`g`/`mL`/`pcs`). UI forms that let users enter quantities (receiving, raw material form) use display units (`kg`/`L`) and convert on save via `toBaseQty`.
+
+## 2026-03-18 — Plan follow-up: Perintis UTANG access + Tumbuh price change
+
+### Perintis UTANG Access
+- `allowUtang` changed from `false` to `true` for PERINTIS in `src/lib/ayakasir-plan.ts`.
+- UTANG payment method is now available on all plans (Perintis, Tumbuh, Mapan). No plan-based gating for UTANG anymore.
+- `canUseUtang` in `usePlanLimits` still exists and returns `true` for all plans — no code removal needed in PosScreen/SettingsScreen since the boolean is now always `true`.
+
+### Tumbuh Price Update
+- Tumbuh price changed from Rp29,000 to Rp29,900 in both EN and ID pricing copy (`src/lib/ayakasir-content.ts`).
+
+### Pricing Copy Updates
+- Perintis payment methods updated in both EN ("Payment: Cash, QRIS, Transfer, Debt (Utang)") and ID ("Pembayaran: Tunai, QRIS, Transfer, Utang") in `src/lib/ayakasir-content.ts`.
+
+## 2026-03-19 — Products: Preset Varian Integration + Variant-Aware BOM
+
+- **Goal:** Rename "Varian" tab to "Preset Varian", integrate variant group presets from Purchasing into Products, and make BOM variant-aware so each product variant deducts from the correct raw material variant.
+- **Tab rename:** "Variants" → "Preset Variants" (EN) / "Varian" → "Preset Varian" (ID). Tab now shows `state.variantGroups` table (name, values as badges, applied-to products) instead of the old per-name variant list.
+- **Old variant name form removed:** The localStorage-backed variant name template system (`showVariantNameForm`, `editVariantNameKey`, `variantNameTemplates`, `localStorageKey`) is removed. Variant names now derive from `state.variantGroupValues` + existing DB `variants`.
+- **Apply Preset in product form:** Variants section header gains a preset selector dropdown (`<select>` from `state.variantGroups`). Selecting a group auto-populates `formVariants` from its group values, preserving existing `price_adjustment` for matching names.
+- **`productPresetGroupId` memo:** Determines which variant group (if any) the product's current variants belong to, by checking if all `formVariants` names match a group's values.
+- **Variant-aware BOM:** `FormComponent` extended with `component_variant_id: string`. When a raw material has variants matching the product's preset group (`rawHasMatchingVariants()`), a variant `<select>` appears in the BOM row. Allows mapping e.g. "T-shirt Raw (S)" variant to the "S" BOM component.
+- **Save:** `handleSaveProduct` now passes `component_variant_id` to `repo.setProductComponents`. Previously always `""`.
+- **POS deduction updated (outOfStockWarnings + handleCheckout):** BOM components with `component_variant_id` are only deducted when the sold item's variant name matches the component's raw material variant name (case-insensitive). Shared components (no variant) deduct for all variants. Inventory keys use `productId__variantId` composite to avoid cross-variant collisions.
+- **No DB migration needed:** `component_variant_id TEXT NOT NULL DEFAULT ''` already exists on `product_components` table.
+- **`findInv` bug (follow-up fix):** Original `!i.variant_id || i.variant_id === variantId` incorrectly matched the base row (variant_id=null) when searching for a specific variantId — null is falsy, so `!null = true` always matched first. Fixed: when `variantId` is non-empty, use exact match `i.variant_id === variantId`; when empty, use `!i.variant_id || i.variant_id === ""`.
+- **Files affected:** `ProductsScreen.tsx`, `PosScreen.tsx`, `i18n.ts`. TypeScript passes clean.
+- **New i18n keys in `products`:** `applyPreset`, `selectPreset`, `noPresets`, `presetValues`, `presetAppliedTo`, `selectComponentVariant`, `bomPerVariant` (EN + ID).
+
+## 2026-03-19 — Settings: Laporan Kasir fixes (Saldo Awal/Akhir + Total Penjualan)
+
+- **Bugs fixed:**
+  1. Saldo Awal showed 0 in Laporan Kasir (report dialog after close).
+  2. Saldo Akhir showed 0 in Laporan Kasir.
+  3. Total Penjualan (sum of all payment methods) was missing from the report.
+
+- **Root cause:** The report dialog (`showCloseReport`) was reading `closeCashierSummary` which is a live `useMemo`. After `handleCashResetChoice(true)` runs, it mutates the ledger (resets INITIAL_BALANCE to 0), causing `closeCashierSummary` to recalculate with stale/zeroed data by the time the report renders.
+
+- **Fix:** Added `frozenSummary` state (typed explicitly). In `handleCashResetChoice`, call `setFrozenSummary(closeCashierSummary)` *before* any ledger mutations. Both the report dialog JSX and `handleDownloadReport` use `frozenSummary ?? closeCashierSummary`.
+
+- **Total Penjualan:** Added `totalSales` field to `closeCashierSummary` (sum of all `sessionTx.total`). Rendered as a bold total row at the bottom of the Rincian Pembayaran section in both the confirm dialog and the report dialog.
+
+- **New i18n key:** `settings.totalSales` (EN: "Total Sales", ID: "Total Penjualan").
+
+- **Files affected:** `SettingsScreen.tsx`, `i18n.ts`. TypeScript passes clean.
 

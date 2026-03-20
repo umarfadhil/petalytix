@@ -7,11 +7,12 @@ import type {
   DbCategory, DbProduct, DbVariant, DbInventory, DbProductComponent,
   DbVendor, DbGoodsReceiving, DbGoodsReceivingItem, DbTransaction,
   DbTransactionItem, DbCashWithdrawal, DbGeneralLedger, DbTenant, DbUser, DbCustomer,
-  DbCustomerCategory, DbInventoryMovement,
+  DbCustomerCategory, DbInventoryMovement, DbCashierSession,
+  DbVariantGroup, DbVariantGroupValue,
 } from "@/lib/supabase/types";
 
 // Re-export types for screen components
-export type { DbUser, DbCustomerCategory };
+export type { DbUser, DbCustomerCategory, DbCashierSession };
 
 // ── State ──────────────────────────────────────────────────────
 export interface ErpState {
@@ -33,6 +34,9 @@ export interface ErpState {
   customerCategories: DbCustomerCategory[];
   inventoryMovements: DbInventoryMovement[];
   tenantUsers: DbUser[];
+  cashierSessions: DbCashierSession[];
+  variantGroups: DbVariantGroup[];
+  variantGroupValues: DbVariantGroupValue[];
 }
 
 export const EMPTY_STATE: ErpState = {
@@ -54,6 +58,9 @@ export const EMPTY_STATE: ErpState = {
   customerCategories: [],
   inventoryMovements: [],
   tenantUsers: [],
+  cashierSessions: [],
+  variantGroups: [],
+  variantGroupValues: [],
 };
 
 // ── Actions ────────────────────────────────────────────────────
@@ -179,6 +186,9 @@ export function ErpProvider({ children, tenantId, locale, initialData }: ErpProv
     customer_categories: "customerCategories",
     inventory_movements: "inventoryMovements",
     users: "tenantUsers",
+    cashier_sessions: "cashierSessions",
+    variant_groups: "variantGroups",
+    variant_group_values: "variantGroupValues",
   };
 
   const makeHandler = useCallback(

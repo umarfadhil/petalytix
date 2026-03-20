@@ -2,6 +2,28 @@
 
 ## Changelog
 
+### v1.1.0
+
+- Registration — TUMBUH Promo: New tenants are automatically assigned the TUMBUH plan with a free 3-month trial (`plan_started_at` = registration date, `plan_expires_at` = 3 months later).
+- Registration — Activation Flow: Clicking the email confirmation link now lands on a static "Account activated!" page instead of silently redirecting to login; `activateAccountAction` sets `is_active: true` on both `users` and `tenants` rows; a prominent "Sign in now" button guides the user.
+- Settings — Days Remaining: Plan section shows a "Days remaining" row; highlighted orange when ≤7 days left, red when expired.
+- Settings — App Info: Footer shows `© 2026 AyaKasir by Petalytix | v{APP_VERSION}`; `APP_VERSION` constant in `src/lib/ayakasir-plan.ts` kept in sync with Android `build.gradle.kts → versionName`.
+- Settings — CSV Export: Unduh Data button disabled for PERINTIS plan; warning hint shown above button requiring Tumbuh/Mapan.
+- POS — Cashier Session Flow: POS locked until cashier session is opened; initial balance (Saldo Kas Awal) set at session open via PIN confirmation; auto-locks when session closes. Saldo Awal removed from Settings (now session-driven only).
+- POS — Session-Scoped Saldo Kas: Saldo Kas in Tarik Tunai and Dashboard reset per session (filter ledger to `opened_at`). Other stat cards remain period-filter-driven.
+- POS — Allow Zero Initial Balance: Opening session with Rp0 works correctly (no display reset bug).
+- POS — QRIS Disabled When Unconfigured: QRIS button greyed out if `qris_image_url` or `qris_merchant_name` is missing; distinct tooltip per reason.
+- POS — Variant Picker: Removed "None" fallback option; picker shows only defined variants.
+- Dashboard — Session-Scoped Saldo Kas + Shift Chip: cash balance always session-scoped; "Shift Aktif" period chip filters all stats to `opened_at → now`; UTANG total remains all-time.
+- Dashboard — Settle Debt Session Gate: Lunasi button disabled when no active cashier session.
+- Inventory — Delete Zero-Stock Row: OWNER can delete an inventory row when `current_qty === 0`; confirm dialog + in-flight guard.
+- Inventory — Hide Base Row When Variants Exist: base (`variant_id: ""`) row hidden if product has variants and base row has `current_qty === 0`.
+- Purchasing — Variant Preset Groups: new `variant_groups` + `variant_group_values` DB tables; Variants tab redesigned — manage reusable presets (e.g. "Size → S/M/L/XL"); Apply to raw material creates `DbVariant` + `DbInventory` rows per value.
+- Purchasing — Goods Receiving Variant Expand: "Use Variants" toggle per item expands product row into per-variant sub-rows; save produces one receiving item per variant; edit restores correctly.
+- Purchasing — Add Receiving Dialog: redesigned to card-based layout (`.erp-rec-item-card`) with labeled fields, grand total display, clean variant sub-rows.
+- Products — Inline Add Category: `+ Add Category` sentinel option in product form's category select creates category without leaving the dialog; auto-selects new category on save.
+- Settings — Close Cashier: writes `closed_at`, `closing_balance`, `withdrawal_amount`, `match_status`, `mismatch_note` to `cashier_sessions` row; Tarik Tunai row in end-of-day report; correct ledger flow for "empty cash" (3-step: cash_withdrawal + reset INITIAL_BALANCE + WITHDRAWAL entry for sales-only portion).
+
 ### v1.0.8
 
 - Settings — Close Cashier: new section visible to all roles; confirm dialog shows summary (close time, cashier, total transactions, opening/closing balance, payment breakdown, match/mismatch toggle with optional note); cash reset dialog lets cashier empty or keep balance (`cash_withdrawals` + `WITHDRAWAL` ledger entry); printable report dialog with Download (standalone HTML) and Print actions.

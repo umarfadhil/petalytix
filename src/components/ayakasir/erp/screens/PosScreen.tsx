@@ -3,12 +3,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useErp } from "../store";
 import { getErpCopy } from "../i18n";
+import { usePlanLimits } from "../usePlanLimits";
 import { formatRupiah } from "../utils";
 import { createTransaction } from "@/lib/supabase/repositories/transactions";
 import { calculateCashBalance, createLedgerEntry } from "@/lib/supabase/repositories/general-ledger";
 import { createCashWithdrawal } from "@/lib/supabase/repositories/cash-withdrawals";
 import { createCustomer } from "@/lib/supabase/repositories/customers";
 import { adjustInventory } from "@/lib/supabase/repositories/inventory";
+import { openCashierSession } from "@/lib/supabase/repositories/cashier-sessions";
+import { deleteInitialBalanceEntries } from "@/lib/supabase/repositories/general-ledger";
+import { verifyErpPinAction } from "@/app/ayakasir/actions/auth";
 import type { DbTransaction, DbTransactionItem, DbGeneralLedger, DbCashWithdrawal, DbCustomer } from "@/lib/supabase/types";
 
 type DiscountType = "NONE" | "AMOUNT" | "PERCENT";
@@ -39,6 +43,7 @@ type PaymentMethod = "CASH" | "QRIS" | "TRANSFER" | "UTANG";
 export default function PosScreen() {
   const { state, dispatch, supabase, tenantId, locale } = useErp();
   const copy = getErpCopy(locale);
+  const planLimits = usePlanLimits();
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [search, setSearch] = useState("");
@@ -80,7 +85,17 @@ export default function PosScreen() {
   const [discountType, setDiscountType] = useState<DiscountType>("NONE");
   const [discountValue, setDiscountValue] = useState("");
 
+  // Open cashier session
+  const [showOpenCashier, setShowOpenCashier] = useState(false);
+  const [openBalance, setOpenBalance] = useState("");
+  const [openPin, setOpenPin] = useState("");
+  const [openingSession, setOpeningSession] = useState(false);
+  const [openSessionError, setOpenSessionError] = useState<string | null>(null);
+
   const customerSearchRef = useRef<HTMLInputElement>(null);
+
+  // Derive current active cashier session (null = locked)
+  const currentSession = state.cashierSessions.find((s) => s.closed_at === null) ?? null;
 
   // Enabled payment methods from tenant settings (comma-separated string)
   const enabledMethods = useMemo<Set<PaymentMethod>>(() => {
@@ -88,6 +103,9 @@ export default function PosScreen() {
     const set = new Set(raw.split(",").map((s) => s.trim()) as PaymentMethod[]);
     return set;
   }, [state.restaurant?.enabled_payment_methods]);
+
+  // QRIS is only usable when merchant has configured both image and name
+  const qrisReady = !!(state.restaurant?.qris_image_url?.trim() && state.restaurant?.qris_merchant_name?.trim());
 
   // Ensure current paymentMethod is always valid
   useEffect(() => {
@@ -143,25 +161,43 @@ export default function PosScreen() {
       if (unit === "L") return qty * 1000;
       return qty;
     };
-    const findInv = (productId: string, variantId: string) =>
-      state.inventory.find(
-        (i) => i.product_id === productId && (!i.variant_id || i.variant_id === variantId)
+    const findInv = (productId: string, variantId: string) => {
+      if (variantId) {
+        return state.inventory.find(
+          (i) => i.product_id === productId && i.variant_id === variantId
+        );
+      }
+      return state.inventory.find(
+        (i) => i.product_id === productId && (!i.variant_id || i.variant_id === "")
       );
+    };
 
     // Accumulate required quantities in base units, same logic as handleCheckout
     const required = new Map<string, { name: string; requiredBase: number; currentBase: number; unit: string }>();
     for (const item of cart) {
-      const components = state.productComponents.filter((c) => c.parent_product_id === item.productId);
+      const allComponents = state.productComponents.filter((c) => c.parent_product_id === item.productId);
+      // Filter components: if component has a variant, only include when sold variant matches by name
+      const components = allComponents.filter((comp) => {
+        if (!comp.component_variant_id) return true;
+        if (!item.variantId) return false;
+        const compVariant = state.variants.find((v) => v.id === comp.component_variant_id);
+        const soldVariant = state.variants.find((v) => v.id === item.variantId);
+        return compVariant && soldVariant && compVariant.name.toLowerCase() === soldVariant.name.toLowerCase();
+      });
       if (components.length > 0) {
         for (const comp of components) {
-          const inv = findInv(comp.component_product_id, "");
+          const compVarId = comp.component_variant_id || "";
+          const inv = findInv(comp.component_product_id, compVarId);
           if (!inv) continue;
           const reqBase = toBaseUnit(comp.required_qty * item.qty, comp.unit || "pcs");
-          const curBase = inv.current_qty; // already in base (g/mL/pcs) regardless of unit display label
-          const existing = required.get(comp.component_product_id);
+          const curBase = inv.current_qty;
+          const key = `${comp.component_product_id}__${compVarId}`;
+          const existing = required.get(key);
           const rawProduct = state.products.find((p) => p.id === comp.component_product_id);
-          required.set(comp.component_product_id, {
-            name: rawProduct?.name ?? comp.component_product_id,
+          const compVariant = compVarId ? state.variants.find((v) => v.id === compVarId) : null;
+          const displayName = compVariant ? `${rawProduct?.name ?? comp.component_product_id} (${compVariant.name})` : (rawProduct?.name ?? comp.component_product_id);
+          required.set(key, {
+            name: displayName,
             requiredBase: (existing?.requiredBase ?? 0) + reqBase,
             currentBase: curBase,
             unit: inv.unit,
@@ -267,6 +303,10 @@ export default function PosScreen() {
 
   const handleCheckout = async () => {
     if (cart.length === 0 || processing) return;
+    if (!planLimits.canTransact) {
+      alert(copy.plan.limitReached);
+      return;
+    }
     setProcessing(true);
     try {
       const now = Date.now();
@@ -352,18 +392,35 @@ export default function PosScreen() {
       // Accumulate in base units (g / mL / pcs) keyed by productId alone for raw materials
       // (raw material inventory rows have no variant — stored as "" or null)
       const deductionsBase = new Map<string, { qty: number; variantId: string }>();
-      const findInv = (productId: string, variantId: string) =>
-        state.inventory.find(
-          (i) => i.product_id === productId && (!i.variant_id || i.variant_id === variantId)
+      const findInv = (productId: string, variantId: string) => {
+        if (variantId) {
+          // Exact variant match first
+          return state.inventory.find(
+            (i) => i.product_id === productId && i.variant_id === variantId
+          );
+        }
+        // No variant: match null or empty
+        return state.inventory.find(
+          (i) => i.product_id === productId && (!i.variant_id || i.variant_id === "")
         );
+      };
       for (const item of cart) {
-        const components = state.productComponents.filter((c) => c.parent_product_id === item.productId);
+        const allComponents = state.productComponents.filter((c) => c.parent_product_id === item.productId);
+        // Filter components: if component has a variant, only include when sold variant matches by name
+        const components = allComponents.filter((comp) => {
+          if (!comp.component_variant_id) return true;
+          if (!item.variantId) return false;
+          const compVariant = state.variants.find((v) => v.id === comp.component_variant_id);
+          const soldVariant = state.variants.find((v) => v.id === item.variantId);
+          return compVariant && soldVariant && compVariant.name.toLowerCase() === soldVariant.name.toLowerCase();
+        });
         if (components.length > 0) {
           for (const comp of components) {
-            const key = comp.component_product_id;
+            const compVarId = comp.component_variant_id || "";
+            const key = `${comp.component_product_id}__${compVarId}`;
             const { qty: baseQty } = toBaseUnit(comp.required_qty * item.qty, comp.unit || "pcs");
             const existing = deductionsBase.get(key);
-            deductionsBase.set(key, { qty: (existing?.qty || 0) + baseQty, variantId: "" });
+            deductionsBase.set(key, { qty: (existing?.qty || 0) + baseQty, variantId: compVarId });
           }
         } else {
           const key = `${item.productId}__${item.variantId}`;
@@ -414,10 +471,72 @@ export default function PosScreen() {
     setShowCheckout(false);
   };
 
-  const cashBalance = useMemo(
-    () => calculateCashBalance(state.generalLedger),
-    [state.generalLedger]
-  );
+  const cashBalance = useMemo(() => {
+    const CASH_TYPES = ["INITIAL_BALANCE", "SALE", "WITHDRAWAL", "ADJUSTMENT"];
+    const entries = currentSession
+      ? state.generalLedger.filter((e) => CASH_TYPES.includes(e.type) && e.date >= currentSession.opened_at)
+      : state.generalLedger.filter((e) => CASH_TYPES.includes(e.type));
+    return entries.reduce((sum, e) => sum + e.amount, 0);
+  }, [state.generalLedger, currentSession]);
+
+  const handleOpenCashierSession = async () => {
+    setOpenSessionError(null);
+    const amount = parseInt(openBalance.replace(/\./g, "").replace(/,/g, "")) || 0;
+    if (!openPin || openPin.length < 4) {
+      setOpenSessionError(locale === "id" ? "PIN wajib diisi (min. 4 digit)." : "PIN is required (min. 4 digits).");
+      return;
+    }
+    // Verify PIN against current user
+    const user = state.user;
+    if (!user) return;
+    // Verify PIN via server action
+    const ok = await verifyErpPinAction({ userId: user.id, pin: openPin });
+    if (!ok) {
+      setOpenSessionError(locale === "id" ? "PIN salah." : "Incorrect PIN.");
+      return;
+    }
+    setOpeningSession(true);
+    try {
+      const now = Date.now();
+      // Write INITIAL_BALANCE general_ledger entry
+      const existingInitialIds = state.generalLedger
+        .filter((e) => e.type === "INITIAL_BALANCE")
+        .map((e) => e.id);
+      await deleteInitialBalanceEntries(supabase, tenantId);
+      for (const id of existingInitialIds) {
+        dispatch({ type: "DELETE", table: "generalLedger", id });
+      }
+      const ledgerEntry = await createLedgerEntry(supabase, {
+        id: crypto.randomUUID(),
+        tenant_id: tenantId,
+        type: "INITIAL_BALANCE",
+        amount,
+        reference_id: null,
+        description: locale === "id" ? "Saldo awal — buka kasir" : "Opening balance — open cashier",
+        date: now,
+        user_id: user.id,
+        updated_at: now,
+      });
+      dispatch({ type: "UPSERT", table: "generalLedger", payload: ledgerEntry as unknown as Record<string, unknown> });
+      // Create cashier session row
+      const session = await openCashierSession(supabase, {
+        id: crypto.randomUUID(),
+        tenant_id: tenantId,
+        user_id: user.id,
+        opened_at: now,
+        initial_balance: amount,
+        sync_status: "SYNCED",
+        updated_at: now,
+      });
+      dispatch({ type: "UPSERT", table: "cashierSessions", payload: session as unknown as Record<string, unknown> });
+      setShowOpenCashier(false);
+      setOpenBalance("");
+      setOpenPin("");
+    } catch (err) {
+      setOpenSessionError(err instanceof Error ? err.message : (locale === "id" ? "Terjadi kesalahan." : "An error occurred."));
+    }
+    setOpeningSession(false);
+  };
 
   const handleWithdrawal = async () => {
     const amount = parseInt(withdrawalAmount);
@@ -472,11 +591,93 @@ export default function PosScreen() {
     { key: "CASH", label: copy.pos.cash },
     { key: "QRIS", label: copy.pos.qris },
     { key: "TRANSFER", label: copy.pos.transfer },
-    { key: "UTANG", label: copy.pos.utang },
+    ...(planLimits.canUseUtang ? [{ key: "UTANG" as PaymentMethod, label: copy.pos.utang }] : []),
   ];
 
   return (
     <div className="erp-pos">
+
+      {/* Session lock overlay */}
+      {!currentSession && (
+        <div className="erp-session-lock">
+          <div className="erp-session-lock-card">
+            <div className="erp-session-lock-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="40" height="40">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </div>
+            <h2 className="erp-session-lock-title">{copy.pos.sessionLocked}</h2>
+            <button
+              className="erp-btn erp-btn--primary"
+              onClick={() => { setOpenBalance(""); setOpenPin(""); setOpenSessionError(null); setShowOpenCashier(true); }}
+            >
+              {copy.pos.openCashier}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Open Cashier dialog */}
+      {showOpenCashier && (
+        <div className="erp-overlay">
+          <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.pos.openCashierTitle}</h3>
+            </div>
+            <div className="erp-dialog-body">
+              <p style={{ color: "var(--erp-muted)", fontSize: 14, marginBottom: 16 }}>
+                {copy.pos.openCashierHint}
+              </p>
+              {openSessionError && (
+                <div className="erp-alert erp-alert--error" style={{ marginBottom: 12 }}>{openSessionError}</div>
+              )}
+              <div className="erp-input-group">
+                <label className="erp-label">{copy.pos.initialCashBalance}</label>
+                <input
+                  className="erp-input"
+                  type="text"
+                  inputMode="numeric"
+                  value={openBalance}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/\D/g, "");
+                    if (raw === "") { setOpenBalance(""); return; }
+                    const num = parseInt(raw) || 0;
+                    setOpenBalance(num.toLocaleString("id-ID"));
+                  }}
+                  placeholder="0"
+                />
+              </div>
+              <div className="erp-input-group">
+                <label className="erp-label">{copy.pos.enterPin}</label>
+                <input
+                  className="erp-input"
+                  type="password"
+                  inputMode="numeric"
+                  value={openPin}
+                  onChange={(e) => setOpenPin(e.target.value)}
+                  placeholder="••••••"
+                  maxLength={8}
+                  autoComplete="current-password"
+                />
+              </div>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowOpenCashier(false)}>
+                {copy.common.cancel}
+              </button>
+              <button
+                className="erp-btn erp-btn--primary"
+                onClick={handleOpenCashierSession}
+                disabled={openingSession || !openPin}
+              >
+                {openingSession ? copy.common.loading : copy.pos.openCashierBtn}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Product grid */}
       <div className="erp-pos-products">
         <div className="erp-search">
@@ -732,12 +933,6 @@ export default function PosScreen() {
                   </button>
                 );
               })}
-              <button
-                className="erp-btn erp-btn--secondary erp-btn--full"
-                onClick={() => { addToCart(variantPicker); setVariantPicker(null); }}
-              >
-                {copy.pos.noDiscount} ({formatRupiah(state.products.find((p) => p.id === variantPicker)?.price || 0)})
-              </button>
             </div>
           </div>
         </div>
@@ -905,14 +1100,19 @@ export default function PosScreen() {
                 <label className="erp-label">{copy.pos.paymentMethod}</label>
                 <div className="erp-payment-methods">
                   {ALL_METHODS.map(({ key, label }) => {
-                    const enabled = enabledMethods.has(key);
+                    const enabled = enabledMethods.has(key) && (key !== "QRIS" || qrisReady);
+                    const disabledTitle = !enabledMethods.has(key)
+                      ? (locale === "id" ? "Metode tidak aktif" : "Method not enabled")
+                      : key === "QRIS" && !qrisReady
+                      ? (locale === "id" ? "QRIS belum dikonfigurasi" : "QRIS not configured")
+                      : undefined;
                     return (
                       <button
                         key={key}
                         className={`erp-payment-btn${paymentMethod === key ? " erp-payment-btn--active" : ""}${!enabled ? " erp-payment-btn--disabled" : ""}`}
                         onClick={() => { if (enabled) { setPaymentMethod(key); setTxNote(""); } }}
                         disabled={!enabled}
-                        title={!enabled ? (locale === "id" ? "Metode tidak aktif" : "Method not enabled") : undefined}
+                        title={disabledTitle}
                       >
                         {label}
                       </button>

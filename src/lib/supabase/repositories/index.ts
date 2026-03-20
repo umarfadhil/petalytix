@@ -11,3 +11,4 @@ export * from "./general-ledger";
 export * from "./customers";
 export * from "./customer-categories";
 export * from "./inventory-movements";
+export * from "./variant-groups";

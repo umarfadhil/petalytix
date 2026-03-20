@@ -65,6 +65,7 @@ src/
 │   ├── erp-auth.ts                  # ERP signed-cookie session helpers
 │   ├── erp-auth-token.ts            # ERP JWT token helpers
 │   ├── ayakasir-password.ts         # ERP password hash helpers
+│   ├── ayakasir-plan.ts             # Plan constants, limits, getPlanLimits()
 │   └── supabase/                    # Supabase integration (AyaKasir ERP)
 │       ├── client.ts                # Browser client (@supabase/ssr)
 │       ├── server.ts                # Server client (cookies-based)
@@ -85,6 +86,8 @@ src/
 │           ├── general-ledger.ts
 │           ├── customers.ts
 │           ├── customer-categories.ts
+│           ├── cashier-sessions.ts  # Open/close cashier session lifecycle
+│           ├── variant-groups.ts    # Variant preset groups + values CRUD
 │           └── index.ts
 ├── data/
 │   └── indonesia-provinces.json     # Province → cities lookup for register form
@@ -99,6 +102,7 @@ src/
     │   │   ├── store.tsx            # ErpProvider context + reducer
     │   │   ├── i18n.ts              # EN/ID copy for ERP UI
     │   │   ├── utils.ts             # formatRupiah, formatDate, date ranges
+    │   │   ├── usePlanLimits.ts     # Plan limits hook (counts, can* booleans); CSV export gated for PERINTIS
     │   │   ├── ErpSidebar.tsx       # Sidebar navigation (feature-gated per user role)
     │   │   └── screens/
     │   │       ├── DashboardScreen.tsx

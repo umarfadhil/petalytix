@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState, useRef, useEffect } from "react";
+import { useMemo, useState, useRef } from "react";
 import { useErp } from "../store";
 import { getErpCopy } from "../i18n";
+import { usePlanLimits } from "../usePlanLimits";
 import { formatRupiah } from "../utils";
 import * as repo from "@/lib/supabase/repositories";
 import type { DbProduct, DbCategory } from "@/lib/supabase/types";
@@ -18,6 +19,7 @@ interface FormVariant {
 interface FormComponent {
   id: string | null;
   component_product_id: string;
+  component_variant_id: string;
   required_qty: string;
   unit: InventoryUnit;
 }
@@ -99,6 +101,7 @@ export default function ProductsScreen() {
   const { state, dispatch, supabase, tenantId, locale } = useErp();
   const copy = getErpCopy(locale);
   const isOwner = state.user?.role === "OWNER";
+  const planLimits = usePlanLimits();
 
   const [tab, setTab] = useState<Tab>("products");
   const [search, setSearch] = useState("");
@@ -144,25 +147,9 @@ export default function ProductsScreen() {
   // Category form state
   const [catName, setCatName] = useState("");
   const [catOrder, setCatOrder] = useState("0");
+  const [catFromProductForm, setCatFromProductForm] = useState(false);
 
-  // Variant name form state (Variants tab)
-  const [showVariantNameForm, setShowVariantNameForm] = useState(false);
-  const [editVariantNameKey, setEditVariantNameKey] = useState<string | null>(null); // null = add new
-  const [variantNameInput, setVariantNameInput] = useState("");
-  const [variantNameError, setVariantNameError] = useState("");
-
-  // Variant name templates — persisted in localStorage so new names survive page reload
-  const localStorageKey = `ayakasir_variant_templates_${tenantId}`;
-  const [variantNameTemplates, setVariantNameTemplates] = useState<string[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      return JSON.parse(localStorage.getItem(localStorageKey) ?? "[]");
-    } catch { return []; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem(localStorageKey, JSON.stringify(variantNameTemplates)); }
-    catch { /* ignore */ }
-  }, [variantNameTemplates, localStorageKey]);
+  // (Variant name form state removed — presets managed in Purchasing)
 
   // ── Derived data ────────────────────────────────────────────────────────────
 
@@ -212,7 +199,7 @@ export default function ProductsScreen() {
     [state.products]
   );
 
-  // Unique variant names: union of DB variants + localStorage templates, alphabetically sorted
+  // Unique variant names: union of DB variants + variant group values, alphabetically sorted
   const uniqueVariantNames = useMemo(() => {
     const seen = new Set<string>();
     const names: string[] = [];
@@ -220,12 +207,12 @@ export default function ProductsScreen() {
       const key = v.name.toLowerCase();
       if (!seen.has(key)) { seen.add(key); names.push(v.name); }
     }
-    for (const t of variantNameTemplates) {
-      const key = t.toLowerCase();
-      if (!seen.has(key)) { seen.add(key); names.push(t); }
+    for (const gv of state.variantGroupValues) {
+      const key = gv.name.toLowerCase();
+      if (!seen.has(key)) { seen.add(key); names.push(gv.name); }
     }
     return names.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
-  }, [state.variants, variantNameTemplates]);
+  }, [state.variants, state.variantGroupValues]);
 
   const getInventoryUnit = (productId: string): InventoryUnit => {
     const inv = state.inventory.find((i) => i.product_id === productId && i.variant_id === "");
@@ -236,6 +223,48 @@ export default function ProductsScreen() {
     if (baseUnit === "g" || baseUnit === "kg") return ["g", "kg"];
     if (baseUnit === "mL" || baseUnit === "L") return ["mL", "L"];
     return [baseUnit];
+  };
+
+  // Get variants for a raw material (used in variant-aware BOM)
+  const getRawMaterialVariants = (productId: string) =>
+    state.variants.filter((v) => v.product_id === productId);
+
+  // Determine which variant group is applied to the current product's variants
+  const productPresetGroupId = useMemo(() => {
+    if (formVariants.length === 0) return null;
+    const variantNames = formVariants.map((v) => v.name.trim().toLowerCase()).filter(Boolean);
+    if (variantNames.length === 0) return null;
+    for (const g of state.variantGroups) {
+      const groupValues = state.variantGroupValues
+        .filter((gv) => gv.group_id === g.id)
+        .map((gv) => gv.name.toLowerCase());
+      if (groupValues.length > 0 && variantNames.every((n) => groupValues.includes(n))) return g.id;
+    }
+    return null;
+  }, [formVariants, state.variantGroups, state.variantGroupValues]);
+
+  // Check if a raw material has variants matching the current product's preset group
+  const rawHasMatchingVariants = (productId: string) => {
+    if (!productPresetGroupId) return false;
+    const rmVariants = getRawMaterialVariants(productId);
+    if (rmVariants.length === 0) return false;
+    const groupValues = state.variantGroupValues
+      .filter((gv) => gv.group_id === productPresetGroupId)
+      .map((gv) => gv.name.toLowerCase());
+    return rmVariants.some((v) => groupValues.includes(v.name.toLowerCase()));
+  };
+
+  // Apply preset: populate formVariants from a variant group
+  const handleApplyPreset = (groupId: string) => {
+    const values = state.variantGroupValues
+      .filter((gv) => gv.group_id === groupId)
+      .sort((a, b) => a.sort_order - b.sort_order);
+    const newVariants: FormVariant[] = values.map((gv) => {
+      // Preserve existing price_adjustment if variant with same name exists
+      const existing = formVariants.find((fv) => fv.name.trim().toLowerCase() === gv.name.toLowerCase());
+      return { id: existing?.id ?? null, name: gv.name, price_adjustment: existing?.price_adjustment ?? "0" };
+    });
+    setFormVariants(newVariants);
   };
 
   // ── Reset helpers ───────────────────────────────────────────────────────────
@@ -275,6 +304,7 @@ export default function ProductsScreen() {
       .map((c) => ({
         id: c.id,
         component_product_id: c.component_product_id,
+        component_variant_id: c.component_variant_id || "",
         required_qty: String(c.required_qty),
         unit: c.unit || "pcs",
       }));
@@ -294,7 +324,7 @@ export default function ProductsScreen() {
 
   // BOM helpers
   const addComponent = () =>
-    setFormComponents((prev) => [...prev, { id: null, component_product_id: "", required_qty: "1", unit: "pcs" }]);
+    setFormComponents((prev) => [...prev, { id: null, component_product_id: "", component_variant_id: "", required_qty: "1", unit: "pcs" }]);
 
   const removeComponent = (idx: number) =>
     setFormComponents((prev) => prev.filter((_, i) => i !== idx));
@@ -306,6 +336,7 @@ export default function ProductsScreen() {
         const updated = { ...c, [field]: value };
         if (field === "component_product_id") {
           updated.unit = value ? getInventoryUnit(value) : "pcs";
+          updated.component_variant_id = "";
         }
         return updated;
       })
@@ -313,6 +344,11 @@ export default function ProductsScreen() {
   };
 
   const handleSaveProduct = async (skipWarnings = false) => {
+    // Plan limit check (new products only)
+    if (!editId && !planLimits.canAddProduct) {
+      alert(copy.plan.limitReached);
+      return;
+    }
     // Req 7: duplicate name check (case-insensitive) against MENU_ITEM products, excluding current editId
     const nameLower = formName.trim().toLowerCase();
     const duplicate = state.products.find(
@@ -417,7 +453,7 @@ export default function ProductsScreen() {
           tenant_id: tenantId,
           parent_product_id: productId!,
           component_product_id: c.component_product_id,
-          component_variant_id: "",
+          component_variant_id: c.component_variant_id || "",
           required_qty: parseFloat(c.required_qty),
           unit: c.unit,
           sort_order: idx,
@@ -802,10 +838,11 @@ export default function ProductsScreen() {
 
   // ── Category CRUD ───────────────────────────────────────────────────────────
 
-  const openCreateCategory = () => {
+  const openCreateCategory = (fromProductForm = false) => {
     setEditCategoryId(null);
     setCatName("");
     setCatOrder("0");
+    setCatFromProductForm(fromProductForm);
     setShowCategoryForm(true);
   };
 
@@ -826,8 +863,9 @@ export default function ProductsScreen() {
         });
         dispatch({ type: "UPSERT", table: "categories", payload: updated as unknown as Record<string, unknown> });
       } else {
+        const newCatId = crypto.randomUUID();
         const created = await repo.createCategory(supabase, {
-          id: crypto.randomUUID(),
+          id: newCatId,
           tenant_id: tenantId,
           name: catName,
           sort_order: parseInt(catOrder) || 0,
@@ -835,7 +873,11 @@ export default function ProductsScreen() {
           updated_at: Date.now(),
         });
         dispatch({ type: "UPSERT", table: "categories", payload: created as unknown as Record<string, unknown> });
+        if (catFromProductForm) {
+          setFormCategory(newCatId);
+        }
       }
+      setCatFromProductForm(false);
       setShowCategoryForm(false);
     } catch (err) {
       console.error("Save category failed:", err);
@@ -874,21 +916,12 @@ export default function ProductsScreen() {
                 onChange={handleCsvFile}
               />
             </label>
-            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreate}>
-              + {copy.products.addProduct}
+            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreate} disabled={!planLimits.canAddProduct}>
+              + {copy.products.addProduct} {planLimits.limits.maxProducts < Infinity ? `(${planLimits.counts.products}/${planLimits.limits.maxProducts})` : ""}
             </button>
           </div>
-        ) : tab === "variants" && isOwner ? (
-          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={() => {
-            setEditVariantNameKey(null);
-            setVariantNameInput("");
-            setVariantNameError("");
-            setShowVariantNameForm(true);
-          }}>
-            {copy.products.addVariantName}
-          </button>
         ) : tab === "categories" && isOwner ? (
-          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateCategory}>
+          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={() => openCreateCategory()}>
             {copy.products.addCategory}
           </button>
         ) : null}
@@ -1103,81 +1136,50 @@ export default function ProductsScreen() {
             <thead>
               <tr>
                 <th>{copy.products.variantName}</th>
-                <th>{copy.products.variantUsedIn}</th>
-                {isOwner && <th>{copy.common.actions}</th>}
+                <th>{copy.products.presetValues}</th>
+                <th>{copy.products.presetAppliedTo}</th>
               </tr>
             </thead>
             <tbody>
-              {(() => {
-                // Deduplicate by name — group products that use each variant name
-                const nameMap = new Map<string, string[]>();
-                for (const v of state.variants) {
-                  const key = v.name.toLowerCase();
-                  const product = state.products.find((p) => p.id === v.product_id);
-                  const productName = product?.name ?? "—";
-                  if (!nameMap.has(key)) nameMap.set(key, []);
-                  const existing = nameMap.get(key)!;
-                  if (!existing.includes(productName)) existing.push(productName);
-                }
-                const uniqueNames = [...nameMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-                if (uniqueNames.length === 0) {
+              {state.variantGroups.length === 0 ? (
+                <tr>
+                  <td colSpan={3} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
+                    {copy.products.noPresets}
+                  </td>
+                </tr>
+              ) : (
+                state.variantGroups.map((g) => {
+                  const values = state.variantGroupValues
+                    .filter((gv) => gv.group_id === g.id)
+                    .sort((a, b) => a.sort_order - b.sort_order);
+                  // Find menu items that have variants matching this group
+                  const appliedProducts: string[] = [];
+                  for (const p of state.products.filter((pr) => pr.product_type === "MENU_ITEM")) {
+                    const pVariants = state.variants.filter((v) => v.product_id === p.id);
+                    if (pVariants.length > 0 && values.length > 0) {
+                      const groupNames = values.map((gv) => gv.name.toLowerCase());
+                      if (pVariants.every((pv) => groupNames.includes(pv.name.toLowerCase()))) {
+                        appliedProducts.push(p.name);
+                      }
+                    }
+                  }
                   return (
-                    <tr>
-                      <td colSpan={isOwner ? 3 : 2} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
-                        {copy.products.noVariants}
+                    <tr key={g.id}>
+                      <td><strong>{g.name}</strong></td>
+                      <td>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem" }}>
+                          {values.map((gv) => (
+                            <span key={gv.id} className="erp-badge erp-badge--sm">{gv.name}</span>
+                          ))}
+                        </div>
                       </td>
-                    </tr>
-                  );
-                }
-                return uniqueNames.map(([nameLower, productNames]) => {
-                  // Get the display-case name from any variant with this name
-                  const displayName = state.variants.find((v) => v.name.toLowerCase() === nameLower)?.name ?? nameLower;
-                  return (
-                    <tr key={nameLower}>
-                      <td><strong>{displayName}</strong></td>
                       <td style={{ color: "var(--erp-muted)", fontSize: "0.875rem" }}>
-                        {productNames.join(", ")}
+                        {appliedProducts.length > 0 ? appliedProducts.join(", ") : "—"}
                       </td>
-                      {isOwner && (
-                        <td className="erp-td-actions">
-                          <button
-                            className="erp-btn erp-btn--ghost erp-btn--sm"
-                            onClick={() => {
-                              setEditVariantNameKey(nameLower);
-                              setVariantNameInput(displayName);
-                              setVariantNameError("");
-                              setShowVariantNameForm(true);
-                            }}
-                          >
-                            {copy.common.edit}
-                          </button>
-                          <button
-                            className="erp-btn erp-btn--ghost erp-btn--sm"
-                            style={{ color: "var(--erp-danger)" }}
-                            onClick={async () => {
-                              if (!confirm(copy.common.deleteWarning)) return;
-                              // Delete all variants with this name across all products
-                              const toDelete = state.variants.filter((v) => v.name.toLowerCase() === nameLower);
-                              for (const v of toDelete) {
-                                try {
-                                  await repo.deleteVariant(supabase, v.id);
-                                  dispatch({ type: "DELETE", table: "variants", id: v.id });
-                                } catch (err) {
-                                  console.error("Delete variant failed:", err);
-                                }
-                              }
-                              // Also remove from localStorage templates
-                              setVariantNameTemplates((prev) => prev.filter((t) => t.toLowerCase() !== nameLower));
-                            }}
-                          >
-                            {copy.common.delete}
-                          </button>
-                        </td>
-                      )}
                     </tr>
                   );
-                });
-              })()}
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -1264,11 +1266,22 @@ export default function ProductsScreen() {
               </div>
               <div className="erp-input-group">
                 <label className="erp-label">{copy.products.category}</label>
-                <select className="erp-select" value={formCategory} onChange={(e) => setFormCategory(e.target.value)}>
+                <select
+                  className="erp-select"
+                  value={formCategory}
+                  onChange={(e) => {
+                    if (e.target.value === "__NEW_CAT__") {
+                      openCreateCategory(true);
+                    } else {
+                      setFormCategory(e.target.value);
+                    }
+                  }}
+                >
                   <option value="">{copy.products.noCategory}</option>
                   {categories.map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
+                  <option value="__NEW_CAT__">+ {copy.products.addCategory}</option>
                 </select>
               </div>
               <div className="erp-input-group">
@@ -1287,9 +1300,24 @@ export default function ProductsScreen() {
               <div className="erp-form-section">
                 <div className="erp-form-section-header">
                   <span className="erp-form-section-title">{copy.products.variants}</span>
-                  <button type="button" className="erp-btn erp-btn--ghost erp-btn--sm" onClick={addVariant}>
-                    + {copy.products.addVariant}
-                  </button>
+                  <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                    {state.variantGroups.length > 0 && (
+                      <select
+                        className="erp-select erp-select--sm"
+                        value=""
+                        onChange={(e) => { if (e.target.value) handleApplyPreset(e.target.value); }}
+                        style={{ maxWidth: 160, fontSize: "0.8rem" }}
+                      >
+                        <option value="">{copy.products.applyPreset}</option>
+                        {state.variantGroups.map((g) => (
+                          <option key={g.id} value={g.id}>{g.name}</option>
+                        ))}
+                      </select>
+                    )}
+                    <button type="button" className="erp-btn erp-btn--ghost erp-btn--sm" onClick={addVariant}>
+                      + {copy.products.addVariant}
+                    </button>
+                  </div>
                 </div>
                 {formVariants.length > 0 && (
                   <div className="erp-variant-list">
@@ -1338,7 +1366,14 @@ export default function ProductsScreen() {
               {/* BOM section */}
               <div className="erp-form-section">
                 <div className="erp-form-section-header">
-                  <span className="erp-form-section-title">{copy.products.bom}</span>
+                  <span className="erp-form-section-title">
+                    {copy.products.bom}
+                    {formVariants.length > 0 && productPresetGroupId && (
+                      <span style={{ fontSize: "0.75rem", color: "var(--erp-muted)", marginLeft: "0.5rem" }}>
+                        ({copy.products.bomPerVariant})
+                      </span>
+                    )}
+                  </span>
                   <button type="button" className="erp-btn erp-btn--ghost erp-btn--sm" onClick={addComponent}>
                     + {copy.products.addComponent}
                   </button>
@@ -1348,12 +1383,14 @@ export default function ProductsScreen() {
                     {formComponents.map((fc, idx) => {
                       const usedIds = formComponents
                         .filter((_, i) => i !== idx)
-                        .map((c) => c.component_product_id);
+                        .map((c) => `${c.component_product_id}|${c.component_variant_id}`);
                       const available = rawMaterials.filter(
-                        (rm) => !usedIds.includes(rm.id) || rm.id === fc.component_product_id
+                        (rm) => !usedIds.includes(`${rm.id}|${fc.component_variant_id}`) || rm.id === fc.component_product_id
                       );
+                      const rmVariants = fc.component_product_id ? getRawMaterialVariants(fc.component_product_id) : [];
+                      const hasMatchingVariants = fc.component_product_id && rawHasMatchingVariants(fc.component_product_id);
                       return (
-                        <div key={idx} className="erp-bom-row">
+                        <div key={idx} className="erp-bom-row" style={hasMatchingVariants ? { flexWrap: "wrap" } : undefined}>
                           <select
                             className="erp-select erp-bom-material"
                             value={fc.component_product_id}
@@ -1364,6 +1401,19 @@ export default function ProductsScreen() {
                               <option key={rm.id} value={rm.id}>{rm.name}</option>
                             ))}
                           </select>
+                          {hasMatchingVariants && rmVariants.length > 0 && (
+                            <select
+                              className="erp-select erp-bom-variant"
+                              value={fc.component_variant_id}
+                              onChange={(e) => updateComponent(idx, "component_variant_id", e.target.value)}
+                              style={{ maxWidth: 120 }}
+                            >
+                              <option value="">{copy.products.selectComponentVariant}</option>
+                              {rmVariants.map((v) => (
+                                <option key={v.id} value={v.id}>{v.name}</option>
+                              ))}
+                            </select>
+                          )}
                           <input
                             className="erp-input erp-bom-qty"
                             type="number"
@@ -1576,84 +1626,15 @@ export default function ProductsScreen() {
         </div>
       )}
 
-      {/* ── Variant name form dialog ─────────────────────────────────────────── */}
-      {showVariantNameForm && (
-        <div className="erp-overlay" onClick={() => setShowVariantNameForm(false)}>
-          <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
-            <div className="erp-dialog-header">
-              <h3>{editVariantNameKey ? copy.products.editVariantName : copy.products.addVariantName}</h3>
-              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowVariantNameForm(false)}>
-                {copy.common.close}
-              </button>
-            </div>
-            <div className="erp-dialog-body">
-              <div className="erp-input-group">
-                <label className="erp-label">{copy.products.variantName}</label>
-                <input
-                  className="erp-input"
-                  value={variantNameInput}
-                  onChange={(e) => { setVariantNameInput(e.target.value); setVariantNameError(""); }}
-                  autoFocus
-                />
-                {variantNameError && (
-                  <span style={{ color: "var(--erp-danger)", fontSize: "0.8rem" }}>{variantNameError}</span>
-                )}
-              </div>
-            </div>
-            <div className="erp-dialog-footer">
-              <button className="erp-btn erp-btn--secondary" onClick={() => setShowVariantNameForm(false)}>
-                {copy.common.cancel}
-              </button>
-              <button
-                className="erp-btn erp-btn--primary"
-                disabled={saving || !variantNameInput.trim()}
-                onClick={async () => {
-                  const newName = variantNameInput.trim();
-                  if (!newName) return;
-                  // Duplicate check (exclude current if editing)
-                  const isDup = uniqueVariantNames.some(
-                    (n) => n.toLowerCase() === newName.toLowerCase() && n.toLowerCase() !== editVariantNameKey
-                  );
-                  if (isDup) { setVariantNameError(copy.products.duplicateVariantNameGlobal); return; }
-
-                  if (editVariantNameKey) {
-                    // Rename all DB variants with old name
-                    setSaving(true);
-                    const toRename = state.variants.filter((v) => v.name.toLowerCase() === editVariantNameKey);
-                    for (const v of toRename) {
-                      try {
-                        const updated = await repo.updateVariant(supabase, v.id, { name: newName });
-                        if (updated) dispatch({ type: "UPSERT", table: "variants", payload: updated as unknown as Record<string, unknown> });
-                      } catch (err) {
-                        console.error("Rename variant failed:", err);
-                      }
-                    }
-                    // Update localStorage template if it was a template-only name
-                    setVariantNameTemplates((prev) =>
-                      prev.map((t) => (t.toLowerCase() === editVariantNameKey ? newName : t))
-                    );
-                    setSaving(false);
-                  } else {
-                    // Add to localStorage templates (no DB row needed)
-                    setVariantNameTemplates((prev) => [...prev, newName]);
-                  }
-                  setShowVariantNameForm(false);
-                }}
-              >
-                {saving ? copy.common.loading : copy.common.save}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Variant name form dialog removed — presets managed in Purchasing */}
 
       {/* ── Category form dialog ─────────────────────────────────────────────── */}
       {showCategoryForm && (
-        <div className="erp-overlay" onClick={() => setShowCategoryForm(false)}>
+        <div className="erp-overlay" onClick={() => { setCatFromProductForm(false); setShowCategoryForm(false); }}>
           <div className="erp-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="erp-dialog-header">
               <h3>{editCategoryId ? copy.products.editCategory : copy.products.addCategory}</h3>
-              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowCategoryForm(false)}>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => { setCatFromProductForm(false); setShowCategoryForm(false); }}>
                 {copy.common.close}
               </button>
             </div>
@@ -1677,7 +1658,7 @@ export default function ProductsScreen() {
                   {copy.common.delete}
                 </button>
               )}
-              <button className="erp-btn erp-btn--secondary" onClick={() => setShowCategoryForm(false)}>
+              <button className="erp-btn erp-btn--secondary" onClick={() => { setCatFromProductForm(false); setShowCategoryForm(false); }}>
                 {copy.common.cancel}
               </button>
               <button className="erp-btn erp-btn--primary" onClick={handleSaveCategory} disabled={saving || !catName}>

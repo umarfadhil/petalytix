@@ -88,6 +88,13 @@ export interface ErpCopy {
     cashPaid: string;
     cashChange: string;
     cashPaidInsufficient: string;
+    openCashier: string;
+    openCashierTitle: string;
+    openCashierHint: string;
+    initialCashBalance: string;
+    enterPin: string;
+    openCashierBtn: string;
+    sessionLocked: string;
   };
   products: {
     title: string;
@@ -146,6 +153,13 @@ export interface ErpCopy {
     addVariantName: string;
     editVariantName: string;
     duplicateVariantNameGlobal: string;
+    applyPreset: string;
+    selectPreset: string;
+    noPresets: string;
+    presetValues: string;
+    presetAppliedTo: string;
+    selectComponentVariant: string;
+    bomPerVariant: string;
   };
   inventory: {
     title: string;
@@ -161,6 +175,11 @@ export interface ErpCopy {
     notesPlaceholder: string;
     lowStock: string;
     noInventory: string;
+    setMinStock: string;
+    lowStockAlert: string;
+    lowStockCount: (n: number) => string;
+    deleteInventory: string;
+    confirmDeleteInventory: string;
   };
   purchasing: {
     title: string;
@@ -233,6 +252,28 @@ export interface ErpCopy {
     rawBulkDeleteConfirm: string;
     rawRowsPerPage: string;
     rawImportNewCategory: string;
+    variants: string;
+    addVariantGroup: string;
+    editVariantGroup: string;
+    variantGroupName: string;
+    groupValues: string;
+    addValue: string;
+    noGroups: string;
+    deleteGroupConfirm: string;
+    groupBulkDelete: string;
+    groupBulkDeleteConfirm: string;
+    duplicateGroup: string;
+    duplicateGroupValue: string;
+    applyToProduct: string;
+    applyPreset: string;
+    appliedTo: string;
+    variantGroupRowsPerPage: string;
+    selectVariant: string;
+    useVariants: string;
+    noGroupValues: string;
+    filterByCategory: string;
+    searchRawMaterial: string;
+    applyPresetInline: string;
   };
   settings: {
     title: string;
@@ -296,6 +337,7 @@ export interface ErpCopy {
     closingBalance: string;
     totalTransactions: string;
     paymentBreakdown: string;
+    totalSales: string;
     matchQuestion: string;
     matchYes: string;
     matchNo: string;
@@ -308,6 +350,10 @@ export interface ErpCopy {
     cashResetHint: string;
     cashResetEmpty: string;
     cashResetKeep: string;
+    activeShift: string;
+    shiftFrom: string;
+    cashBalanceSection: string;
+    debtSettlement: string;
   };
   customers: {
     title: string;
@@ -387,6 +433,9 @@ export interface ErpCopy {
     confirmTitle: string;
     confirming: string;
     confirmSuccess: string;
+    confirmActivated: string;
+    confirmActivatedHint: string;
+    confirmGoToLogin: string;
     confirmRecoverySuccess: string;
     confirmError: string;
     confirmRecoveryError: string;
@@ -424,6 +473,27 @@ export interface ErpCopy {
     back: string;
     actions: string;
     selected: string;
+  };
+  plan: {
+    planSection: string;
+    currentPlan: string;
+    usage: string;
+    startedAt: string;
+    validUntil: string;
+    daysRemaining: string;
+    daysRemainingValue: (days: number) => string;
+    planExpired: string;
+    expiryTooltip: string;
+    planPerintis: string;
+    planTumbuh: string;
+    planMapan: string;
+    limitProducts: string;
+    limitCustomers: string;
+    limitRawMaterials: string;
+    limitTransactions: string;
+    limitStaff: string;
+    limitReached: string;
+    unlimited: string;
   };
 }
 
@@ -517,6 +587,13 @@ const en: ErpCopy = {
     cashPaid: "Cash Paid",
     cashChange: "Change",
     cashPaidInsufficient: "Amount paid is less than total",
+    openCashier: "Open Cashier",
+    openCashierTitle: "Open Cashier Session",
+    openCashierHint: "Enter the opening cash balance and your PIN to start the shift.",
+    initialCashBalance: "Opening Cash Balance",
+    enterPin: "PIN",
+    openCashierBtn: "Open Cashier",
+    sessionLocked: "Cashier session is not active. Please open the cashier to start.",
   },
   products: {
     title: "Products",
@@ -569,12 +646,19 @@ const en: ErpCopy = {
     newVariantOption: "New variant name",
     importBomMissingWarning: "Some raw materials (✗) do not exist in the system and will be skipped on import.",
     importBomUnitMismatchWarning: "Some raw materials (⚠) have incompatible units with inventory and will be skipped on import.",
-    variantsTab: "Variants",
+    variantsTab: "Preset Variants",
     variantUsedIn: "Used in",
     noVariants: "No variants yet",
     addVariantName: "Add Variant",
     editVariantName: "Edit Variant",
     duplicateVariantNameGlobal: "A variant with this name already exists.",
+    applyPreset: "Apply Preset",
+    selectPreset: "Select Preset",
+    noPresets: "No variant presets available. Create presets in Purchasing > Variant Presets.",
+    presetValues: "Values",
+    presetAppliedTo: "Applied To",
+    selectComponentVariant: "Variant",
+    bomPerVariant: "BOM per Variant",
   },
   inventory: {
     title: "Inventory",
@@ -594,6 +678,11 @@ const en: ErpCopy = {
     notesPlaceholder: "e.g. found extra stock, damaged goods",
     lowStock: "Low Stock",
     noInventory: "No inventory items",
+    setMinStock: "Min Stock",
+    lowStockAlert: "Some items are running low on stock",
+    lowStockCount: (n: number) => `${n} item${n === 1 ? "" : "s"} below minimum stock`,
+    deleteInventory: "Delete",
+    confirmDeleteInventory: "Delete this inventory row? This cannot be undone.",
   },
   purchasing: {
     title: "Purchasing",
@@ -666,6 +755,28 @@ const en: ErpCopy = {
     rawBulkDeleteConfirm: "Delete selected raw materials? This cannot be undone.",
     rawRowsPerPage: "Rows",
     rawImportNewCategory: "New",
+    variants: "Variant Presets",
+    addVariantGroup: "Add Preset",
+    editVariantGroup: "Edit Preset",
+    variantGroupName: "Preset Name",
+    groupValues: "Values",
+    addValue: "Add Value",
+    noGroups: "No variant presets yet",
+    deleteGroupConfirm: "Delete this variant preset? All applied variants on products will also be removed.",
+    groupBulkDelete: "Delete Selected",
+    groupBulkDeleteConfirm: "Delete selected presets? All applied variants on products will also be removed. This cannot be undone.",
+    duplicateGroup: "A preset with this name already exists.",
+    duplicateGroupValue: "A value with this name already exists in this preset.",
+    applyToProduct: "Apply to Raw Material",
+    applyPreset: "Apply",
+    appliedTo: "Applied To",
+    variantGroupRowsPerPage: "Rows",
+    selectVariant: "Select Variant",
+    useVariants: "Use Variants",
+    noGroupValues: "Add at least one value",
+    filterByCategory: "Category",
+    searchRawMaterial: "Search item...",
+    applyPresetInline: "Apply Preset",
   },
   settings: {
     title: "Settings",
@@ -729,6 +840,7 @@ const en: ErpCopy = {
     closingBalance: "Closing Balance",
     totalTransactions: "Total Transactions",
     paymentBreakdown: "Payment Breakdown",
+    totalSales: "Total Sales",
     matchQuestion: "Does the cash balance match?",
     matchYes: "Match",
     matchNo: "Doesn't Match",
@@ -741,6 +853,10 @@ const en: ErpCopy = {
     cashResetHint: "Have you collected all the cash? Choose what to do with the closing balance.",
     cashResetEmpty: "Empty cash balance (reset to Rp0)",
     cashResetKeep: "Keep cash balance as opening balance",
+    activeShift: "Active Shift",
+    shiftFrom: "Shift from",
+    cashBalanceSection: "Cash Balance Summary",
+    debtSettlement: "Debt Settlement",
   },
   customers: {
     title: "Customers",
@@ -820,6 +936,9 @@ const en: ErpCopy = {
     confirmTitle: "Activate Account",
     confirming: "Verifying your account...",
     confirmSuccess: "Account activated. Redirecting to login...",
+    confirmActivated: "Your account has been successfully activated!",
+    confirmActivatedHint: "Your account is now active. You can sign in and start using AyaKasir.",
+    confirmGoToLogin: "Sign in now",
     confirmRecoverySuccess: "Recovery verified. Redirecting to reset password...",
     confirmError: "Activation failed. Please request a new activation email.",
     confirmRecoveryError: "Recovery failed. Please request a new reset link.",
@@ -857,6 +976,27 @@ const en: ErpCopy = {
     back: "Back",
     actions: "Actions",
     selected: "selected",
+  },
+  plan: {
+    planSection: "Subscription Plan",
+    currentPlan: "Current Plan",
+    usage: "Usage",
+    startedAt: "Started",
+    validUntil: "Valid until",
+    daysRemaining: "Days remaining",
+    daysRemainingValue: (days: number) => days <= 0 ? "Expired" : `${days} day${days === 1 ? "" : "s"}`,
+    planExpired: "Plan expired — limits reverted to Perintis",
+    expiryTooltip: "If your plan is not renewed before the expiry date, your account will automatically revert to the Perintis (Free) plan. Your existing data will be preserved, but you will not be able to add new items beyond the Perintis limits.",
+    planPerintis: "Perintis",
+    planTumbuh: "Tumbuh",
+    planMapan: "Mapan",
+    limitProducts: "Products",
+    limitCustomers: "Customers",
+    limitRawMaterials: "Raw Materials",
+    limitTransactions: "Transactions this month",
+    limitStaff: "Staff",
+    limitReached: "Limit reached for your current plan.",
+    unlimited: "Unlimited",
   },
 };
 
@@ -950,6 +1090,13 @@ const id: ErpCopy = {
     cashPaid: "Uang Diterima",
     cashChange: "Kembalian",
     cashPaidInsufficient: "Jumlah yang dibayar kurang dari total",
+    openCashier: "Buka Kasir",
+    openCashierTitle: "Buka Sesi Kasir",
+    openCashierHint: "Masukkan saldo kas awal dan PIN Anda untuk memulai shift.",
+    initialCashBalance: "Saldo Kas Awal",
+    enterPin: "PIN",
+    openCashierBtn: "Buka Kasir",
+    sessionLocked: "Sesi kasir belum aktif. Silakan buka kasir untuk memulai.",
   },
   products: {
     title: "Produk",
@@ -1002,12 +1149,19 @@ const id: ErpCopy = {
     newVariantOption: "Nama varian baru",
     importBomMissingWarning: "Beberapa bahan baku (✗) tidak ditemukan di sistem dan akan dilewati saat impor.",
     importBomUnitMismatchWarning: "Beberapa bahan baku (⚠) memiliki satuan ukuran yang tidak sama dengan inventori dan akan dilewati saat impor.",
-    variantsTab: "Varian",
+    variantsTab: "Preset Varian",
     variantUsedIn: "Dipakai di",
     noVariants: "Belum ada varian",
     addVariantName: "Tambah Varian",
     editVariantName: "Edit Varian",
     duplicateVariantNameGlobal: "Varian dengan nama ini sudah ada.",
+    applyPreset: "Terapkan Preset",
+    selectPreset: "Pilih Preset",
+    noPresets: "Belum ada preset varian. Buat preset di Purchasing > Preset Varian.",
+    presetValues: "Nilai",
+    presetAppliedTo: "Diterapkan ke",
+    selectComponentVariant: "Varian",
+    bomPerVariant: "BOM per Varian",
   },
   inventory: {
     title: "Inventori",
@@ -1027,6 +1181,11 @@ const id: ErpCopy = {
     notesPlaceholder: "cth. stok lebih ditemukan, barang rusak",
     lowStock: "Stok Rendah",
     noInventory: "Tidak ada item inventori",
+    setMinStock: "Stok Minimum",
+    lowStockAlert: "Beberapa item stoknya hampir habis",
+    lowStockCount: (n: number) => `${n} item di bawah stok minimum`,
+    deleteInventory: "Hapus",
+    confirmDeleteInventory: "Hapus baris inventori ini? Tindakan ini tidak dapat dibatalkan.",
   },
   purchasing: {
     title: "Pembelian",
@@ -1099,6 +1258,28 @@ const id: ErpCopy = {
     rawBulkDeleteConfirm: "Hapus bahan baku yang dipilih? Tindakan ini tidak dapat dibatalkan.",
     rawRowsPerPage: "Baris",
     rawImportNewCategory: "Baru",
+    variants: "Preset Varian",
+    addVariantGroup: "Tambah Preset",
+    editVariantGroup: "Edit Preset",
+    variantGroupName: "Nama Preset",
+    groupValues: "Nilai",
+    addValue: "Tambah Nilai",
+    noGroups: "Belum ada preset varian",
+    deleteGroupConfirm: "Hapus preset varian ini? Semua varian yang diterapkan pada produk juga akan dihapus.",
+    groupBulkDelete: "Hapus Terpilih",
+    groupBulkDeleteConfirm: "Hapus preset yang dipilih? Semua varian yang diterapkan pada produk juga akan dihapus. Tindakan ini tidak dapat dibatalkan.",
+    duplicateGroup: "Preset dengan nama ini sudah ada.",
+    duplicateGroupValue: "Nilai dengan nama ini sudah ada dalam preset ini.",
+    applyToProduct: "Terapkan ke Bahan Baku",
+    applyPreset: "Terapkan",
+    appliedTo: "Diterapkan Ke",
+    variantGroupRowsPerPage: "Baris",
+    selectVariant: "Pilih Varian",
+    useVariants: "Gunakan Varian",
+    noGroupValues: "Tambahkan minimal satu nilai",
+    filterByCategory: "Kategori",
+    searchRawMaterial: "Cari item...",
+    applyPresetInline: "Terapkan Preset",
   },
   settings: {
     title: "Pengaturan",
@@ -1162,6 +1343,7 @@ const id: ErpCopy = {
     closingBalance: "Saldo Akhir",
     totalTransactions: "Total Transaksi",
     paymentBreakdown: "Rincian Pembayaran",
+    totalSales: "Total Penjualan",
     matchQuestion: "Apakah saldo kas sesuai?",
     matchYes: "Sesuai",
     matchNo: "Tidak Sesuai",
@@ -1174,6 +1356,10 @@ const id: ErpCopy = {
     cashResetHint: "Apakah Anda sudah mengambil semua uang kas? Pilih tindakan untuk saldo akhir.",
     cashResetEmpty: "Kosongkan saldo kas (reset ke Rp0)",
     cashResetKeep: "Pertahankan saldo kas sebagai saldo awal",
+    activeShift: "Shift Aktif",
+    shiftFrom: "Shift mulai",
+    cashBalanceSection: "Rincian Saldo Kas",
+    debtSettlement: "Pelunasan Utang",
   },
   customers: {
     title: "Pelanggan",
@@ -1253,6 +1439,9 @@ const id: ErpCopy = {
     confirmTitle: "Aktivasi Akun",
     confirming: "Memverifikasi akun...",
     confirmSuccess: "Akun berhasil diaktifkan. Mengalihkan ke halaman masuk...",
+    confirmActivated: "Akun Anda berhasil diaktifkan!",
+    confirmActivatedHint: "Akun Anda sudah aktif. Silakan masuk dan mulai gunakan AyaKasir.",
+    confirmGoToLogin: "Masuk sekarang",
     confirmRecoverySuccess: "Verifikasi berhasil. Mengalihkan ke reset password...",
     confirmError: "Aktivasi berhasil. Silakan login.",
     confirmRecoveryError: "Reset berhasil! Silakan klik link di bawah untuk reset ulang password.",
@@ -1290,6 +1479,27 @@ const id: ErpCopy = {
     back: "Kembali",
     actions: "Aksi",
     selected: "terpilih",
+  },
+  plan: {
+    planSection: "Paket Langganan",
+    currentPlan: "Paket Saat Ini",
+    usage: "Pemakaian",
+    startedAt: "Dimulai",
+    validUntil: "Berlaku sampai",
+    daysRemaining: "Sisa hari",
+    daysRemainingValue: (days: number) => days <= 0 ? "Kedaluwarsa" : `${days} hari`,
+    planExpired: "Paket berakhir — batas kembali ke Perintis",
+    expiryTooltip: "Jika paket Anda tidak diperpanjang sebelum tanggal berakhir, akun Anda akan otomatis kembali ke paket Perintis (Gratis). Data yang sudah ada akan tetap tersimpan, tetapi Anda tidak dapat menambah item baru melebihi batas paket Perintis.",
+    planPerintis: "Perintis",
+    planTumbuh: "Tumbuh",
+    planMapan: "Mapan",
+    limitProducts: "Produk",
+    limitCustomers: "Pelanggan",
+    limitRawMaterials: "Bahan Baku",
+    limitTransactions: "Transaksi bulan ini",
+    limitStaff: "Staf",
+    limitReached: "Batas tercapai untuk paket Anda saat ini.",
+    unlimited: "Tidak terbatas",
   },
 };
 

@@ -23,6 +23,9 @@ async function fetchErpData(supabase: ReturnType<typeof createServerClient>, ten
     customerCategories,
     inventoryMovements,
     tenantUsers,
+    cashierSessions,
+    variantGroups,
+    variantGroupValues,
   ] = await Promise.all([
     supabase.from("categories").select("*").eq("tenant_id", tenantId).order("sort_order"),
     supabase.from("products").select("*").eq("tenant_id", tenantId).order("name"),
@@ -40,6 +43,9 @@ async function fetchErpData(supabase: ReturnType<typeof createServerClient>, ten
     supabase.from("customer_categories").select("*").eq("tenant_id", tenantId).order("name"),
     supabase.from("inventory_movements").select("*").eq("tenant_id", tenantId).order("date", { ascending: false }),
     supabase.from("users").select("*").eq("tenant_id", tenantId).order("name"),
+    supabase.from("cashier_sessions").select("*").eq("tenant_id", tenantId).order("opened_at", { ascending: false }),
+    supabase.from("variant_groups").select("*").eq("tenant_id", tenantId).order("name"),
+    supabase.from("variant_group_values").select("*").eq("tenant_id", tenantId).order("sort_order"),
   ]);
 
   return {
@@ -59,6 +65,9 @@ async function fetchErpData(supabase: ReturnType<typeof createServerClient>, ten
     customerCategories: customerCategories.data || [],
     inventoryMovements: inventoryMovements.data || [],
     tenantUsers: tenantUsers.data || [],
+    cashierSessions: cashierSessions.data || [],
+    variantGroups: variantGroups.data || [],
+    variantGroupValues: variantGroupValues.data || [],
   };
 }
 

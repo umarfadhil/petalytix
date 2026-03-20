@@ -4,9 +4,12 @@ import { useMemo, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useErp } from "../store";
 import { getErpCopy } from "../i18n";
+import { usePlanLimits } from "../usePlanLimits";
+import { APP_VERSION } from "@/lib/ayakasir-plan";
 import { formatRupiah, formatDateTime } from "../utils";
 import { createLedgerEntry, deleteInitialBalanceEntries, calculateCashBalance } from "@/lib/supabase/repositories/general-ledger";
 import { createCashWithdrawal } from "@/lib/supabase/repositories/cash-withdrawals";
+import { closeCashierSession } from "@/lib/supabase/repositories/cashier-sessions";
 import {
   changeErpPasswordAction,
   upsertTenantUserAction,
@@ -30,6 +33,7 @@ export default function SettingsScreen() {
   const { state, dispatch, supabase, tenantId, locale } = useErp();
   const copy = getErpCopy(locale);
   const router = useRouter();
+  const planLimits = usePlanLimits();
 
   // ── Common ───────────────────────────────────────────────────
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -37,10 +41,7 @@ export default function SettingsScreen() {
 
   const isOwner = state.user?.role === "OWNER";
 
-  // ── Initial Balance ──────────────────────────────────────────
-  const [showInitialBalance, setShowInitialBalance] = useState(false);
-  const [balanceAmount, setBalanceAmount] = useState("");
-
+  // currentInitialBalance still used by close-cashier fallback
   const currentInitialBalance = useMemo(
     () =>
       state.generalLedger
@@ -48,11 +49,6 @@ export default function SettingsScreen() {
         .reduce((sum, e) => sum + e.amount, 0),
     [state.generalLedger]
   );
-
-  const openInitialBalance = useCallback(() => {
-    setBalanceAmount(currentInitialBalance > 0 ? String(currentInitialBalance) : "");
-    setShowInitialBalance(true);
-  }, [currentInitialBalance]);
 
   // ── Payment methods ──────────────────────────────────────────
   const enabledMethods = useMemo<Set<PaymentMethod>>(() => {
@@ -96,35 +92,75 @@ export default function SettingsScreen() {
   const [closeMismatchNote, setCloseMismatchNote] = useState("");
   const [showCashReset, setShowCashReset] = useState(false);
   const [showCloseReport, setShowCloseReport] = useState(false);
+  // Frozen snapshot captured before ledger mutations so the report dialog shows correct values
+  const [frozenSummary, setFrozenSummary] = useState<{
+    closeTime: number; cashier: string; openingBalance: number; closingBalance: number;
+    totalTransactions: number; totalSales: number; byMethod: Record<string, number>;
+    withdrawalAmount: number; cashSales: number; debtSettlements: number;
+  } | null>(null);
+
+  // Derive active session
+  const activeSession = state.cashierSessions.find((s) => s.closed_at === null) ?? null;
 
   const closeCashierSummary = useMemo(() => {
     const now = Date.now();
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const fromMs = todayStart.getTime();
+    // Use session start time if available, otherwise fall back to today midnight
+    const fromMs = activeSession
+      ? activeSession.opened_at
+      : (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
 
-    const todayTx = state.transactions.filter(
+    const sessionTx = state.transactions.filter(
       (t) => t.date >= fromMs && t.date <= now && t.status === "COMPLETED"
     );
 
     const byMethod: Record<string, number> = {};
-    for (const tx of todayTx) {
+    for (const tx of sessionTx) {
       const m = tx.payment_method || "CASH";
       byMethod[m] = (byMethod[m] || 0) + tx.total;
     }
+    const totalSales = sessionTx.reduce((sum, tx) => sum + tx.total, 0);
 
     // Closing balance = all-time cash balance, same formula as Dashboard
     const closingBalance = calculateCashBalance(state.generalLedger);
+    // Opening balance from session row (if available) or ledger
+    const openingBalance = activeSession ? activeSession.initial_balance : currentInitialBalance;
+
+    // Sum all cash withdrawals made during this session
+    const withdrawalAmount = state.cashWithdrawals
+      .filter((w) => w.date >= fromMs && w.date <= now)
+      .reduce((sum, w) => sum + w.amount, 0);
+
+    // Cash sales = CASH transactions originated in this session (excludes UTANG)
+    const cashSales = sessionTx
+      .filter((t) => t.payment_method === "CASH")
+      .reduce((sum, t) => sum + t.total, 0);
+
+    // Debt settlements = debts from previous sessions settled during this session
+    // t.date < fromMs ensures the original sale was before this session opened
+    const debtSettlements = state.transactions
+      .filter(
+        (t) =>
+          t.payment_method !== "UTANG" &&
+          t.debt_status === "SETTLED" &&
+          t.date < fromMs &&
+          t.updated_at >= fromMs &&
+          t.updated_at <= now
+      )
+      .reduce((sum, t) => sum + t.total, 0);
 
     return {
       closeTime: now,
       cashier: state.user?.name || state.user?.email || "—",
-      openingBalance: currentInitialBalance,
+      openingBalance,
       closingBalance,
-      totalTransactions: todayTx.length,
+      totalTransactions: sessionTx.length,
+      totalSales,
       byMethod,
+      withdrawalAmount,
+      cashSales,
+      debtSettlements,
     };
-  }, [state.transactions, state.generalLedger, state.user, currentInitialBalance]);
+  }, [state.transactions, state.generalLedger, state.cashWithdrawals, state.user, activeSession, currentInitialBalance]);
 
   const handleOpenCloseCashier = () => {
     setCloseMatch(null);
@@ -140,33 +176,61 @@ export default function SettingsScreen() {
 
   const handleCashResetChoice = async (resetToZero: boolean) => {
     setShowCashReset(false);
-    if (resetToZero) {
-      const currentBalance = closeCashierSummary.closingBalance;
-      if (currentBalance !== 0) {
-        const now = Date.now();
-        const userId = state.user?.id || "";
-        const reason = locale === "id"
-          ? `Ambil kas — tutup kasir (${new Date(now).toLocaleDateString("id-ID")})`
-          : `Cash withdrawal — cashier close (${new Date(now).toLocaleDateString("en-US")})`;
+    // Capture summary values now, before any ledger mutations alter openingBalance/closingBalance
+    const summarySnapshot = closeCashierSummary;
+    const now = Date.now();
+    const userId = state.user?.id || "";
+    const currentBalance = summarySnapshot.closingBalance;
+    let closeTimeWithdrawal = 0;
 
-        // 1. Record in cash_withdrawals table (positive amount = how much was taken out)
-        const withdrawal = await createCashWithdrawal(supabase, {
-          id: crypto.randomUUID(),
-          tenant_id: tenantId,
-          user_id: userId,
-          amount: currentBalance,
-          reason,
-          date: now,
-          updated_at: now,
-        });
-        dispatch({ type: "UPSERT", table: "cashWithdrawals", payload: withdrawal as unknown as Record<string, unknown> });
+    if (resetToZero && currentBalance !== 0) {
+      const reason = locale === "id"
+        ? `Ambil kas — tutup kasir (${new Date(now).toLocaleDateString("id-ID")})`
+        : `Cash withdrawal — cashier close (${new Date(now).toLocaleDateString("en-US")})`;
+      closeTimeWithdrawal = currentBalance;
 
-        // 2. Record WITHDRAWAL in general_ledger (negative amount — reduces cash balance to 0)
+      // 1. Record in cash_withdrawals table (positive amount = how much was taken out)
+      const withdrawal = await createCashWithdrawal(supabase, {
+        id: crypto.randomUUID(),
+        tenant_id: tenantId,
+        user_id: userId,
+        amount: currentBalance,
+        reason,
+        date: now,
+        updated_at: now,
+      });
+      dispatch({ type: "UPSERT", table: "cashWithdrawals", payload: withdrawal as unknown as Record<string, unknown> });
+
+      // 2. Reset INITIAL_BALANCE to 0 — next shift starts with no opening cash
+      const existingInitialIds = state.generalLedger
+        .filter((e) => e.type === "INITIAL_BALANCE")
+        .map((e) => e.id);
+      await deleteInitialBalanceEntries(supabase, tenantId);
+      for (const id of existingInitialIds) {
+        dispatch({ type: "DELETE", table: "generalLedger", id });
+      }
+      const zeroBalance: Omit<DbGeneralLedger, "sync_status"> = {
+        id: crypto.randomUUID(),
+        tenant_id: tenantId,
+        type: "INITIAL_BALANCE",
+        amount: 0,
+        reference_id: null,
+        description: "Initial balance",
+        date: now,
+        user_id: userId,
+        updated_at: now,
+      };
+      const savedZero = await createLedgerEntry(supabase, zeroBalance);
+      dispatch({ type: "UPSERT", table: "generalLedger", payload: savedZero as unknown as Record<string, unknown> });
+
+      // 3. Record WITHDRAWAL in general_ledger for sales-only portion
+      const salesPortion = currentBalance - (activeSession?.initial_balance ?? currentInitialBalance);
+      if (salesPortion > 0) {
         const entry: Omit<DbGeneralLedger, "sync_status"> = {
           id: crypto.randomUUID(),
           tenant_id: tenantId,
           type: "WITHDRAWAL",
-          amount: -currentBalance,
+          amount: -salesPortion,
           reference_id: null,
           description: reason,
           date: now,
@@ -177,19 +241,49 @@ export default function SettingsScreen() {
         dispatch({ type: "UPSERT", table: "generalLedger", payload: saved as unknown as Record<string, unknown> });
       }
     }
+
+    // Freeze summary now — add close-time withdrawal on top of session withdrawals
+    setFrozenSummary({
+      ...summarySnapshot,
+      withdrawalAmount: summarySnapshot.withdrawalAmount + closeTimeWithdrawal,
+    });
+
+    // 4. Close the cashier session record
+    if (activeSession) {
+      const closed = await closeCashierSession(supabase, activeSession.id, {
+        closed_at: now,
+        closing_balance: currentBalance,
+        withdrawal_amount: closeTimeWithdrawal > 0 ? closeTimeWithdrawal : null,
+        match_status: closeMatch ? "MATCH" : "MISMATCH",
+        mismatch_note: closeMatch === false ? closeMismatchNote : null,
+        updated_at: now,
+      });
+      dispatch({ type: "UPSERT", table: "cashierSessions", payload: closed as unknown as Record<string, unknown> });
+    }
+
     setShowCloseReport(true);
   };
 
   const handleDownloadReport = () => {
-    const s = closeCashierSummary;
+    const s = frozenSummary ?? closeCashierSummary;
     const matchText = closeMatch === true
       ? copy.settings.matchYes
       : closeMatch === false
       ? `${copy.settings.matchNo}${closeMismatchNote ? ` — ${closeMismatchNote}` : ""}`
       : "—";
 
-    const methodRows = Object.entries(s.byMethod)
-      .map(([m, amt]) => `      <tr><td>${m}</td><td style="text-align:right">${formatRupiah(amt)}</td></tr>`)
+    const methodOrder: Array<["CASH" | "QRIS" | "TRANSFER" | "UTANG", string]> = [
+      ["CASH", copy.pos.cash],
+      ["QRIS", copy.pos.qris],
+      ["TRANSFER", copy.pos.transfer],
+      ["UTANG", copy.pos.utang],
+    ];
+    const methodRows = methodOrder
+      .map(([key, label]) => {
+        const amt = s.byMethod[key] ?? 0;
+        const style = key === "UTANG" ? ' style="color:red;text-align:right"' : ' style="text-align:right"';
+        return `      <tr><td>${label}</td><td${style}>${formatRupiah(amt)}</td></tr>`;
+      })
       .join("\n");
 
     const html = `<!DOCTYPE html>
@@ -222,9 +316,14 @@ export default function SettingsScreen() {
   <table>
     <tr><td class="section" colspan="2">${copy.settings.paymentBreakdown}</td></tr>
     ${methodRows}
+    <tr class="total"><td>${copy.settings.totalSales}</td><td>${formatRupiah(s.totalSales)}</td></tr>
   </table>
   <table>
+    <tr><td class="section" colspan="2">${copy.settings.cashBalanceSection}</td></tr>
     <tr><td>${copy.settings.openingBalance}</td><td>${formatRupiah(s.openingBalance)}</td></tr>
+    <tr><td>${copy.dashboard.cashSales}</td><td>${formatRupiah((s as { cashSales?: number }).cashSales ?? 0)}</td></tr>
+    <tr><td>${copy.settings.debtSettlement}</td><td>${formatRupiah((s as { debtSettlements?: number }).debtSettlements ?? 0)}</td></tr>
+    <tr><td>${copy.dashboard.cashWithdrawal}</td><td>−${formatRupiah((s as { withdrawalAmount?: number }).withdrawalAmount ?? 0)}</td></tr>
     <tr class="total"><td>${copy.settings.closingBalance}</td><td>${formatRupiah(s.closingBalance)}</td></tr>
   </table>
   <div class="match">
@@ -348,39 +447,6 @@ export default function SettingsScreen() {
     setTogglingMethod(null);
   };
 
-  const handleSetInitialBalance = async () => {
-    setSaving(true);
-    setMessage(null);
-    try {
-      const amount = parseInt(balanceAmount) || 0;
-      const existingIds = state.generalLedger
-        .filter((e) => e.type === "INITIAL_BALANCE")
-        .map((e) => e.id);
-      await deleteInitialBalanceEntries(supabase, tenantId);
-      for (const id of existingIds) {
-        dispatch({ type: "DELETE", table: "generalLedger", id });
-      }
-      const entry: Omit<DbGeneralLedger, "sync_status"> = {
-        id: crypto.randomUUID(),
-        tenant_id: tenantId,
-        type: "INITIAL_BALANCE",
-        amount,
-        reference_id: null,
-        description: "Initial balance",
-        date: Date.now(),
-        user_id: state.user?.id || "",
-        updated_at: Date.now(),
-      };
-      const saved = await createLedgerEntry(supabase, entry);
-      dispatch({ type: "UPSERT", table: "generalLedger", payload: saved as unknown as Record<string, unknown> });
-      setShowInitialBalance(false);
-      setMessage({ type: "success", text: copy.common.success });
-    } catch {
-      setMessage({ type: "error", text: copy.common.error });
-    }
-    setSaving(false);
-  };
-
   const handleChangePassword = async () => {
     if (!currentPw) {
       setMessage({
@@ -435,6 +501,11 @@ export default function SettingsScreen() {
   };
 
   const handleSaveUser = async () => {
+    // Plan limit check (new staff only)
+    if (!editingUser && userForm.role === "CASHIER" && !planLimits.canAddStaff) {
+      alert(copy.plan.limitReached);
+      return;
+    }
     // Email validation
     if (userForm.email && !userForm.email.includes("@")) {
       setMessage({
@@ -599,6 +670,83 @@ export default function SettingsScreen() {
         </div>
       </div>
 
+      {/* Plan info (owner only) */}
+      {isOwner && (
+        <div className="erp-settings-section">
+          <h3>{copy.plan.planSection}</h3>
+          <div className="erp-settings-row">
+            <span className="erp-settings-row-label">{copy.plan.currentPlan}</span>
+            <span className={`erp-badge ${planLimits.plan === "TUMBUH" ? "erp-badge--info" : planLimits.plan === "MAPAN" ? "erp-badge--success" : "erp-badge--muted"}`}>
+              {copy.plan[`plan${planLimits.plan.charAt(0) + planLimits.plan.slice(1).toLowerCase()}` as keyof typeof copy.plan]}
+            </span>
+          </div>
+          {planLimits.planExpired && (
+            <p style={{ color: "var(--erp-danger)", fontSize: 13, marginTop: 4 }}>
+              {copy.plan.planExpired}
+            </p>
+          )}
+          {state.restaurant?.plan_started_at && (
+            <div className="erp-settings-row">
+              <span className="erp-settings-row-label">{copy.plan.startedAt}</span>
+              <span style={{ color: "var(--erp-muted)" }}>
+                {new Date(state.restaurant.plan_started_at).toLocaleDateString(locale === "id" ? "id-ID" : "en-US")}
+              </span>
+            </div>
+          )}
+          {state.restaurant?.plan_expires_at && (
+            <>
+              <div className="erp-settings-row">
+                <span className="erp-settings-row-label">
+                  {copy.plan.validUntil}
+                  <span
+                    className="erp-plan-tooltip-trigger"
+                    title={copy.plan.expiryTooltip}
+                  >
+                    ❓
+                  </span>
+                </span>
+                <span style={{ color: planLimits.planExpired ? "var(--erp-danger)" : "var(--erp-muted)", fontWeight: planLimits.planExpired ? 600 : 400 }}>
+                  {new Date(state.restaurant.plan_expires_at).toLocaleDateString(locale === "id" ? "id-ID" : "en-US")}
+                </span>
+              </div>
+              <div className="erp-settings-row">
+                <span className="erp-settings-row-label">{copy.plan.daysRemaining}</span>
+                <span style={{ color: planLimits.planExpired ? "var(--erp-danger)" : planLimits.daysUntilExpiry <= 7 ? "var(--erp-warning, #f59e0b)" : "var(--erp-muted)", fontWeight: planLimits.daysUntilExpiry <= 7 || planLimits.planExpired ? 600 : 400 }}>
+                  {copy.plan.daysRemainingValue(planLimits.daysUntilExpiry)}
+                </span>
+              </div>
+            </>
+          )}
+          <div style={{ marginTop: 12 }}>
+            <h4 style={{ fontSize: 14, marginBottom: 8, color: "var(--erp-muted)" }}>{copy.plan.usage}</h4>
+            <table className="erp-table" style={{ marginTop: 0 }}>
+              <tbody>
+                <tr>
+                  <td>{copy.plan.limitProducts}</td>
+                  <td style={{ textAlign: "right" }}>{planLimits.counts.products} / {planLimits.limits.maxProducts < Infinity ? planLimits.limits.maxProducts : copy.plan.unlimited}</td>
+                </tr>
+                <tr>
+                  <td>{copy.plan.limitCustomers}</td>
+                  <td style={{ textAlign: "right" }}>{planLimits.counts.customers} / {planLimits.limits.maxCustomers < Infinity ? planLimits.limits.maxCustomers : copy.plan.unlimited}</td>
+                </tr>
+                <tr>
+                  <td>{copy.plan.limitRawMaterials}</td>
+                  <td style={{ textAlign: "right" }}>{planLimits.counts.rawMaterials} / {planLimits.limits.maxRawMaterials < Infinity ? planLimits.limits.maxRawMaterials : copy.plan.unlimited}</td>
+                </tr>
+                <tr>
+                  <td>{copy.plan.limitTransactions}</td>
+                  <td style={{ textAlign: "right" }}>{planLimits.counts.monthlyTransactions} / {planLimits.limits.maxTransactionsPerMonth < Infinity ? planLimits.limits.maxTransactionsPerMonth : copy.plan.unlimited}</td>
+                </tr>
+                <tr>
+                  <td>{copy.plan.limitStaff}</td>
+                  <td style={{ textAlign: "right" }}>{planLimits.counts.staff} / {planLimits.limits.maxStaff < Infinity ? planLimits.limits.maxStaff : copy.plan.unlimited}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Business info */}
       <div className="erp-settings-section">
         <h3>{copy.settings.businessSection}</h3>
@@ -620,7 +768,7 @@ export default function SettingsScreen() {
               { key: "CASH" as PaymentMethod, label: copy.settings.enableCash },
               { key: "QRIS" as PaymentMethod, label: copy.settings.enableQris },
               { key: "TRANSFER" as PaymentMethod, label: copy.settings.enableTransfer },
-              { key: "UTANG" as PaymentMethod, label: copy.settings.enableUtang },
+              ...(planLimits.canUseUtang ? [{ key: "UTANG" as PaymentMethod, label: copy.settings.enableUtang }] : []),
             ] as const
           ).map(({ key, label }) => {
             const isEnabled = enabledMethods.has(key);
@@ -685,8 +833,8 @@ export default function SettingsScreen() {
         <div className="erp-settings-section">
           <h3>{copy.settings.userManagement}</h3>
           <div style={{ marginBottom: 12 }}>
-            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openAddUser}>
-              {copy.settings.addUser}
+            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openAddUser} disabled={!planLimits.canAddStaff}>
+              {copy.settings.addUser} {planLimits.limits.maxStaff < Infinity ? `(${planLimits.counts.staff}/${planLimits.limits.maxStaff})` : ""}
             </button>
           </div>
           {state.tenantUsers.length === 0 ? (
@@ -745,24 +893,6 @@ export default function SettingsScreen() {
         </div>
       )}
 
-      {/* Initial balance (owner only) */}
-      {isOwner && (
-        <div className="erp-settings-section">
-          <h3>{copy.settings.initialBalance}</h3>
-          <div className="erp-settings-row" style={{ marginBottom: 12 }}>
-            <span className="erp-settings-row-label">
-              {locale === "id" ? "Saldo Awal Saat Ini" : "Current Initial Balance"}
-            </span>
-            <span style={{ fontWeight: 600, color: currentInitialBalance > 0 ? "var(--erp-success)" : "var(--erp-muted)" }}>
-              {formatRupiah(currentInitialBalance)}
-            </span>
-          </div>
-          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openInitialBalance}>
-            {copy.settings.setBalance}
-          </button>
-        </div>
-      )}
-
       {/* Language */}
       <div className="erp-settings-section">
         <h3>{copy.settings.language}</h3>
@@ -809,47 +939,29 @@ export default function SettingsScreen() {
               ? "Unduh data jurnal umum dalam format CSV."
               : "Download general ledger data as CSV."}
           </p>
-          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={() => setShowCsvDialog(true)}>
+          {planLimits.plan === "PERINTIS" && (
+            <p style={{ color: "var(--erp-warning, #f59e0b)", fontSize: 13, marginBottom: 8 }}>
+              {locale === "id"
+                ? "Fitur ini tersedia untuk paket Tumbuh atau Mapan."
+                : "This feature is available on Tumbuh or Mapan plans."}
+            </p>
+          )}
+          <button
+            className="erp-btn erp-btn--primary erp-btn--sm"
+            onClick={() => setShowCsvDialog(true)}
+            disabled={planLimits.plan === "PERINTIS"}
+          >
             {copy.settings.downloadCsv}
           </button>
         </div>
       )}
 
-      {/* ── Dialogs ─────────────────────────────────────────────── */}
+      {/* App info */}
+      <div style={{ textAlign: "center", color: "var(--erp-muted)", fontSize: 12, padding: "16px 0 8px" }}>
+        © 2026 AyaKasir by Petalytix | v{APP_VERSION}
+      </div>
 
-      {/* Initial balance dialog */}
-      {showInitialBalance && (
-        <div className="erp-overlay" onClick={() => setShowInitialBalance(false)}>
-          <div className="erp-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="erp-dialog-header">
-              <h3>{copy.settings.setBalance}</h3>
-              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowInitialBalance(false)}>
-                {copy.common.close}
-              </button>
-            </div>
-            <div className="erp-dialog-body">
-              <div className="erp-input-group">
-                <label className="erp-label">{copy.settings.amount}</label>
-                <input
-                  className="erp-input"
-                  type="number"
-                  value={balanceAmount}
-                  onChange={(e) => setBalanceAmount(e.target.value)}
-                  placeholder="0"
-                />
-              </div>
-            </div>
-            <div className="erp-dialog-footer">
-              <button className="erp-btn erp-btn--secondary" onClick={() => setShowInitialBalance(false)}>
-                {copy.common.cancel}
-              </button>
-              <button className="erp-btn erp-btn--primary" onClick={handleSetInitialBalance} disabled={saving}>
-                {saving ? copy.common.loading : copy.common.save}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── Dialogs ─────────────────────────────────────────────── */}
 
       {/* Change password dialog */}
       {showChangePassword && (
@@ -1174,7 +1286,16 @@ export default function SettingsScreen() {
                   <tr><td>{copy.settings.closeTime}</td><td>{formatDateTime(closeCashierSummary.closeTime, locale)}</td></tr>
                   <tr><td>{copy.settings.cashierInCharge}</td><td>{closeCashierSummary.cashier}</td></tr>
                   <tr><td>{copy.settings.totalTransactions}</td><td>{closeCashierSummary.totalTransactions}</td></tr>
+                </tbody>
+              </table>
+              {/* Cash balance section */}
+              <div className="erp-close-report-section">{copy.settings.cashBalanceSection}</div>
+              <table className="erp-close-report-table">
+                <tbody>
                   <tr><td>{copy.settings.openingBalance}</td><td>{formatRupiah(closeCashierSummary.openingBalance)}</td></tr>
+                  <tr><td>{copy.dashboard.cashSales}</td><td>{formatRupiah(closeCashierSummary.cashSales)}</td></tr>
+                  <tr><td>{copy.settings.debtSettlement}</td><td>{formatRupiah(closeCashierSummary.debtSettlements)}</td></tr>
+                  <tr><td>{copy.dashboard.cashWithdrawal}</td><td>−{formatRupiah(closeCashierSummary.withdrawalAmount)}</td></tr>
                   <tr className="erp-close-report-total"><td>{copy.settings.closingBalance}</td><td>{formatRupiah(closeCashierSummary.closingBalance)}</td></tr>
                 </tbody>
               </table>
@@ -1182,13 +1303,12 @@ export default function SettingsScreen() {
               <div className="erp-close-report-section">{copy.settings.paymentBreakdown}</div>
               <table className="erp-close-report-table">
                 <tbody>
-                  {Object.entries(closeCashierSummary.byMethod).length === 0 ? (
-                    <tr><td colSpan={2} style={{ color: "var(--erp-muted)" }}>{copy.common.noData}</td></tr>
-                  ) : (
-                    Object.entries(closeCashierSummary.byMethod).map(([m, amt]) => (
-                      <tr key={m}><td>{m}</td><td>{formatRupiah(amt)}</td></tr>
-                    ))
-                  )}
+                  {(["CASH", "QRIS", "TRANSFER", "UTANG"] as const).map((key) => {
+                    const label = key === "CASH" ? copy.pos.cash : key === "QRIS" ? copy.pos.qris : key === "TRANSFER" ? copy.pos.transfer : copy.pos.utang;
+                    const amt = closeCashierSummary.byMethod[key] ?? 0;
+                    return <tr key={key}><td>{label}</td><td style={key === "UTANG" ? { color: "var(--erp-danger)" } : undefined}>{formatRupiah(amt)}</td></tr>;
+                  })}
+                  <tr className="erp-close-report-total"><td>{copy.settings.totalSales}</td><td>{formatRupiah(closeCashierSummary.totalSales)}</td></tr>
                 </tbody>
               </table>
               {/* Match question */}
@@ -1293,23 +1413,37 @@ export default function SettingsScreen() {
               </div>
               <table className="erp-close-report-table">
                 <tbody>
-                  <tr><td>{copy.settings.closeTime}</td><td>{formatDateTime(closeCashierSummary.closeTime, locale)}</td></tr>
-                  <tr><td>{copy.settings.cashierInCharge}</td><td>{closeCashierSummary.cashier}</td></tr>
-                  <tr><td>{copy.settings.totalTransactions}</td><td>{closeCashierSummary.totalTransactions}</td></tr>
-                  <tr><td>{copy.settings.openingBalance}</td><td>{formatRupiah(closeCashierSummary.openingBalance)}</td></tr>
-                  <tr className="erp-close-report-total"><td>{copy.settings.closingBalance}</td><td>{formatRupiah(closeCashierSummary.closingBalance)}</td></tr>
+                  {(() => { const s = frozenSummary ?? closeCashierSummary; return (<>
+                    <tr><td>{copy.settings.closeTime}</td><td>{formatDateTime(s.closeTime, locale)}</td></tr>
+                    <tr><td>{copy.settings.cashierInCharge}</td><td>{s.cashier}</td></tr>
+                    <tr><td>{copy.settings.totalTransactions}</td><td>{s.totalTransactions}</td></tr>
+                  </>); })()}
+                </tbody>
+              </table>
+              {/* Cash balance section */}
+              <div className="erp-close-report-section">{copy.settings.cashBalanceSection}</div>
+              <table className="erp-close-report-table">
+                <tbody>
+                  {(() => { const s = frozenSummary ?? closeCashierSummary; return (<>
+                    <tr><td>{copy.settings.openingBalance}</td><td>{formatRupiah(s.openingBalance)}</td></tr>
+                    <tr><td>{copy.dashboard.cashSales}</td><td>{formatRupiah(s.cashSales)}</td></tr>
+                    <tr><td>{copy.settings.debtSettlement}</td><td>{formatRupiah(s.debtSettlements)}</td></tr>
+                    <tr><td>{copy.dashboard.cashWithdrawal}</td><td>−{formatRupiah(s.withdrawalAmount)}</td></tr>
+                    <tr className="erp-close-report-total"><td>{copy.settings.closingBalance}</td><td>{formatRupiah(s.closingBalance)}</td></tr>
+                  </>); })()}
                 </tbody>
               </table>
               <div className="erp-close-report-section">{copy.settings.paymentBreakdown}</div>
               <table className="erp-close-report-table">
                 <tbody>
-                  {Object.entries(closeCashierSummary.byMethod).length === 0 ? (
-                    <tr><td colSpan={2} style={{ color: "var(--erp-muted)" }}>{copy.common.noData}</td></tr>
-                  ) : (
-                    Object.entries(closeCashierSummary.byMethod).map(([m, amt]) => (
-                      <tr key={m}><td>{m}</td><td>{formatRupiah(amt)}</td></tr>
-                    ))
-                  )}
+                  {(() => { const s = frozenSummary ?? closeCashierSummary; return (<>
+                    {(["CASH", "QRIS", "TRANSFER", "UTANG"] as const).map((key) => {
+                      const label = key === "CASH" ? copy.pos.cash : key === "QRIS" ? copy.pos.qris : key === "TRANSFER" ? copy.pos.transfer : copy.pos.utang;
+                      const amt = s.byMethod[key] ?? 0;
+                      return <tr key={key}><td>{label}</td><td style={key === "UTANG" ? { color: "var(--erp-danger)" } : undefined}>{formatRupiah(amt)}</td></tr>;
+                    })}
+                    <tr className="erp-close-report-total"><td>{copy.settings.totalSales}</td><td>{formatRupiah(s.totalSales)}</td></tr>
+                  </>); })()}
                 </tbody>
               </table>
               <div className="erp-close-match-box">

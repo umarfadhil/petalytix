@@ -46,7 +46,9 @@
       "Bash(npx vercel:*)",
       "mcp__claude_ai_Vercel__get_deployment_build_logs",
       "Bash(grep -v \"//\")",
-      "Bash(grep -v \"^$\")"
+      "Bash(grep -v \"^$\")",
+      "Bash(npx skills:*)",
+      "Bash(echo \"Exit: $?\")"
     ]
   }
 }

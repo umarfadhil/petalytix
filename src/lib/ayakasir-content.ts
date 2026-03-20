@@ -66,6 +66,26 @@ type AyaKasirCopy = {
     subtitle: string;
     cta: string;
   };
+  pricing: {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    monthly: string;
+    free: string;
+    perMonth: string;
+    currentPromo: string;
+    comingSoon: string;
+    contactDev: string;
+    mostPopular: string;
+    plans: {
+      name: string;
+      tagline: string;
+      price: string;
+      features: string[];
+      cta: string;
+      highlighted?: boolean;
+    }[];
+  };
   footer: {
     note: string;
     privacyUrl: string;
@@ -142,6 +162,69 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
         { label: "Cities" },
         { label: "Total Transactions" }
       ]
+    },
+    pricing: {
+      eyebrow: "Pricing",
+      title: "Choose the right plan for your business.",
+      subtitle: "Start free forever, once your business grows just pay less than Rp1.000/day.",
+      monthly: "/ month",
+      free: "Free",
+      perMonth: "/ month",
+      currentPromo: "Try for Free 3 Months!",
+      comingSoon: "Coming Soon",
+      contactDev: "Contact Developer",
+      mostPopular: "Most Popular",
+      plans: [
+        {
+          name: "Perintis",
+          tagline: "Start recording sales without hassle.",
+          price: "Free",
+          features: [
+            "1 Branch",
+            "1 Owner + 1 Cashier",
+            "100 Products, Customers, Raw Materials",
+            "1,000 transactions / month",
+            "Manage Customers, Purchases, Inventory, Products, Cashier, and Dashboard",
+            "Payment: Cash, QRIS, Transfer, Debt (Utang)",
+            "End-of-Day report",
+          ],
+          cta: "Start Free Forever",
+        },
+        {
+          name: "Tumbuh",
+          tagline: "Manage your business more efficiently.",
+          price: "Rp29,900",
+          features: [
+            "3 Branches (Coming Soon)",
+            "1 Owner + 2 Staff per branch",
+            "300 Products, Customers, Raw Materials",
+            "6,000 transactions / month",
+            "Bulk updates on Customers, Purchases, Inventory, Products, Cashier, and Dashboard",
+            "Payment: Cash, QRIS, Transfer, Debt (Utang)",
+            "Back Office Console (Coming Soon)",
+            "Advanced reports & raw data access",
+          ],
+          cta: "Try Now",
+          highlighted: true,
+        },
+        {
+          name: "Mapan",
+          tagline: "Control all operations from one dashboard.",
+          price: "Custom",
+          features: [
+            "Unlimited branches (Coming Soon)",
+            "Multi-Owner + Unlimited Staff",
+            "Unlimited Products, Customers, Raw Materials",
+            "Unlimited transactions / month",
+            "Bulk updates on Customers, Purchases, Inventory, Products, Cashier, and Dashboard",
+            "Payment Gateway (Coming Soon)",
+            "Back Office Console (Coming Soon)",
+            "Consolidated reports & raw data access",
+            "Set up by developer team",
+          ],
+          cta: "Contact Developer",
+        },
+      ],
     },
     simulator: {
       eyebrow: "Try It Now",
@@ -344,6 +427,69 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
         { label: "Kota" },
         { label: "Total Transaksi" }
       ]
+    },
+    pricing: {
+      eyebrow: "Harga",
+      title: "Pilih paket yang tepat untuk bisnis Anda.",
+      subtitle: "Mulai gratis selamanya, kalau bisnis kamu udah berkembang cukup bayar kurang dari Rp1.000/hari aja.",
+      monthly: "/ bulan",
+      free: "Gratis",
+      perMonth: "/ bulan",
+      currentPromo: "Coba Gratis 3 Bulan!",
+      comingSoon: "Segera Hadir",
+      contactDev: "Hubungi Developer",
+      mostPopular: "Paling Populer",
+      plans: [
+        {
+          name: "Perintis",
+          tagline: "Mulai catat penjualan tanpa ribet.",
+          price: "Gratis",
+          features: [
+            "1 Cabang",
+            "1 Pemilik + 1 Kasir",
+            "100 Produk, Pelanggan, Bahan Baku",
+            "1.000 transaksi / bulan",
+            "Kelola Pelanggan, Pembelian, Inventaris, Produk, Kasir, dan Dashboard",
+            "Pembayaran: Tunai, QRIS, Transfer, Utang",
+            "Laporan End-of-Day",
+          ],
+          cta: "Mulai Gratis Selamanya",
+        },
+        {
+          name: "Tumbuh",
+          tagline: "Kelola bisnis Anda dengan lebih rapi dan efisien.",
+          price: "Rp29.900",
+          features: [
+            "3 Cabang (Segera Hadir)",
+            "1 Pemilik + 2 Staf per cabang",
+            "300 Produk, Pelanggan, Bahan Baku",
+            "6.000 transaksi / bulan",
+            "Kelola massal Pelanggan, Pembelian, Inventaris, Produk, Kasir, dan Dashboard",
+            "Pembayaran: Tunai, QRIS, Transfer, Utang",
+            "Konsol Back Office (Segera Hadir)",
+            "Laporan lanjutan & akses data mentah",
+          ],
+          cta: "Coba Sekarang",
+          highlighted: true,
+        },
+        {
+          name: "Mapan",
+          tagline: "Kendalikan seluruh operasional bisnis dari satu dashboard.",
+          price: "Custom",
+          features: [
+            "Cabang tidak terbatas (Segera Hadir)",
+            "Multi-Pemilik + Staf tidak terbatas",
+            "Produk, Pelanggan, Bahan Baku tidak terbatas",
+            "Transaksi tidak terbatas / bulan",
+            "Kelola massal Pelanggan, Pembelian, Inventaris, Produk, Kasir, dan Dashboard",
+            "Payment Gateway (Segera Hadir)",
+            "Konsol Back Office (Segera Hadir)",
+            "Laporan konsolidasi & akses data mentah",
+            "Setup oleh tim developer",
+          ],
+          cta: "Hubungi Developer",
+        },
+      ],
     },
     simulator: {
       eyebrow: "Coba Sekarang",

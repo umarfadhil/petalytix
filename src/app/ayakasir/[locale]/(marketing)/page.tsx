@@ -192,6 +192,52 @@ export default async function AyaKasirLandingPage({
         </div>
       </section>
 
+      {/* Pricing */}
+      <section className="section reveal delay-2 ayakasir-pricing-section" id="pricing">
+        <span className="eyebrow">{copy.pricing.eyebrow}</span>
+        <h2 className="title">{copy.pricing.title}</h2>
+        <p className="subtitle" style={{ margin: "0 auto 40px" }}>
+          {copy.pricing.subtitle}
+        </p>
+        <div className="ayakasir-pricing-grid">
+          {copy.pricing.plans.map((plan, i) => (
+            <div key={i} className={`ayakasir-pricing-card${plan.highlighted ? " ayakasir-pricing-card--highlighted" : ""}`}>
+              {plan.highlighted && (
+                <div className="ayakasir-pricing-badge">{copy.pricing.mostPopular}</div>
+              )}
+              <h3 className="ayakasir-pricing-name">{plan.name}</h3>
+              <p className="ayakasir-pricing-tagline">{plan.tagline}</p>
+              <div className="ayakasir-pricing-price">
+                {plan.price}
+                {plan.price !== "Free" && plan.price !== "Gratis" && plan.price !== "Custom" && (
+                  <span className="ayakasir-pricing-period">{copy.pricing.perMonth}</span>
+                )}
+              </div>
+              {plan.highlighted && (
+                <div className="ayakasir-pricing-promo">{copy.pricing.currentPromo}</div>
+              )}
+              <ul className="ayakasir-pricing-features">
+                {plan.features.map((feature, j) => (
+                  <li key={j}>
+                    <span className="ayakasir-pricing-check">✓</span>
+                    {feature.includes("Coming Soon") || feature.includes("Segera Hadir") ? (
+                      <>{feature.replace(/ \(Coming Soon\)| \(Segera Hadir\)/, "")} <span className="ayakasir-pricing-coming-soon">{copy.pricing.comingSoon}</span></>
+                    ) : feature}
+                  </li>
+                ))}
+              </ul>
+              <a
+                className={`button ${plan.highlighted ? "primary ayakasir-btn-primary" : "ghost"} ayakasir-pricing-cta`}
+                href={plan.price === "Custom" ? `https://wa.me/628561150601?text=${encodeURIComponent(`Halo, saya tertarik dengan paket ${plan.name} AyaKasir.`)}` : `/${params.locale}/app/register`}
+                {...(plan.price === "Custom" ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+              >
+                {plan.cta}
+              </a>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* Simulator CTA */}
       <section className="section reveal delay-2" style={{ textAlign: "center" }}>
         <span className="eyebrow">{copy.simulator.eyebrow}</span>

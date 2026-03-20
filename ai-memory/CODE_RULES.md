@@ -95,6 +95,40 @@
 - Movement types: `adjustment_in`, `adjustment_out`, `waste` (matching mobile app).
 - Schema: `id, tenant_id, product_id, variant_id (TEXT NOT NULL DEFAULT ''), movement_type, qty_before, qty_after, qty_change, unit (TEXT DEFAULT 'pcs'), reason (TEXT NOT NULL DEFAULT ''), user_id, date (BIGINT), sync_status, updated_at (BIGINT)`. No `reference_id`.
 
+### ERP Cashier Session Rules
+- `cashier_sessions` table: `id, tenant_id, user_id, opened_at (BIGINT), closed_at (BIGINT nullable), initial_balance, closing_balance, withdrawal_amount, match_status, mismatch_note, sync_status, updated_at`.
+- `currentSession` is derived: `state.cashierSessions.find(s => s.closed_at === null)`. No extra state.
+- POS is locked when `currentSession === null`; shows Open Cashier overlay (initial balance + PIN).
+- PIN verified via `verifyErpPinAction` server action in `auth.ts`. Imported via dynamic import in PosScreen (client component).
+- Saldo Kas (Dashboard + POS Tarik Tunai) filters generalLedger to `date >= currentSession.opened_at`. Falls back to all-time when no session.
+- UTANG total is always all-time (mirrors mobile `TransactionDao.getTotalUnpaidDebt`).
+- Dashboard "Shift Aktif" chip is the 5th period type; only rendered when `activeSession !== null`.
+- Settle debt: Lunasi button disabled when `activeSession === null`.
+- Close Cashier: writes closed_at, closing_balance, withdrawal_amount, match_status, mismatch_note to `cashier_sessions`. Then performs cash-reset. After close, POS auto-locks.
+- Empty cash ledger flow (3 steps): (1) `cash_withdrawals` row with full `closingBalance`; (2) reset INITIAL_BALANCE to 0; (3) WITHDRAWAL ledger entry with `amount = -(closingBalance - initialBalance)` (sales-only). Edge: skip step 3 if salesPortion ≤ 0.
+- Saldo Awal is no longer in Settings — set exclusively via Open Cashier in PosScreen.
+
+### ERP Variant Preset Groups Rules
+- `variant_groups` table: `id, tenant_id, name, sync_status, updated_at`.
+- `variant_group_values` table: `id, group_id, tenant_id, name, sort_order, sync_status, updated_at`. `group_id` → `variant_groups(id) ON DELETE CASCADE`.
+- Repository: `src/lib/supabase/repositories/variant-groups.ts`.
+- Variants tab (5th tab in Purchasing): manage reusable preset groups. Shows Group Name | Values (pill badges) | Applied To | Actions (Apply/Edit/Delete).
+- Apply preset: opens dialog → select raw material → creates `DbVariant` rows per value (skip if name exists) + `DbInventory` row per new variant.
+- Delete group: removes affected DbVariant + DbInventory rows for products using those variant names, then deletes group (cascade deletes values).
+- Goods receiving "Use Variants" toggle: expands product row into per-variant sub-rows (variantId, variantName, qty, costPerUnit). Save produces one `DbGoodsReceivingItem` per variant row with non-zero qty.
+- `FormItem` extended with `useVariants: boolean` and `variantRows: VariantRow[]`.
+
+### ERP Plan / Subscription Rules
+- `tenants.plan` is `TenantPlan` = `"PERINTIS" | "TUMBUH" | "MAPAN"`. Default for new tenants: `PERINTIS`.
+- Plan limits defined in `src/lib/ayakasir-plan.ts` (`PLAN_LIMITS` record). Use `getPlanLimits(plan)` to get limits.
+- `APP_VERSION` constant in `src/lib/ayakasir-plan.ts` — keep in sync with `repos/ayakasir/app/build.gradle.kts → versionName`. Displayed in Settings footer as `© 2026 AyaKasir by Petalytix | v{APP_VERSION}`.
+- `usePlanLimits()` hook (in `src/components/ayakasir/erp/usePlanLimits.ts`) returns current counts and `can*` booleans for all screens.
+- Plan expiry: if `plan_expires_at` is set and past, effective plan falls back to `PERINTIS`.
+- Enforcement is client-side only (no server-side RPC yet). Check `can*` booleans before creating new entities.
+- CSV export (Unduh Data) is disabled for PERINTIS plan — button disabled + warning hint shown.
+- UTANG payment method is available on all plans. Visibility in POS and Settings is controlled by `tenants.enabled_payment_methods`.
+- When adding a new plan-gated feature: add the limit to `PlanLimits` interface + `PLAN_LIMITS`, add the `can*` boolean to `usePlanLimits`, enforce in the relevant screen.
+
 ### Adding a New ERP Feature (when mobile app updates)
 1. If new Supabase table: add type to `src/lib/supabase/types.ts`, add to `TENANT_TABLES`, create repository in `repositories/`, add to `index.ts`.
 2. If new field on existing table: update the corresponding `Db*` interface in `types.ts`.

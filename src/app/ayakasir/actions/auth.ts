@@ -283,6 +283,11 @@ export async function registerErpAction({
   }
 
   const now = Date.now();
+  const threeMonthsLater = (() => {
+    const d = new Date(now);
+    d.setMonth(d.getMonth() + 3);
+    return d.getTime();
+  })();
   const tenantId = crypto.randomUUID();
   const userId = crypto.randomUUID();
   const passwordSalt = generatePasswordSalt();
@@ -298,6 +303,9 @@ export async function registerErpAction({
     province: trimmedProvince,
     city: trimmedCity,
     is_active: false,
+    plan: "TUMBUH",
+    plan_started_at: now,
+    plan_expires_at: threeMonthsLater,
     sync_status: "SYNCED",
     updated_at: now,
     created_at: now,
@@ -733,4 +741,47 @@ export async function changeErpPasswordAction({
       ? "Password berhasil diperbarui."
       : "Password updated successfully.",
   };
+}
+
+export async function activateAccountAction(email: string): Promise<ActionResult> {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) return { ok: false };
+
+  const supabase = createServerClient();
+  const now = Date.now();
+
+  const { error: userError } = await supabase
+    .from("users")
+    .update({ is_active: true, updated_at: now })
+    .ilike("email", normalizedEmail)
+    .eq("is_active", false);
+
+  if (userError) return { ok: false };
+
+  const { error: tenantError } = await supabase
+    .from("tenants")
+    .update({ is_active: true, updated_at: now })
+    .ilike("owner_email", normalizedEmail)
+    .eq("is_active", false);
+
+  if (tenantError) return { ok: false };
+
+  return { ok: true };
+}
+
+export async function verifyErpPinAction({
+  userId,
+  pin,
+}: {
+  userId: string;
+  pin: string;
+}): Promise<boolean> {
+  const supabase = createServerClient();
+  const { data: dbUser } = await supabase
+    .from("users")
+    .select("pin_hash, pin_salt")
+    .eq("id", userId)
+    .single();
+  if (!dbUser?.pin_hash || !dbUser?.pin_salt) return false;
+  return verifyPassword(pin, dbUser.pin_salt, dbUser.pin_hash);
 }

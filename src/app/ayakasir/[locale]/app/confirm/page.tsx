@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { createBrowserClient } from "@/lib/supabase/client";
 import { getErpCopy } from "@/components/ayakasir/erp/i18n";
+import { activateAccountAction } from "@/app/ayakasir/actions/auth";
 
 type ConfirmStatus = "loading" | "success" | "error";
 
@@ -18,6 +19,7 @@ export default function ConfirmPage() {
   const nextParam = searchParams.get("next");
   const [status, setStatus] = useState<ConfirmStatus>("loading");
   const [message, setMessage] = useState(authCopy.confirming);
+  const [isSignup, setIsSignup] = useState(false);
 
   const redirectTarget = useMemo(() => {
     const effectiveType =
@@ -107,13 +109,29 @@ export default function ConfirmPage() {
         return;
       }
 
+      const isRecovery = resolvedType === "recovery";
+
+      if (!isRecovery) {
+        // Activate user + tenant in public.users / tenants
+        const { data: sessionData } = await supabase.auth.getSession();
+        const email = sessionData?.session?.user?.email;
+        if (email) {
+          await activateAccountAction(email);
+        }
+        if (isActive) setIsSignup(true);
+      }
+
       setStatus("success");
       setMessage(
-        resolvedType === "recovery"
+        isRecovery
           ? authCopy.confirmRecoverySuccess
-          : authCopy.confirmSuccess
+          : authCopy.confirmActivated
       );
-      router.replace(redirectTarget);
+
+      if (isRecovery) {
+        router.replace(redirectTarget);
+      }
+      // For signup: stay on page — user clicks the login button manually
     }
 
     verify();
@@ -139,16 +157,33 @@ export default function ConfirmPage() {
           {message}
         </div>
 
-        <p style={{ textAlign: "center", marginTop: 16, fontSize: 14 }}>
-          <a
-            href={redirectTarget}
-            style={{ color: "var(--erp-primary)", fontWeight: 500 }}
-          >
-            {redirectTarget.includes("reset-password")
-              ? authCopy.goToResetPassword
-              : authCopy.backToLogin}
-          </a>
-        </p>
+        {status === "success" && isSignup && (
+          <div style={{ marginTop: 20, textAlign: "center" }}>
+            <p style={{ fontSize: 14, color: "var(--erp-muted)", marginBottom: 16 }}>
+              {authCopy.confirmActivatedHint}
+            </p>
+            <a
+              href={`/${locale}/app/login`}
+              className="erp-btn erp-btn--primary"
+              style={{ display: "inline-block", textDecoration: "none" }}
+            >
+              {authCopy.confirmGoToLogin}
+            </a>
+          </div>
+        )}
+
+        {(status === "error" || (status === "success" && !isSignup)) && (
+          <p style={{ textAlign: "center", marginTop: 16, fontSize: 14 }}>
+            <a
+              href={redirectTarget}
+              style={{ color: "var(--erp-primary)", fontWeight: 500 }}
+            >
+              {redirectTarget.includes("reset-password")
+                ? authCopy.goToResetPassword
+                : authCopy.backToLogin}
+            </a>
+          </p>
+        )}
       </div>
     </div>
   );

@@ -3,11 +3,12 @@
 import React, { useMemo, useState } from "react";
 import { useErp } from "../store";
 import { getErpCopy } from "../i18n";
+import { usePlanLimits } from "../usePlanLimits";
 import { formatRupiah, formatDate } from "../utils";
 import * as repo from "@/lib/supabase/repositories";
-import type { DbVendor, DbGoodsReceiving, DbGoodsReceivingItem, DbGeneralLedger, DbProduct, DbCategory } from "@/lib/supabase/types";
+import type { DbVendor, DbGoodsReceiving, DbGoodsReceivingItem, DbGeneralLedger, DbProduct, DbCategory, DbVariantGroup, DbVariantGroupValue } from "@/lib/supabase/types";
 
-type Tab = "receiving" | "vendors" | "rawMaterials" | "categories";
+type Tab = "receiving" | "vendors" | "rawMaterials" | "categories" | "variants";
 
 // ── Vendor CSV helpers ────────────────────────────────────────────────────────
 
@@ -129,18 +130,31 @@ type RawImportRow = {
 };
 
 
+interface VariantRow {
+  variantId: string;
+  variantName: string;
+  qty: string;
+  costPerUnit: string;
+}
+
 interface FormItem {
   productId: string;
   variantId: string;
   qty: string;
   costPerUnit: string;
   unit: string;
+  useVariants: boolean;
+  variantRows: VariantRow[];
+  // per-row item picker state
+  categoryId: string;
+  itemSearch: string;
 }
 
 export default function PurchasingScreen() {
   const { state, dispatch, supabase, tenantId, locale } = useErp();
   const copy = getErpCopy(locale);
   const isOwner = state.user?.role === "OWNER";
+  const planLimits = usePlanLimits();
 
   const [tab, setTab] = useState<Tab>("receiving");
   const [showReceivingForm, setShowReceivingForm] = useState(false);
@@ -153,7 +167,7 @@ export default function PurchasingScreen() {
   const [editReceivingId, setEditReceivingId] = useState<string | null>(null);
   const [recVendor, setRecVendor] = useState("");
   const [recNotes, setRecNotes] = useState("");
-  const [recItems, setRecItems] = useState<FormItem[]>([{ productId: "", variantId: "", qty: "", costPerUnit: "", unit: "" }]);
+  const [recItems, setRecItems] = useState<FormItem[]>([{ productId: "", variantId: "", qty: "", costPerUnit: "", unit: "", useVariants: false, variantRows: [], categoryId: "", itemSearch: "" }]);
   // Index of the item row that triggered inline new-raw-material creation (-1 = none)
   const [pendingRawItemIdx, setPendingRawItemIdx] = useState<number>(-1);
   // Whether the raw category form was opened from within the raw material form
@@ -216,6 +230,25 @@ export default function PurchasingScreen() {
 
   const [rawSearch, setRawSearch] = useState("");
   const [filterRawCategory, setFilterRawCategory] = useState("");
+
+  // Variant Groups tab — form, pagination, bulk delete
+  const [showGroupForm, setShowGroupForm] = useState(false);
+  const [editGroupId, setEditGroupId] = useState<string | null>(null);
+  const [groupName, setGroupName] = useState("");
+  // Inline value list during group create/edit: array of { tempId, name }
+  const [groupFormValues, setGroupFormValues] = useState<{ tempId: string; name: string }[]>([]);
+  const [groupPage, setGroupPage] = useState(0);
+  const [groupPageSize, setGroupPageSize] = useState<10 | 25 | 50>(10);
+  const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
+  const [showGroupBulkConfirm, setShowGroupBulkConfirm] = useState(false);
+  const [groupBulkDeleting, setGroupBulkDeleting] = useState(false);
+  const [groupSearch, setGroupSearch] = useState("");
+  // Apply preset dialog (from Variants tab)
+  const [applyGroupTarget, setApplyGroupTarget] = useState<DbVariantGroup | null>(null);
+  const [applyProductId, setApplyProductId] = useState("");
+  // Inline apply preset (from receiving form) — tracks which item row is applying
+  const [inlineApplyIdx, setInlineApplyIdx] = useState<number>(-1);
+  const [inlineApplyGroupId, setInlineApplyGroupId] = useState("");
 
   // Receiving filters
   const [filterDate, setFilterDate] = useState("");
@@ -311,6 +344,56 @@ export default function PurchasingScreen() {
 
   const rawTotalPages = Math.ceil(filteredRawMaterials.length / rawPageSize);
 
+  const filteredGroups = useMemo(() => {
+    let list = state.variantGroups;
+    if (groupSearch) {
+      const q = groupSearch.toLowerCase();
+      list = list.filter((g) => g.name.toLowerCase().includes(q));
+    }
+    return [...list].sort((a, b) => a.name.localeCompare(b.name));
+  }, [state.variantGroups, groupSearch]);
+
+  const pagedGroups = useMemo(() => {
+    const start = groupPage * groupPageSize;
+    return filteredGroups.slice(start, start + groupPageSize);
+  }, [filteredGroups, groupPage, groupPageSize]);
+
+  const groupTotalPages = Math.ceil(filteredGroups.length / groupPageSize);
+
+  const getGroupValues = (groupId: string) =>
+    state.variantGroupValues.filter((v) => v.group_id === groupId).sort((a, b) => a.sort_order - b.sort_order);
+
+  // Products that have any variants from a given group (by matching value names)
+  const getGroupAppliedProducts = (groupId: string) => {
+    const values = getGroupValues(groupId);
+    const valueNames = new Set(values.map((v) => v.name.toLowerCase()));
+    return rawMaterials.filter((p) =>
+      state.variants.some((v) => v.product_id === p.id && valueNames.has(v.name.toLowerCase()))
+    );
+  };
+
+  const getProductVariants = (productId: string) =>
+    state.variants.filter((v) => v.product_id === productId);
+
+  // Map each raw material to the variant group it already belongs to (if any).
+  // A raw material can only belong to one preset variant group.
+  const rawMaterialGroupMap = useMemo(() => {
+    const map = new Map<string, string>(); // productId -> groupId
+    for (const group of state.variantGroups) {
+      const valueNames = new Set(
+        state.variantGroupValues.filter((v) => v.group_id === group.id).map((v) => v.name.toLowerCase())
+      );
+      for (const rm of rawMaterials) {
+        if (map.has(rm.id)) continue; // already assigned to a group
+        const hasVariantFromGroup = state.variants.some(
+          (v) => v.product_id === rm.id && valueNames.has(v.name.toLowerCase())
+        );
+        if (hasVariantFromGroup) map.set(rm.id, group.id);
+      }
+    }
+    return map;
+  }, [state.variantGroups, state.variantGroupValues, state.variants, rawMaterials]);
+
   const getRawCategoryName = (id: string | null) => {
     if (!id) return copy.products.noCategory;
     return state.categories.find((c) => c.id === id)?.name || copy.products.noCategory;
@@ -336,7 +419,7 @@ export default function PurchasingScreen() {
     setEditReceivingId(null);
     setRecVendor("");
     setRecNotes("");
-    setRecItems([{ productId: "", variantId: "", qty: "", costPerUnit: "", unit: "" }]);
+    setRecItems([{ productId: "", variantId: "", qty: "", costPerUnit: "", unit: "", useVariants: false, variantRows: [], categoryId: "", itemSearch: "" }]);
     setShowReceivingForm(true);
   };
 
@@ -344,28 +427,67 @@ export default function PurchasingScreen() {
     setEditReceivingId(r.id);
     setRecVendor(r.vendor_id || "");
     setRecNotes(r.notes || "");
-    const existingItems = state.goodsReceivingItems
-      .filter((i) => i.receiving_id === r.id)
-      .map((i) => {
-        // Convert base unit back to display unit for the form (g→kg, mL→L)
+    const rawItems = state.goodsReceivingItems.filter((i) => i.receiving_id === r.id);
+
+    // Group items by product: if a product has multiple items each with a variant_id,
+    // they were saved as variant sub-rows — restore them as a single FormItem with useVariants=true.
+    const productGroups = new Map<string, typeof rawItems>();
+    for (const item of rawItems) {
+      const key = item.product_id;
+      if (!productGroups.has(key)) productGroups.set(key, []);
+      productGroups.get(key)!.push(item);
+    }
+
+    const existingItems: FormItem[] = [];
+    for (const [productId, items] of productGroups) {
+      const hasVariants = items.some((i) => i.variant_id && i.variant_id !== "");
+      if (hasVariants) {
+        // Restore as variant sub-rows
+        const firstItem = items[0];
+        let displayUnit = firstItem.unit;
+        if (displayUnit === "g") displayUnit = "kg";
+        else if (displayUnit === "mL") displayUnit = "L";
+        const variantRows: VariantRow[] = items.map((i) => {
+          let dispQty = i.qty;
+          if (i.unit === "g") dispQty = i.qty / 1000;
+          else if (i.unit === "mL") dispQty = i.qty / 1000;
+          const variantName = state.variants.find((v) => v.id === i.variant_id)?.name || i.variant_id || "";
+          return {
+            variantId: i.variant_id || "",
+            variantName,
+            qty: String(dispQty),
+            costPerUnit: String(Math.round(dispQty * i.cost_per_unit * (i.unit === "g" || i.unit === "mL" ? 1000 : 1))),
+          };
+        });
+        const cat = state.products.find((p) => p.id === productId)?.category_id || "";
+        existingItems.push({ productId, variantId: "", qty: "", costPerUnit: "", unit: displayUnit, useVariants: true, variantRows, categoryId: cat, itemSearch: "" });
+      } else {
+        // Single item row
+        const i = items[0];
         let displayQty = i.qty;
         let displayUnit = i.unit;
         if (i.unit === "g") { displayQty = i.qty / 1000; displayUnit = "kg"; }
         else if (i.unit === "mL") { displayQty = i.qty / 1000; displayUnit = "L"; }
-        return {
+        const cat = state.products.find((p) => p.id === i.product_id)?.category_id || "";
+        existingItems.push({
           productId: i.product_id,
           variantId: i.variant_id || "",
           qty: String(displayQty),
           costPerUnit: String(i.qty * i.cost_per_unit),
           unit: displayUnit,
-        };
-      });
-    setRecItems(existingItems.length > 0 ? existingItems : [{ productId: "", variantId: "", qty: "", costPerUnit: "", unit: "" }]);
+          useVariants: false,
+          variantRows: [],
+          categoryId: cat,
+          itemSearch: "",
+        });
+      }
+    }
+    setRecItems(existingItems.length > 0 ? existingItems : [{ productId: "", variantId: "", qty: "", costPerUnit: "", unit: "", useVariants: false, variantRows: [], categoryId: "", itemSearch: "" }]);
     setShowReceivingForm(true);
   };
 
   const addRecItem = () => {
-    setRecItems([...recItems, { productId: "", variantId: "", qty: "", costPerUnit: "", unit: "" }]);
+    setRecItems([...recItems, { productId: "", variantId: "", qty: "", costPerUnit: "", unit: "", useVariants: false, variantRows: [], categoryId: "", itemSearch: "" }]);
   };
 
   const fmtNum = (raw: string) =>
@@ -378,14 +500,54 @@ export default function PurchasingScreen() {
     // qty allows decimals (e.g. 1,5 kg) — store raw; costPerUnit is integer currency — strip non-digits
     const stored = field === "costPerUnit" ? parseNum(value) : value;
     next[idx] = { ...next[idx], [field]: stored };
-    // Auto-set unit from inventory — inv.unit is already the display unit (kg/L/g/mL/pcs)
+    // Auto-set unit from inventory — convert base unit to display unit for user input (g→kg, mL→L)
     if (field === "productId") {
-      const inv = state.inventory.find((i) => i.product_id === value);
+      const inv = state.inventory.find((i) => i.product_id === value && (!i.variant_id || i.variant_id === ""));
       if (inv) {
-        const displayUnit = inv.unit;
+        const displayUnit = inv.unit === "g" ? "kg" : inv.unit === "mL" ? "L" : inv.unit;
         next[idx].unit = displayUnit;
       }
+      // Auto-select category from the raw material
+      if (value) {
+        const rm = rawMaterials.find((p) => p.id === value);
+        if (rm?.category_id) next[idx].categoryId = rm.category_id;
+      }
+      // Reset variant fields when product changes
+      next[idx].variantId = "";
+      next[idx].useVariants = false;
+      next[idx].variantRows = [];
+      // Reset inline preset picker
+      setInlineApplyIdx(-1);
+      setInlineApplyGroupId("");
     }
+    setRecItems(next);
+  };
+
+  const toggleUseVariants = (idx: number) => {
+    const next = [...recItems];
+    const item = next[idx];
+    const productVariants = item.productId ? getProductVariants(item.productId) : [];
+    if (!item.useVariants) {
+      // Enable variant sub-rows: seed one row per variant
+      const variantRows: VariantRow[] = productVariants.map((v) => ({
+        variantId: v.id,
+        variantName: v.name,
+        qty: "",
+        costPerUnit: "",
+      }));
+      next[idx] = { ...item, useVariants: true, variantRows, qty: "", costPerUnit: "", variantId: "" };
+    } else {
+      next[idx] = { ...item, useVariants: false, variantRows: [], variantId: "" };
+    }
+    setRecItems(next);
+  };
+
+  const updateVariantRow = (itemIdx: number, varIdx: number, field: keyof VariantRow, value: string) => {
+    const next = [...recItems];
+    const rows = [...next[itemIdx].variantRows];
+    const stored = field === "costPerUnit" ? parseNum(value) : value;
+    rows[varIdx] = { ...rows[varIdx], [field]: stored };
+    next[itemIdx] = { ...next[itemIdx], variantRows: rows };
     setRecItems(next);
   };
 
@@ -423,12 +585,33 @@ export default function PurchasingScreen() {
 
       const items: Omit<DbGoodsReceivingItem, "sync_status">[] = recItems
         .filter((i) => i.productId)
-        .map((i) => {
+        .flatMap((i) => {
+          if (i.useVariants && i.variantRows.length > 0) {
+            // Produce one item per variant sub-row (skip rows with no qty)
+            return i.variantRows
+              .filter((vr) => vr.variantId && vr.qty)
+              .map((vr) => {
+                const rawQty = parseFloat(vr.qty.replace(",", ".")) || 0;
+                const { qty: baseQty, unit: baseUnit } = toBaseQty(rawQty, i.unit);
+                const totalCost = parseInt(vr.costPerUnit) || 0;
+                return {
+                  id: crypto.randomUUID(),
+                  tenant_id: tenantId,
+                  receiving_id: recId,
+                  product_id: i.productId,
+                  variant_id: vr.variantId,
+                  qty: Math.round(baseQty),
+                  cost_per_unit: baseQty > 0 ? Math.round(totalCost / baseQty) : 0,
+                  unit: baseUnit,
+                  updated_at: now,
+                };
+              });
+          }
           const rawQty = parseFloat(i.qty.replace(",", ".")) || 0;
           // Convert to base unit so DB always stores integers (g, mL, pcs)
           const { qty: baseQty, unit: baseUnit } = toBaseQty(rawQty, i.unit);
           const totalCost = parseInt(i.costPerUnit) || 0;
-          return {
+          return [{
             id: crypto.randomUUID(),
             tenant_id: tenantId,
             receiving_id: recId,
@@ -438,7 +621,7 @@ export default function PurchasingScreen() {
             cost_per_unit: baseQty > 0 ? Math.round(totalCost / baseQty) : 0,
             unit: baseUnit,
             updated_at: now,
-          };
+          }];
         });
 
       // Fetch fresh inventory from DB — state.inventory may be stale if the mobile app
@@ -687,11 +870,17 @@ export default function PurchasingScreen() {
     setRawDescription(p.description || "");
     setRawActive(p.is_active);
     const storedUnit = state.inventory.find((i) => i.product_id === p.id && (!i.variant_id || i.variant_id === ""))?.unit || "pcs";
-    setRawUnit(storedUnit); // unit is already the display unit (kg/L/g/mL/pcs)
+    // Convert base unit back to display unit for the form (g→kg, mL→L)
+    const displayUnit = storedUnit === "g" ? "kg" : storedUnit === "mL" ? "L" : storedUnit;
+    setRawUnit(displayUnit);
     setShowRawForm(true);
   };
 
   const handleSaveRaw = async (skipWarnings = false) => {
+    if (!editRawId && !planLimits.canAddRawMaterial) {
+      alert(copy.plan.limitReached);
+      return;
+    }
     const nameLower = rawName.trim().toLowerCase();
     const duplicate = rawMaterials.some(
       (p) => p.name.toLowerCase() === nameLower && p.id !== editRawId
@@ -731,8 +920,8 @@ export default function PurchasingScreen() {
           updated_at: now,
         });
         dispatch({ type: "UPSERT", table: "products", payload: created as unknown as Record<string, unknown> });
-        // Create initial inventory row — store unit as display marker (kg/L/g/mL/pcs)
-        const baseRawUnit = rawUnit;
+        // Create initial inventory row — always store unit as base unit (kg→g, L→mL)
+        const baseRawUnit = rawUnit === "kg" ? "g" : rawUnit === "L" ? "mL" : rawUnit;
         const inv = await repo.upsertInventory(supabase, {
           product_id: productId!,
           variant_id: "",
@@ -833,6 +1022,237 @@ export default function PurchasingScreen() {
       setRawBulkDeleting(false);
       setShowRawBulkConfirm(false);
     }
+  };
+
+  // ── Variant Group CRUD ────────────────────────────────────────────────────
+  const openCreateGroup = () => {
+    setEditGroupId(null);
+    setGroupName("");
+    setGroupFormValues([{ tempId: crypto.randomUUID(), name: "" }]);
+    setShowGroupForm(true);
+  };
+
+  const openEditGroup = (g: DbVariantGroup) => {
+    setEditGroupId(g.id);
+    setGroupName(g.name);
+    const existing = getGroupValues(g.id).map((v) => ({ tempId: v.id, name: v.name }));
+    setGroupFormValues(existing.length > 0 ? existing : [{ tempId: crypto.randomUUID(), name: "" }]);
+    setShowGroupForm(true);
+  };
+
+  const handleSaveGroup = async () => {
+    const trimName = groupName.trim();
+    if (!trimName) return;
+    const validValues = groupFormValues.filter((v) => v.name.trim());
+    if (validValues.length === 0) { alert(copy.purchasing.noGroupValues); return; }
+    // Duplicate group name check
+    const dupGroup = state.variantGroups.some(
+      (g) => g.name.toLowerCase() === trimName.toLowerCase() && g.id !== editGroupId
+    );
+    if (dupGroup) { alert(copy.purchasing.duplicateGroup); return; }
+    // Duplicate value name check within form
+    const valueNames = validValues.map((v) => v.name.trim().toLowerCase());
+    if (new Set(valueNames).size !== valueNames.length) { alert(copy.purchasing.duplicateGroupValue); return; }
+
+    setSaving(true);
+    try {
+      const now = Date.now();
+      if (editGroupId) {
+        const updated = await repo.updateVariantGroup(supabase, editGroupId, { name: trimName });
+        dispatch({ type: "UPSERT", table: "variantGroups", payload: updated as unknown as Record<string, unknown> });
+
+        // Sync values: delete all existing, re-insert current list
+        const existingValues = getGroupValues(editGroupId);
+        for (const ev of existingValues) {
+          await repo.deleteVariantGroupValue(supabase, ev.id);
+          dispatch({ type: "DELETE", table: "variantGroupValues", id: ev.id });
+        }
+        for (let i = 0; i < validValues.length; i++) {
+          const created = await repo.createVariantGroupValue(supabase, {
+            id: crypto.randomUUID(),
+            group_id: editGroupId,
+            tenant_id: tenantId,
+            name: validValues[i].name.trim(),
+            sort_order: i,
+            updated_at: now,
+          });
+          dispatch({ type: "UPSERT", table: "variantGroupValues", payload: created as unknown as Record<string, unknown> });
+        }
+      } else {
+        const groupId = crypto.randomUUID();
+        const created = await repo.createVariantGroup(supabase, {
+          id: groupId,
+          tenant_id: tenantId,
+          name: trimName,
+          updated_at: now,
+        });
+        dispatch({ type: "UPSERT", table: "variantGroups", payload: created as unknown as Record<string, unknown> });
+        for (let i = 0; i < validValues.length; i++) {
+          const val = await repo.createVariantGroupValue(supabase, {
+            id: crypto.randomUUID(),
+            group_id: groupId,
+            tenant_id: tenantId,
+            name: validValues[i].name.trim(),
+            sort_order: i,
+            updated_at: now,
+          });
+          dispatch({ type: "UPSERT", table: "variantGroupValues", payload: val as unknown as Record<string, unknown> });
+        }
+      }
+      setShowGroupForm(false);
+    } catch (err) {
+      console.error("Save group failed:", err);
+    }
+    setSaving(false);
+  };
+
+  const handleDeleteGroup = async (groupId: string) => {
+    if (!confirm(copy.purchasing.deleteGroupConfirm)) return;
+    try {
+      // Remove DbVariant rows for products that used this group's values
+      const values = getGroupValues(groupId);
+      const valueNames = new Set(values.map((v) => v.name.toLowerCase()));
+      const affectedVariants = state.variants.filter(
+        (v) => rawMaterials.some((p) => p.id === v.product_id) && valueNames.has(v.name.toLowerCase())
+      );
+      for (const v of affectedVariants) {
+        await repo.deleteInventoryByProductVariant(supabase, v.product_id, v.id);
+        dispatch({ type: "DELETE", table: "inventory", id: "", compositeKey: { product_id: v.product_id, variant_id: v.id } });
+        await repo.deleteVariant(supabase, v.id);
+        dispatch({ type: "DELETE", table: "variants", id: v.id });
+      }
+      // Delete group (cascades values)
+      await repo.deleteVariantGroup(supabase, groupId);
+      dispatch({ type: "DELETE", table: "variantGroups", id: groupId });
+      // Remove values from state
+      for (const val of values) {
+        dispatch({ type: "DELETE", table: "variantGroupValues", id: val.id });
+      }
+    } catch (err) {
+      console.error("Delete group failed:", err);
+    }
+  };
+
+  const handleBulkDeleteGroups = async () => {
+    setGroupBulkDeleting(true);
+    try {
+      for (const gid of selectedGroupIds) {
+        await handleDeleteGroup(gid);
+      }
+      setSelectedGroupIds(new Set());
+    } catch (err) {
+      console.error("Bulk delete groups failed:", err);
+    } finally {
+      setGroupBulkDeleting(false);
+      setShowGroupBulkConfirm(false);
+    }
+  };
+
+  const handleApplyPreset = async () => {
+    if (!applyGroupTarget || !applyProductId) return;
+    setSaving(true);
+    try {
+      const now = Date.now();
+      const values = getGroupValues(applyGroupTarget.id);
+      const existingVariantNames = new Set(
+        state.variants.filter((v) => v.product_id === applyProductId).map((v) => v.name.toLowerCase())
+      );
+      const parentInv = state.inventory.find(
+        (i) => i.product_id === applyProductId && (!i.variant_id || i.variant_id === "")
+      );
+      for (const val of values) {
+        if (existingVariantNames.has(val.name.toLowerCase())) continue; // skip already applied
+        const variantId = crypto.randomUUID();
+        const created = await repo.createVariant(supabase, {
+          id: variantId,
+          tenant_id: tenantId,
+          product_id: applyProductId,
+          name: val.name,
+          price_adjustment: 0,
+          updated_at: now,
+        });
+        dispatch({ type: "UPSERT", table: "variants", payload: created as unknown as Record<string, unknown> });
+        const inv = await repo.upsertInventory(supabase, {
+          product_id: applyProductId,
+          variant_id: variantId,
+          tenant_id: tenantId,
+          current_qty: 0,
+          min_qty: 0,
+          unit: parentInv?.unit || "pcs",
+          avg_cogs: 0,
+          updated_at: now,
+        });
+        dispatch({ type: "UPSERT", table: "inventory", payload: inv as unknown as Record<string, unknown> });
+      }
+      setApplyGroupTarget(null);
+      setApplyProductId("");
+    } catch (err) {
+      console.error("Apply preset failed:", err);
+    }
+    setSaving(false);
+  };
+
+  // Inline apply preset from receiving form — creates DbVariant + inventory rows then seeds variantRows
+  const handleInlineApplyPreset = async (itemIdx: number, groupId: string, productId: string) => {
+    if (!groupId || !productId) return;
+    setSaving(true);
+    try {
+      const now = Date.now();
+      const values = getGroupValues(groupId);
+      const existingVariants = state.variants.filter((v) => v.product_id === productId);
+      const existingVariantNames = new Set(existingVariants.map((v) => v.name.toLowerCase()));
+      const parentInv = state.inventory.find(
+        (i) => i.product_id === productId && (!i.variant_id || i.variant_id === "")
+      );
+
+      // Build variant rows only for values in the selected group
+      // Use a local array so we can build variantRows immediately without waiting for state update
+      const groupValueNames = new Set(values.map((v) => v.name.toLowerCase()));
+      const allVariantRows: VariantRow[] = existingVariants
+        .filter((v) => groupValueNames.has(v.name.toLowerCase()))
+        .map((v) => ({
+          variantId: v.id,
+          variantName: v.name,
+          qty: "",
+          costPerUnit: "",
+        }));
+
+      for (const val of values) {
+        if (existingVariantNames.has(val.name.toLowerCase())) continue;
+        const variantId = crypto.randomUUID();
+        const created = await repo.createVariant(supabase, {
+          id: variantId,
+          tenant_id: tenantId,
+          product_id: productId,
+          name: val.name,
+          price_adjustment: 0,
+          updated_at: now,
+        });
+        dispatch({ type: "UPSERT", table: "variants", payload: created as unknown as Record<string, unknown> });
+        const inv = await repo.upsertInventory(supabase, {
+          product_id: productId,
+          variant_id: variantId,
+          tenant_id: tenantId,
+          current_qty: 0,
+          min_qty: 0,
+          unit: parentInv?.unit || "pcs",
+          avg_cogs: 0,
+          updated_at: now,
+        });
+        dispatch({ type: "UPSERT", table: "inventory", payload: inv as unknown as Record<string, unknown> });
+        allVariantRows.push({ variantId, variantName: val.name, qty: "", costPerUnit: "" });
+      }
+
+      // Auto-enable useVariants with the full variant list (no need to wait for state update)
+      const next = [...recItems];
+      next[itemIdx] = { ...next[itemIdx], useVariants: true, variantRows: allVariantRows, variantId: "" };
+      setRecItems(next);
+      setInlineApplyIdx(-1);
+      setInlineApplyGroupId("");
+    } catch (err) {
+      console.error("Inline apply preset failed:", err);
+    }
+    setSaving(false);
   };
 
   // Raw material CSV template download
@@ -946,8 +1366,8 @@ export default function PurchasingScreen() {
         });
         dispatch({ type: "UPSERT", table: "products", payload: created as unknown as Record<string, unknown> });
 
-        // Store unit as display marker (kg/L/g/mL/pcs); current_qty always stored in base units
-        const baseUnit = row.unit;
+        // Always store unit as base unit (kg→g, L→mL); current_qty always stored in base units
+        const baseUnit = row.unit === "kg" ? "g" : row.unit === "L" ? "mL" : row.unit;
         const inv = await repo.upsertInventory(supabase, {
           product_id: productId,
           variant_id: "",
@@ -1285,8 +1705,8 @@ export default function PurchasingScreen() {
               ↑ {copy.purchasing.rawImportCsv}
               <input type="file" accept=".csv" style={{ display: "none" }} onChange={handleImportRawCsv} />
             </label>
-            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateRaw}>
-              {copy.purchasing.addRawMaterial}
+            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateRaw} disabled={!planLimits.canAddRawMaterial}>
+              {copy.purchasing.addRawMaterial} {planLimits.limits.maxRawMaterials < Infinity ? `(${planLimits.counts.rawMaterials}/${planLimits.limits.maxRawMaterials})` : ""}
             </button>
           </div>
         )}
@@ -1304,6 +1724,11 @@ export default function PurchasingScreen() {
             </button>
           </div>
         )}
+        {tab === "variants" && (
+          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateGroup}>
+            {copy.purchasing.addVariantGroup}
+          </button>
+        )}
       </div>
 
       <div className="erp-tabs">
@@ -1318,6 +1743,9 @@ export default function PurchasingScreen() {
         </button>
         <button className={`erp-tab${tab === "categories" ? " erp-tab--active" : ""}`} onClick={() => setTab("categories")}>
           {copy.purchasing.categories}
+        </button>
+        <button className={`erp-tab${tab === "variants" ? " erp-tab--active" : ""}`} onClick={() => setTab("variants")}>
+          {copy.purchasing.variants}
         </button>
       </div>
 
@@ -1592,7 +2020,10 @@ export default function PurchasingScreen() {
                                     const dispUnit = li.unit === "g" ? "kg" : li.unit === "mL" ? "L" : li.unit;
                                     return (
                                       <tr key={li.id}>
-                                        <td>{getProductName(li.product_id)}</td>
+                                        <td>
+                                          {getProductName(li.product_id)}
+                                          {li.variant_id && (() => { const vn = state.variants.find((v) => v.id === li.variant_id); return vn ? <span style={{ color: "var(--erp-muted)" }}> ({vn.name})</span> : null; })()}
+                                        </td>
                                         <td>{dispQty % 1 === 0 ? dispQty : dispQty.toFixed(3).replace(/\.?0+$/, "")}</td>
                                         <td>{dispUnit}</td>
                                         <td>{formatRupiah(li.qty * li.cost_per_unit)}</td>
@@ -1853,8 +2284,234 @@ export default function PurchasingScreen() {
         </>
       )}
 
+      {/* ── Variants Tab ──────────────────────────────────────────────────── */}
+      {tab === "variants" && (
+        <>
+          {/* Bulk bar */}
+          {isOwner && selectedGroupIds.size > 0 && (
+            <div className="erp-bulk-bar">
+              <span>{selectedGroupIds.size} {copy.common.selected}</span>
+              <button className="erp-btn erp-btn--danger erp-btn--sm" onClick={() => setShowGroupBulkConfirm(true)}>
+                {copy.purchasing.groupBulkDelete}
+              </button>
+            </div>
+          )}
+
+          {/* Search */}
+          <div className="erp-search" style={{ marginBottom: 8 }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              placeholder={copy.common.search}
+              value={groupSearch}
+              onChange={(e) => { setGroupSearch(e.target.value); setGroupPage(0); setSelectedGroupIds(new Set()); }}
+            />
+          </div>
+
+          {/* Page size chips */}
+          <div className="erp-table-header-row">
+            <div className="erp-table-controls">
+              <span className="erp-text-muted" style={{ fontSize: 13 }}>{copy.purchasing.variantGroupRowsPerPage}:</span>
+              {([10, 25, 50] as const).map((s) => (
+                <span key={s} className={`erp-chip${groupPageSize === s ? " erp-chip--active" : ""}`} onClick={() => { setGroupPageSize(s); setGroupPage(0); setSelectedGroupIds(new Set()); }}>{s}</span>
+              ))}
+            </div>
+          </div>
+
+          <div className="erp-table-wrap">
+            <table className="erp-table">
+              <thead>
+                <tr>
+                  {isOwner && (
+                    <th style={{ width: 32 }}>
+                      <input type="checkbox" checked={pagedGroups.length > 0 && pagedGroups.every((g) => selectedGroupIds.has(g.id))} onChange={(e) => {
+                        const next = new Set(selectedGroupIds);
+                        pagedGroups.forEach((g) => e.target.checked ? next.add(g.id) : next.delete(g.id));
+                        setSelectedGroupIds(next);
+                      }} />
+                    </th>
+                  )}
+                  <th>{copy.purchasing.variantGroupName}</th>
+                  <th>{copy.purchasing.groupValues}</th>
+                  <th>{copy.purchasing.appliedTo}</th>
+                  <th>{copy.common.actions}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagedGroups.length === 0 ? (
+                  <tr><td colSpan={isOwner ? 5 : 4} style={{ color: "var(--erp-muted)", textAlign: "center" }}>{copy.purchasing.noGroups}</td></tr>
+                ) : (
+                  pagedGroups.map((g) => {
+                    const values = getGroupValues(g.id);
+                    const applied = getGroupAppliedProducts(g.id);
+                    return (
+                      <tr key={g.id} className={selectedGroupIds.has(g.id) ? "erp-table-row--selected" : ""}>
+                        {isOwner && (
+                          <td>
+                            <input type="checkbox" checked={selectedGroupIds.has(g.id)} onChange={(e) => {
+                              const next = new Set(selectedGroupIds);
+                              e.target.checked ? next.add(g.id) : next.delete(g.id);
+                              setSelectedGroupIds(next);
+                            }} />
+                          </td>
+                        )}
+                        <td><strong>{g.name}</strong></td>
+                        <td>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {values.map((v) => (
+                              <span key={v.id} className="erp-badge erp-badge--info" style={{ fontSize: 11 }}>{v.name}</span>
+                            ))}
+                          </div>
+                        </td>
+                        <td style={{ fontSize: 13, color: "var(--erp-ink-secondary)" }}>
+                          {applied.length === 0 ? "—" : applied.map((p) => p.name).join(", ")}
+                        </td>
+                        <td className="erp-td-actions">
+                          <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => { setApplyGroupTarget(g); setApplyProductId(""); }}>
+                            {copy.purchasing.applyPreset}
+                          </button>
+                          <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => openEditGroup(g)}>
+                            {copy.common.edit}
+                          </button>
+                          {isOwner && (
+                            <button className="erp-btn erp-btn--ghost erp-btn--sm" style={{ color: "var(--erp-danger)" }} onClick={() => handleDeleteGroup(g.id)}>
+                              {copy.common.delete}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination nav */}
+          {groupTotalPages > 1 && (
+            <div className="erp-table-pagination">
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={groupPage === 0} onClick={() => setGroupPage((p) => p - 1)}>‹</button>
+              <span style={{ fontSize: 13 }}>{groupPage + 1} / {groupTotalPages}</span>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={groupPage >= groupTotalPages - 1} onClick={() => setGroupPage((p) => p + 1)}>›</button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Variant Group Form Dialog */}
+      {showGroupForm && (
+        <div className="erp-overlay" onClick={() => setShowGroupForm(false)}>
+          <div className="erp-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{editGroupId ? copy.purchasing.editVariantGroup : copy.purchasing.addVariantGroup}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowGroupForm(false)}>{copy.common.close}</button>
+            </div>
+            <div className="erp-dialog-body">
+              <div className="erp-input-group">
+                <label className="erp-label">{copy.purchasing.variantGroupName}</label>
+                <input className="erp-input" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="e.g. Size, Color" />
+              </div>
+              <div className="erp-input-group">
+                <label className="erp-label" style={{ marginBottom: 8 }}>{copy.purchasing.groupValues}</label>
+                {groupFormValues.map((v, i) => (
+                  <div key={v.tempId} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                    <input
+                      className="erp-input"
+                      value={v.name}
+                      placeholder={`${copy.purchasing.addValue} ${i + 1}`}
+                      onChange={(e) => {
+                        const next = [...groupFormValues];
+                        next[i] = { ...next[i], name: e.target.value };
+                        setGroupFormValues(next);
+                      }}
+                    />
+                    {groupFormValues.length > 1 && (
+                      <button className="erp-btn erp-btn--ghost erp-btn--sm" style={{ color: "var(--erp-danger)" }}
+                        onClick={() => setGroupFormValues(groupFormValues.filter((_, j) => j !== i))}>✕</button>
+                    )}
+                  </div>
+                ))}
+                <button className="erp-btn erp-btn--ghost erp-btn--sm" style={{ marginTop: 4 }}
+                  onClick={() => setGroupFormValues([...groupFormValues, { tempId: crypto.randomUUID(), name: "" }])}>
+                  + {copy.purchasing.addValue}
+                </button>
+              </div>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowGroupForm(false)}>{copy.common.cancel}</button>
+              <button className="erp-btn erp-btn--primary" onClick={handleSaveGroup} disabled={saving || !groupName.trim()}>
+                {saving ? copy.common.loading : copy.common.save}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Apply Preset Dialog */}
+      {applyGroupTarget && (
+        <div className="erp-overlay" onClick={() => setApplyGroupTarget(null)}>
+          <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.purchasing.applyToProduct}: {applyGroupTarget.name}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setApplyGroupTarget(null)}>{copy.common.close}</button>
+            </div>
+            <div className="erp-dialog-body">
+              <div className="erp-input-group">
+                <label className="erp-label">{copy.purchasing.rawMaterials}</label>
+                <select className="erp-select" value={applyProductId} onChange={(e) => setApplyProductId(e.target.value)}>
+                  <option value="">—</option>
+                  {rawMaterials.filter((p) => {
+                    const assignedGroup = rawMaterialGroupMap.get(p.id);
+                    // Allow if unassigned or already belongs to this same group
+                    return !assignedGroup || assignedGroup === applyGroupTarget?.id;
+                  }).map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setApplyGroupTarget(null)}>{copy.common.cancel}</button>
+              <button className="erp-btn erp-btn--primary" onClick={handleApplyPreset} disabled={saving || !applyProductId}>
+                {saving ? copy.common.loading : copy.purchasing.applyPreset}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Group Bulk Delete Confirm */}
+      {showGroupBulkConfirm && (
+        <div className="erp-overlay" onClick={() => setShowGroupBulkConfirm(false)}>
+          <div className="erp-dialog erp-dialog--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.purchasing.groupBulkDelete}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setShowGroupBulkConfirm(false)}>{copy.common.close}</button>
+            </div>
+            <div className="erp-dialog-body">
+              <p>{copy.purchasing.groupBulkDeleteConfirm}</p>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setShowGroupBulkConfirm(false)}>{copy.common.cancel}</button>
+              <button className="erp-btn erp-btn--danger" onClick={handleBulkDeleteGroups} disabled={groupBulkDeleting}>
+                {groupBulkDeleting ? copy.common.loading : copy.common.delete}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Goods Receiving Form */}
-      {showReceivingForm && (
+      {showReceivingForm && (() => {
+        const grandTotal = recItems.reduce((sum, item) => {
+          if (item.useVariants) {
+            return sum + item.variantRows.reduce((s, vr) => s + (parseFloat(vr.costPerUnit) || 0), 0);
+          }
+          return sum + (parseFloat(item.costPerUnit) || 0);
+        }, 0);
+        return (
         <div className="erp-overlay" onClick={() => setShowReceivingForm(false)}>
           <div className="erp-dialog erp-dialog--lg" onClick={(e) => e.stopPropagation()}>
             <div className="erp-dialog-header">
@@ -1864,79 +2521,199 @@ export default function PurchasingScreen() {
               </button>
             </div>
             <div className="erp-dialog-body">
-              <div className="erp-input-group">
-                <label className="erp-label">{copy.purchasing.vendor}</label>
-                <select
-                  className="erp-select"
-                  value={recVendor}
-                  onChange={(e) => {
-                    if (e.target.value === "__NEW__") {
-                      setEditVendorId(null);
-                      setVendorName("");
-                      setVendorPhone("");
-                      setVendorAddress("");
-                      setShowVendorForm(true);
-                    } else {
-                      setRecVendor(e.target.value);
-                    }
-                  }}
-                >
-                  <option value="">—</option>
-                  {state.vendors.map((v) => (
-                    <option key={v.id} value={v.id}>{v.name}</option>
-                  ))}
-                  <option value="__NEW__">{copy.purchasing.newVendorOption}</option>
-                </select>
-              </div>
-              <div className="erp-input-group">
-                <label className="erp-label">{copy.purchasing.notes}</label>
-                <input className="erp-input" value={recNotes} onChange={(e) => setRecNotes(e.target.value)} />
+              {/* Vendor + Notes */}
+              <div className="erp-rec-form-section">
+                <div className="erp-input-group">
+                  <label className="erp-label">{copy.purchasing.vendor} *</label>
+                  <select
+                    className="erp-select"
+                    value={recVendor}
+                    onChange={(e) => {
+                      if (e.target.value === "__NEW__") {
+                        setEditVendorId(null);
+                        setVendorName("");
+                        setVendorPhone("");
+                        setVendorAddress("");
+                        setShowVendorForm(true);
+                      } else {
+                        setRecVendor(e.target.value);
+                      }
+                    }}
+                  >
+                    <option value="">—</option>
+                    {state.vendors.map((v) => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                    <option value="__NEW__">{copy.purchasing.newVendorOption}</option>
+                  </select>
+                </div>
+                <div className="erp-input-group">
+                  <label className="erp-label">{copy.purchasing.notes}</label>
+                  <input className="erp-input" value={recNotes} onChange={(e) => setRecNotes(e.target.value)} placeholder="—" />
+                </div>
               </div>
 
-              <div style={{ marginTop: 16 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-                  <label className="erp-label">{copy.purchasing.items}</label>
-                  <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={addRecItem}>
-                    + {copy.purchasing.addItem}
-                  </button>
-                </div>
-                {recItems.map((item, idx) => (
-                  <div key={idx} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: 8, marginBottom: 8, alignItems: "center" }}>
-                    <select
-                      className="erp-select"
-                      value={item.productId}
-                      onChange={(e) => {
-                        if (e.target.value === "__NEW__") {
-                          setPendingRawItemIdx(idx);
-                          setEditRawId(null);
-                          setRawName("");
-                          setRawCategory("");
-                          setRawDescription("");
-                          setRawActive(true);
-                          setRawUnit("pcs");
-                          setShowRawForm(true);
-                        } else {
-                          updateRecItem(idx, "productId", e.target.value);
-                        }
-                      }}
-                    >
-                      <option value="">—</option>
-                      {rawMaterials.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                      <option value="__NEW__">{copy.purchasing.newRawMaterialOption}</option>
-                    </select>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                      <input className="erp-input" type="text" inputMode="decimal" placeholder={copy.products.qty} value={item.qty} onChange={(e) => updateRecItem(idx, "qty", e.target.value)} style={{ minWidth: 0 }} />
-                      <span className="erp-bom-unit-label" style={{ whiteSpace: "nowrap" }}>{item.unit || "—"}</span>
-                    </div>
-                    <input className="erp-input" type="text" inputMode="numeric" placeholder={copy.purchasing.totalAmount} value={fmtNum(item.costPerUnit)} onChange={(e) => updateRecItem(idx, "costPerUnit", e.target.value)} />
-                    <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => removeRecItem(idx)} style={{ color: "var(--erp-danger)" }}>
-                      ✕
-                    </button>
-                  </div>
-                ))}
+              {/* Items */}
+              <div className="erp-rec-items-header">
+                <span>{copy.purchasing.items}</span>
+                <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={addRecItem}>
+                  + {copy.purchasing.addItem}
+                </button>
               </div>
+
+              {recItems.map((item, idx) => {
+                const itemVariants = item.productId ? getProductVariants(item.productId) : [];
+                const rowFiltered = item.categoryId
+                  ? rawMaterials.filter((p) => p.category_id === item.categoryId)
+                  : rawMaterials;
+                return (
+                  <div key={idx} className="erp-rec-item-card">
+                    {/* Single row: Category | Raw Material | Qty | Total | Preset | Remove */}
+                    <div className="erp-rec-item-row">
+                      {/* Category filter */}
+                      <div className="erp-rec-col erp-rec-col--cat">
+                        <div className="erp-rec-item-label">{copy.products.category}</div>
+                        <select
+                          className="erp-select"
+                          value={item.categoryId}
+                          onChange={(e) => {
+                            const next = [...recItems];
+                            next[idx] = { ...next[idx], categoryId: e.target.value, itemSearch: "", productId: "", variantId: "", useVariants: false, variantRows: [], qty: "", costPerUnit: "", unit: "" };
+                            setRecItems(next);
+                            setInlineApplyIdx(-1);
+                            setInlineApplyGroupId("");
+                          }}
+                        >
+                          <option value="">—</option>
+                          {rawCategories.map((c) => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Raw Material dropdown */}
+                      <div className="erp-rec-col erp-rec-col--product">
+                        <div className="erp-rec-item-label">{copy.purchasing.rawMaterials}</div>
+                        <select
+                          className="erp-select"
+                          value={item.productId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === "__NEW__") {
+                              setPendingRawItemIdx(idx);
+                              setEditRawId(null);
+                              setRawName("");
+                              setRawCategory(item.categoryId);
+                              setRawDescription("");
+                              setRawActive(true);
+                              setRawUnit("pcs");
+                              setShowRawForm(true);
+                            } else {
+                              updateRecItem(idx, "productId", val);
+                            }
+                          }}
+                        >
+                          <option value="">—</option>
+                          {rowFiltered.map((p) => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                          <option value="__NEW__">{copy.purchasing.newRawMaterialOption}</option>
+                        </select>
+                      </div>
+
+                      {/* Qty */}
+                      {!item.useVariants ? (
+                        <div className="erp-rec-col erp-rec-col--qty">
+                          <div className="erp-rec-item-label">{copy.products.qty}</div>
+                          <div className="erp-rec-item-qty-group">
+                            <input className="erp-input" type="text" inputMode="decimal" placeholder="0" value={item.qty} onChange={(e) => updateRecItem(idx, "qty", e.target.value)} />
+                            <span className="erp-bom-unit-label">{item.unit || "—"}</span>
+                          </div>
+                        </div>
+                      ) : <div className="erp-rec-col erp-rec-col--qty" />}
+
+                      {/* Total */}
+                      {!item.useVariants ? (
+                        <div className="erp-rec-col erp-rec-col--total">
+                          <div className="erp-rec-item-label">{copy.purchasing.totalAmount}</div>
+                          <input className="erp-input" type="text" inputMode="numeric" placeholder="Rp 0" value={fmtNum(item.costPerUnit)} onChange={(e) => updateRecItem(idx, "costPerUnit", e.target.value)} />
+                        </div>
+                      ) : <div className="erp-rec-col erp-rec-col--total" />}
+
+                      {/* Preset — only when product selected, groups exist, and no preset applied yet */}
+                      <div className="erp-rec-col erp-rec-col--preset">
+                        {item.productId && state.variantGroups.length > 0 && !item.useVariants ? (() => {
+                          const assignedGroupId = rawMaterialGroupMap.get(item.productId);
+                          // Show only the assigned group, or all groups if none assigned yet
+                          const availableGroups = assignedGroupId
+                            ? state.variantGroups.filter((g) => g.id === assignedGroupId)
+                            : state.variantGroups;
+                          return availableGroups.length > 0 ? (
+                            <>
+                              <div className="erp-rec-item-label">{copy.purchasing.applyPresetInline}</div>
+                              <select
+                                className="erp-select"
+                                value={inlineApplyIdx === idx ? inlineApplyGroupId : ""}
+                                disabled={saving}
+                                onChange={(e) => {
+                                  const gid = e.target.value;
+                                  if (!gid) return;
+                                  setInlineApplyIdx(idx);
+                                  setInlineApplyGroupId(gid);
+                                  handleInlineApplyPreset(idx, gid, item.productId);
+                                }}
+                              >
+                                <option value="">—</option>
+                                {availableGroups.map((g) => (
+                                  <option key={g.id} value={g.id}>{g.name}</option>
+                                ))}
+                              </select>
+                            </>
+                          ) : <div />;
+                        })() : <div />}
+                      </div>
+
+                      {/* Remove */}
+                      <div className="erp-rec-col erp-rec-col--remove">
+                        <div className="erp-rec-item-label" style={{ visibility: "hidden" }}>x</div>
+                        <button
+                          className="erp-btn erp-btn--ghost erp-btn--sm"
+                          onClick={() => removeRecItem(idx)}
+                          style={{ color: "var(--erp-danger)" }}
+                          title={copy.common.delete}
+                        >✕</button>
+                      </div>
+                    </div>
+
+
+                    {/* Variant sub-rows */}
+                    {item.useVariants && item.variantRows.map((vr, vi) => (
+                      <div key={vr.variantId} className="erp-rec-variant-row">
+                        <div className="erp-rec-variant-name">↳ {vr.variantName}</div>
+                        <div>
+                          <div className="erp-rec-item-label">{copy.products.qty}</div>
+                          <div className="erp-rec-item-qty-group">
+                            <input className="erp-input" type="text" inputMode="decimal" placeholder="0" value={vr.qty} onChange={(e) => updateVariantRow(idx, vi, "qty", e.target.value)} />
+                            <span className="erp-bom-unit-label">{item.unit || "—"}</span>
+                          </div>
+                        </div>
+                        <div>
+                          <div className="erp-rec-item-label">{copy.purchasing.totalAmount}</div>
+                          <input className="erp-input" type="text" inputMode="numeric" placeholder="Rp 0" value={fmtNum(vr.costPerUnit)} onChange={(e) => updateVariantRow(idx, vi, "costPerUnit", e.target.value)} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+
+              {/* Grand Total */}
+              {recItems.some((i) => i.productId) && (
+                <div className="erp-rec-total-row">
+                  <span>{copy.purchasing.totalCost}</span>
+                  <span className="erp-rec-total-amount">{formatRupiah(grandTotal)}</span>
+                </div>
+              )}
             </div>
             <div className="erp-dialog-footer">
               <button className="erp-btn erp-btn--secondary" onClick={() => setShowReceivingForm(false)}>
@@ -1948,7 +2725,8 @@ export default function PurchasingScreen() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Vendor Form */}
       {showVendorForm && (

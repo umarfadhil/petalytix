@@ -1,5 +1,7 @@
 // Database row types — matching Supabase schema exactly (snake_case, BIGINT timestamps)
 
+export type TenantPlan = "PERINTIS" | "TUMBUH" | "MAPAN";
+
 export interface DbTenant {
   id: string;
   name: string;
@@ -11,6 +13,9 @@ export interface DbTenant {
   qris_image_url: string | null;
   qris_merchant_name: string | null;
   enabled_payment_methods: string; // comma-separated: "CASH,QRIS,TRANSFER,UTANG"
+  plan: TenantPlan;
+  plan_started_at: number | null;
+  plan_expires_at: number | null;
   sync_status: string;
   updated_at: number;
   created_at: number;
@@ -87,6 +92,24 @@ export interface DbVariant {
   product_id: string;
   name: string;
   price_adjustment: number;
+  sync_status: string;
+  updated_at: number;
+}
+
+export interface DbVariantGroup {
+  id: string;
+  tenant_id: string;
+  name: string;
+  sync_status: string;
+  updated_at: number;
+}
+
+export interface DbVariantGroupValue {
+  id: string;
+  group_id: string;
+  tenant_id: string;
+  name: string;
+  sort_order: number;
   sync_status: string;
   updated_at: number;
 }
@@ -210,6 +233,21 @@ export interface DbInventoryMovement {
   updated_at: number;
 }
 
+export interface DbCashierSession {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  opened_at: number; // BIGINT timestamp ms
+  closed_at: number | null;
+  initial_balance: number;
+  closing_balance: number | null;
+  withdrawal_amount: number | null;
+  match_status: "MATCH" | "MISMATCH" | null;
+  mismatch_note: string | null;
+  sync_status: string;
+  updated_at: number;
+}
+
 export interface DbGeneralLedger {
   id: string;
   tenant_id: string;
@@ -240,6 +278,9 @@ export const TENANT_TABLES = [
   "customers",
   "customer_categories",
   "inventory_movements",
+  "cashier_sessions",
+  "variant_groups",
+  "variant_group_values",
 ] as const;
 
 export type TenantTable = (typeof TENANT_TABLES)[number];
@@ -261,4 +302,7 @@ export interface TableTypeMap {
   customers: DbCustomer;
   customer_categories: DbCustomerCategory;
   inventory_movements: DbInventoryMovement;
+  cashier_sessions: DbCashierSession;
+  variant_groups: DbVariantGroup;
+  variant_group_values: DbVariantGroupValue;
 }

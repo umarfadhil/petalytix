@@ -4,21 +4,25 @@ import { useState, useMemo } from "react";
 import { useErp } from "../store";
 import { getErpCopy } from "../i18n";
 import { formatRupiah, formatQty } from "../utils";
-import { adjustInventory } from "@/lib/supabase/repositories/inventory";
+import { adjustInventory, updateMinQty, deleteInventoryByProductVariant } from "@/lib/supabase/repositories/inventory";
 import { createInventoryMovement } from "@/lib/supabase/repositories/inventory-movements";
 import type { DbInventory, DbInventoryMovement } from "@/lib/supabase/types";
 
 export default function InventoryScreen() {
   const { state, dispatch, supabase, tenantId, locale } = useErp();
   const copy = getErpCopy(locale);
+  const isOwner = state.user?.role === "OWNER";
 
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
   const [adjustItem, setAdjustItem] = useState<DbInventory | null>(null);
   const [newQty, setNewQty] = useState("");
+  const [minQtyInput, setMinQtyInput] = useState("");
+  const [dialogUnit, setDialogUnit] = useState(""); // active input unit for the dialog (may differ from base)
   const [movementType, setMovementType] = useState<"adjustment_in" | "adjustment_out" | "waste">("adjustment_in");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null); // key = "productId|variantId"
   // Display unit overrides: key = "productId|variantId", value = display unit
   const [displayUnits, setDisplayUnits] = useState<Map<string, string>>(new Map());
 
@@ -94,6 +98,11 @@ export default function InventoryScreen() {
     return oldAvg;
   };
 
+  const productsWithVariants = useMemo(
+    () => new Set(state.variants.map((v) => v.product_id)),
+    [state.variants]
+  );
+
   const inventoryRows = useMemo(() => {
     return state.inventory
       .map((inv) => {
@@ -110,6 +119,9 @@ export default function InventoryScreen() {
         };
       })
       .filter((inv) => {
+        // Hide the base (no-variant) inventory row only if the product has variants AND the base row has no stock
+        // (i.e., it was auto-created when the raw material was added, not from an explicit receiving)
+        if (!inv.variant_id && productsWithVariants.has(inv.product_id) && inv.current_qty === 0) return false;
         if (filterCategory && inv.categoryId !== filterCategory) return false;
         if (search) {
           const q = search.toLowerCase();
@@ -118,7 +130,7 @@ export default function InventoryScreen() {
         return true;
       })
       .sort((a, b) => a.productName.localeCompare(b.productName));
-  }, [state.inventory, state.products, state.variants, state.categories, search, filterCategory]);
+  }, [state.inventory, state.products, state.variants, state.categories, search, filterCategory, productsWithVariants]);
 
   const handleAdjust = async () => {
     if (!adjustItem) return;
@@ -128,8 +140,24 @@ export default function InventoryScreen() {
       alert(locale === "id" ? "Stok tidak boleh di bawah 0." : "Stock cannot be below 0.");
       return;
     }
-    // Convert display qty to base (e.g. kg→g, L→mL)
-    const qtyAfterVal = Math.round(qtyAfterDisplay * toBaseConversion(adjustItem.unit));
+    // Convert dialog unit to base (e.g. L→mL, kg→g); dialogUnit tracks the active input unit
+    const qtyAfterVal = Math.round(qtyAfterDisplay * toBaseConversion(dialogUnit));
+    // Validate direction: adjustment_in must increase stock; adjustment_out/waste must decrease stock
+    if (movementType === "adjustment_in" && qtyAfterVal < adjustItem.current_qty) {
+      alert(locale === "id"
+        ? "Stok Berlebih: jumlah baru tidak boleh lebih kecil dari stok saat ini."
+        : "Stock Surplus: new quantity cannot be lower than current stock.");
+      return;
+    }
+    if ((movementType === "adjustment_out" || movementType === "waste") && qtyAfterVal > adjustItem.current_qty) {
+      alert(locale === "id"
+        ? `${movementType === "waste" ? "Kadaluwarsa / Rusak" : "Stok Berkurang"}: jumlah baru tidak boleh lebih besar dari stok saat ini.`
+        : `${movementType === "waste" ? "Expired / Damaged" : "Stock Shortage"}: new quantity cannot be greater than current stock.`);
+      return;
+    }
+    // min_qty is also entered in dialogUnit — convert to base
+    const minQtyDisplay = parseFloat(minQtyInput) || 0;
+    const minQtyVal = Math.round(minQtyDisplay * toBaseConversion(dialogUnit));
     setSaving(true);
     try {
       // computeNewAvgCogs already returns a rounded integer (floor for in, ceil for out/waste)
@@ -140,13 +168,17 @@ export default function InventoryScreen() {
         qtyAfterVal,
         movementType
       );
-      const updated = await adjustInventory(
+      let updated = await adjustInventory(
         supabase,
         adjustItem.product_id,
         adjustItem.variant_id,
         qtyAfterVal,
         newAvgCogs
       );
+      // Save min_qty if it changed
+      if (minQtyVal !== adjustItem.min_qty) {
+        updated = await updateMinQty(supabase, adjustItem.product_id, adjustItem.variant_id, minQtyVal);
+      }
       dispatch({ type: "UPSERT", table: "inventory", payload: updated as unknown as Record<string, unknown> });
 
       // Record movement in inventory_movements
@@ -178,8 +210,38 @@ export default function InventoryScreen() {
     setSaving(false);
   };
 
+  const handleDeleteInventory = async (inv: DbInventory) => {
+    if (!confirm(copy.inventory.confirmDeleteInventory)) return;
+    const key = `${inv.product_id}|${inv.variant_id}`;
+    setDeleting(key);
+    try {
+      await deleteInventoryByProductVariant(supabase, inv.product_id, inv.variant_id || "");
+      dispatch({ type: "DELETE", table: "inventory", compositeKey: { product_id: inv.product_id, variant_id: inv.variant_id || "" }, id: "" });
+    } catch (err) {
+      console.error("Delete inventory failed:", err);
+    }
+    setDeleting(null);
+  };
+
+  const lowStockItems = useMemo(
+    () => inventoryRows.filter((inv) => inv.min_qty > 0 && inv.current_qty < inv.min_qty),
+    [inventoryRows]
+  );
+
   return (
     <div>
+      {lowStockItems.length > 0 && (
+        <div className="erp-low-stock-banner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18" style={{ flexShrink: 0 }}>
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+          <span>{copy.inventory.lowStockCount(lowStockItems.length)}</span>
+          <span style={{ color: "var(--erp-muted)", fontSize: 13 }}>
+            {lowStockItems.map((i) => i.productName).join(", ")}
+          </span>
+        </div>
+      )}
       <div className="erp-page-header">
         <h1 className="erp-page-title">{copy.inventory.title}</h1>
         <div className="erp-card erp-card--stat" style={{ marginLeft: "auto" }}>
@@ -274,9 +336,7 @@ export default function InventoryScreen() {
                         {fmtDisp(dispCurrent)}
                       </span>
                       {isLow && (
-                        <span className="erp-badge erp-badge--danger" style={{ marginLeft: 8 }}>
-                          {copy.inventory.lowStock}
-                        </span>
+                        <span className="erp-low-stock-indicator" title={copy.inventory.lowStock}>↓</span>
                       )}
                     </td>
                     <td>{fmtDisp(dispMin)}</td>
@@ -304,15 +364,27 @@ export default function InventoryScreen() {
                       <button
                         className="erp-btn erp-btn--ghost erp-btn--sm"
                         onClick={() => {
+                          // Start dialog in display unit (mL→L, g→kg) for toggleable units
+                          const initUnit = inv.unit === "mL" ? "L" : inv.unit === "g" ? "kg" : inv.unit;
                           setAdjustItem(inv);
-                          // Initialize with display qty (inv.unit is the display unit marker)
-                          setNewQty(String(convertToDisplayUnit(inv.current_qty, inv.unit)));
+                          setDialogUnit(initUnit);
+                          setNewQty(String(convertToDisplayUnit(inv.current_qty, initUnit)));
+                          setMinQtyInput(String(convertToDisplayUnit(inv.min_qty, initUnit)));
                           setMovementType("adjustment_in");
                           setReason("");
                         }}
                       >
                         {copy.inventory.adjustStock}
                       </button>
+                      {isOwner && inv.current_qty === 0 && (
+                        <button
+                          className="erp-btn erp-btn--danger erp-btn--sm"
+                          disabled={deleting === `${inv.product_id}|${inv.variant_id}`}
+                          onClick={() => handleDeleteInventory(inv)}
+                        >
+                          {copy.inventory.deleteInventory}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -341,9 +413,33 @@ export default function InventoryScreen() {
               </p>
               <div className="erp-input-group">
                 <label className="erp-label">{copy.inventory.currentStock}: {formatQty(adjustItem.current_qty, adjustItem.unit)}</label>
-                <span style={{ fontSize: 12, color: "var(--erp-muted)" }}>
-                  {locale === "id" ? "Qty baru dalam" : "New qty in"}: {adjustItem.unit}
-                </span>
+                {isToggleable(adjustItem.unit) && (() => {
+                  const altUnit = dialogUnit === "L" ? "mL" : dialogUnit === "mL" ? "L" : dialogUnit === "kg" ? "g" : "kg";
+                  return (
+                    <div className="erp-dialog-unit-switch">
+                      <span style={{ fontSize: 12, color: "var(--erp-muted)" }}>
+                        {locale === "id" ? "Input dalam" : "Input in"}:
+                      </span>
+                      <button
+                        type="button"
+                        className={`erp-chip${dialogUnit === (adjustItem.unit === "mL" ? "mL" : "g") ? " erp-chip--active" : ""}`}
+                        style={{ fontSize: 12, padding: "2px 10px" }}
+                        onClick={() => {
+                          const factor = (dialogUnit === "L" || dialogUnit === "kg") ? 1000 : 1 / 1000;
+                          const convert = (v: string) => {
+                            const n = parseFloat(v);
+                            return isNaN(n) ? "" : String(parseFloat((n * factor).toFixed(6)));
+                          };
+                          setNewQty(convert(newQty));
+                          setMinQtyInput(convert(minQtyInput));
+                          setDialogUnit(altUnit);
+                        }}
+                      >
+                        {dialogUnit} ⇄ {altUnit}
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
               <div className="erp-input-group">
                 <label className="erp-label">{copy.inventory.movementType}</label>
@@ -358,8 +454,12 @@ export default function InventoryScreen() {
                 </select>
               </div>
               <div className="erp-input-group">
-                <label className="erp-label">{copy.inventory.newQty}</label>
+                <label className="erp-label">{copy.inventory.newQty} ({dialogUnit})</label>
                 <input className="erp-input" type="number" min="0" value={newQty} onChange={(e) => setNewQty(e.target.value)} />
+              </div>
+              <div className="erp-input-group">
+                <label className="erp-label">{copy.inventory.setMinStock} ({dialogUnit})</label>
+                <input className="erp-input" type="number" min="0" value={minQtyInput} onChange={(e) => setMinQtyInput(e.target.value)} />
               </div>
               <div className="erp-input-group">
                 <label className="erp-label">{copy.inventory.notes}</label>

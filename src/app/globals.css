@@ -1961,6 +1961,137 @@ main {
   font-weight: 600;
 }
 
+/* ── AyaKasir Pricing ── */
+.ayakasir-pricing-section {
+  text-align: center;
+}
+
+.ayakasir-pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  max-width: 1080px;
+  margin: 0 auto;
+  align-items: start;
+}
+
+.ayakasir-pricing-card {
+  background: var(--color-surface, #fff);
+  border: 1px solid #e0e0e0;
+  border-radius: 16px;
+  padding: 32px 24px;
+  text-align: left;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.ayakasir-pricing-card--highlighted {
+  border: 2px solid #1D72E9;
+  box-shadow: 0 4px 24px rgba(29, 114, 233, 0.15);
+  transform: scale(1.03);
+}
+
+.ayakasir-pricing-badge {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1D72E9;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 16px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.ayakasir-pricing-name {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.ayakasir-pricing-tagline {
+  font-size: 14px;
+  color: var(--color-ink-secondary, #555);
+  margin: 0 0 16px;
+  min-height: 40px;
+}
+
+.ayakasir-pricing-price {
+  font-size: 32px;
+  font-weight: 800;
+  color: #1D72E9;
+  margin-bottom: 4px;
+}
+
+.ayakasir-pricing-period {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--color-ink-secondary, #555);
+}
+
+.ayakasir-pricing-promo {
+  display: inline-block;
+  background: #e8f5e9;
+  color: #2e7d32;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.ayakasir-pricing-features {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 24px;
+  flex: 1;
+}
+
+.ayakasir-pricing-features li {
+  font-size: 14px;
+  line-height: 1.8;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ayakasir-pricing-check {
+  color: #37A454;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.ayakasir-pricing-coming-soon {
+  display: inline-block;
+  font-size: 11px;
+  background: #fff3e0;
+  color: #e65100;
+  padding: 1px 8px;
+  border-radius: 8px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.ayakasir-pricing-cta {
+  width: 100%;
+  text-align: center;
+  margin-top: auto;
+}
+
+@media (max-width: 900px) {
+  .ayakasir-pricing-grid {
+    grid-template-columns: 1fr;
+    max-width: 420px;
+  }
+  .ayakasir-pricing-card--highlighted {
+    transform: none;
+    order: -1;
+  }
+}
+
 /* ── Cross-platform sync animation ── */
 @keyframes ayakasir-pulse-dot {
   0%, 100% { opacity: 0.2; transform: scale(0.8); }
