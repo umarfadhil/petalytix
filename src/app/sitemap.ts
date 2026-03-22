@@ -58,7 +58,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   let portfolioEntries: MetadataRoute.Sitemap = [];
 
   try {
-    const items = await getPortfolioItems();
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("sitemap: portfolio fetch timed out")), 15000)
+    );
+    const items = await Promise.race([getPortfolioItems(), timeout]);
     portfolioEntries = items.flatMap((item) =>
       locales.map((locale) => ({
         url: buildUrl(`/${locale}/portfolio/${item.slug}`),

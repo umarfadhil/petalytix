@@ -14,14 +14,20 @@ declare global {
   var _mongoClientPromise: Promise<MongoClient> | undefined;
 }
 
+const mongoOptions = {
+  connectTimeoutMS: 10000,
+  serverSelectionTimeoutMS: 10000,
+  socketTimeoutMS: 15000,
+};
+
 if (process.env.NODE_ENV === "development") {
   if (!global._mongoClientPromise) {
-    client = new MongoClient(uri);
+    client = new MongoClient(uri, mongoOptions);
     global._mongoClientPromise = client.connect();
   }
   clientPromise = global._mongoClientPromise;
 } else {
-  client = new MongoClient(uri);
+  client = new MongoClient(uri, mongoOptions);
   clientPromise = client.connect();
 }
 
