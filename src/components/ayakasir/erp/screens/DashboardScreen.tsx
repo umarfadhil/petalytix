@@ -28,7 +28,10 @@ export default function DashboardScreen() {
   const [settledReceipt, setSettledReceipt] = useState<{ tx: DbTransaction; paymentMethod: "CASH" | "QRIS" | "TRANSFER" } | null>(null);
 
   // Active cashier session (null = no open session)
-  const activeSession = state.cashierSessions.find((s) => s.closed_at === null) ?? null;
+  // A session opened before today midnight is considered stale and excluded from shift filtering
+  const todayMidnight = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }, []);
+  const rawActiveSession = state.cashierSessions.find((s) => s.closed_at === null) ?? null;
+  const activeSession = rawActiveSession && rawActiveSession.opened_at >= todayMidnight ? rawActiveSession : null;
 
   const range = useMemo<[number, number]>(() => {
     if (period === "today") return todayRange();
@@ -90,14 +93,21 @@ export default function DashboardScreen() {
     [filteredTransactions]
   );
 
-  // Saldo Kas scoped to current cashier session: only ledger entries from session start onward
+  // Saldo Kas scoped to current (or last closed) cashier session
+  const lastClosedSession = useMemo(() => {
+    if (activeSession) return null;
+    const closed = state.cashierSessions.filter((s) => s.closed_at !== null);
+    return closed.length > 0 ? closed.reduce((a, b) => ((a.closed_at ?? 0) > (b.closed_at ?? 0) ? a : b)) : null;
+  }, [state.cashierSessions, activeSession]);
+
   const cashBalance = useMemo(() => {
     const CASH_TYPES = ["INITIAL_BALANCE", "SALE", "WITHDRAWAL", "ADJUSTMENT"];
-    const entries = activeSession
-      ? state.generalLedger.filter((e) => CASH_TYPES.includes(e.type) && e.date >= activeSession.opened_at)
+    const scopeSession = activeSession ?? lastClosedSession;
+    const entries = scopeSession
+      ? state.generalLedger.filter((e) => CASH_TYPES.includes(e.type) && e.date >= scopeSession.opened_at)
       : state.generalLedger.filter((e) => CASH_TYPES.includes(e.type));
     return entries.reduce((sum, e) => sum + e.amount, 0);
-  }, [state.generalLedger, activeSession]);
+  }, [state.generalLedger, activeSession, lastClosedSession]);
 
   // Cash flow detail modal: filtered by period range
   const CASH_FLOW_TYPES = ["INITIAL_BALANCE", "SALE", "WITHDRAWAL", "ADJUSTMENT"];

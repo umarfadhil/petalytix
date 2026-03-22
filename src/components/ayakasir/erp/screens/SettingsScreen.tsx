@@ -7,7 +7,8 @@ import { getErpCopy } from "../i18n";
 import { usePlanLimits } from "../usePlanLimits";
 import { APP_VERSION } from "@/lib/ayakasir-plan";
 import { formatRupiah, formatDateTime } from "../utils";
-import { createLedgerEntry, deleteInitialBalanceEntries, calculateCashBalance } from "@/lib/supabase/repositories/general-ledger";
+import { createBrowserClient } from "@/lib/supabase/client";
+import { createLedgerEntry } from "@/lib/supabase/repositories/general-ledger";
 import { createCashWithdrawal } from "@/lib/supabase/repositories/cash-withdrawals";
 import { closeCashierSession } from "@/lib/supabase/repositories/cashier-sessions";
 import {
@@ -75,7 +76,13 @@ export default function SettingsScreen() {
       if (!txItemsByTx.has(item.transaction_id)) txItemsByTx.set(item.transaction_id, []);
       txItemsByTx.get(item.transaction_id)!.push(item);
     }
-    return { txMap, customerMap, customerCatMap, productMap, categoryMap, txItemsByTx, userMap };
+    const variantMap = new Map(state.variants.map((v) => [v.id, v]));
+    const grItemsByReceiving = new Map<string, typeof state.goodsReceivingItems>();
+    for (const item of state.goodsReceivingItems) {
+      if (!grItemsByReceiving.has(item.receiving_id)) grItemsByReceiving.set(item.receiving_id, []);
+      grItemsByReceiving.get(item.receiving_id)!.push(item);
+    }
+    return { txMap, customerMap, customerCatMap, productMap, categoryMap, txItemsByTx, userMap, variantMap, grItemsByReceiving };
   }, [
     state.transactions,
     state.customers,
@@ -84,6 +91,8 @@ export default function SettingsScreen() {
     state.categories,
     state.transactionItems,
     state.tenantUsers,
+    state.variants,
+    state.goodsReceivingItems,
   ]);
 
   // ── Close Cashier ────────────────────────────────────────────
@@ -97,6 +106,7 @@ export default function SettingsScreen() {
     closeTime: number; cashier: string; openingBalance: number; closingBalance: number;
     totalTransactions: number; totalSales: number; byMethod: Record<string, number>;
     withdrawalAmount: number; cashSales: number; debtSettlements: number;
+    cashEmptied: boolean;
   } | null>(null);
 
   // Derive active session
@@ -120,8 +130,12 @@ export default function SettingsScreen() {
     }
     const totalSales = sessionTx.reduce((sum, tx) => sum + tx.total, 0);
 
-    // Closing balance = all-time cash balance, same formula as Dashboard
-    const closingBalance = calculateCashBalance(state.generalLedger);
+    // Closing balance = session-scoped cash balance, same as Dashboard/POS
+    const CASH_TYPES = ["INITIAL_BALANCE", "SALE", "WITHDRAWAL", "ADJUSTMENT"];
+    const cashEntries = activeSession
+      ? state.generalLedger.filter((e) => CASH_TYPES.includes(e.type) && e.date >= activeSession.opened_at)
+      : state.generalLedger.filter((e) => CASH_TYPES.includes(e.type));
+    const closingBalance = cashEntries.reduce((sum, e) => sum + e.amount, 0);
     // Opening balance from session row (if available) or ledger
     const openingBalance = activeSession ? activeSession.initial_balance : currentInitialBalance;
 
@@ -201,36 +215,15 @@ export default function SettingsScreen() {
       });
       dispatch({ type: "UPSERT", table: "cashWithdrawals", payload: withdrawal as unknown as Record<string, unknown> });
 
-      // 2. Reset INITIAL_BALANCE to 0 — next shift starts with no opening cash
-      const existingInitialIds = state.generalLedger
-        .filter((e) => e.type === "INITIAL_BALANCE")
-        .map((e) => e.id);
-      await deleteInitialBalanceEntries(supabase, tenantId);
-      for (const id of existingInitialIds) {
-        dispatch({ type: "DELETE", table: "generalLedger", id });
-      }
-      const zeroBalance: Omit<DbGeneralLedger, "sync_status"> = {
-        id: crypto.randomUUID(),
-        tenant_id: tenantId,
-        type: "INITIAL_BALANCE",
-        amount: 0,
-        reference_id: null,
-        description: "Initial balance",
-        date: now,
-        user_id: userId,
-        updated_at: now,
-      };
-      const savedZero = await createLedgerEntry(supabase, zeroBalance);
-      dispatch({ type: "UPSERT", table: "generalLedger", payload: savedZero as unknown as Record<string, unknown> });
-
-      // 3. Record WITHDRAWAL in general_ledger for sales-only portion
-      const salesPortion = currentBalance - (activeSession?.initial_balance ?? currentInitialBalance);
-      if (salesPortion > 0) {
+      // 2. Record WITHDRAWAL in general_ledger for the full closing balance.
+      //    Since the session's INITIAL_BALANCE is preserved (not deleted), the WITHDRAWAL
+      //    must offset the entire balance to bring Saldo Kas to zero.
+      if (currentBalance > 0) {
         const entry: Omit<DbGeneralLedger, "sync_status"> = {
           id: crypto.randomUUID(),
           tenant_id: tenantId,
           type: "WITHDRAWAL",
-          amount: -salesPortion,
+          amount: -currentBalance,
           reference_id: null,
           description: reason,
           date: now,
@@ -240,12 +233,33 @@ export default function SettingsScreen() {
         const saved = await createLedgerEntry(supabase, entry);
         dispatch({ type: "UPSERT", table: "generalLedger", payload: saved as unknown as Record<string, unknown> });
       }
+    } else {
+      // User chose to keep cash — still record a zero-amount WITHDRAWAL in general_ledger
+      // so the ledger always has an auditable close-cashier WITHDRAWAL entry per session.
+      const reason = locale === "id"
+        ? `Simpan kas — tutup kasir (${new Date(now).toLocaleDateString("id-ID")})`
+        : `Cash kept — cashier close (${new Date(now).toLocaleDateString("en-US")})`;
+      const entry: Omit<DbGeneralLedger, "sync_status"> = {
+        id: crypto.randomUUID(),
+        tenant_id: tenantId,
+        type: "WITHDRAWAL",
+        amount: 0,
+        reference_id: null,
+        description: reason,
+        date: now,
+        user_id: userId,
+        updated_at: now,
+      };
+      const saved = await createLedgerEntry(supabase, entry);
+      dispatch({ type: "UPSERT", table: "generalLedger", payload: saved as unknown as Record<string, unknown> });
     }
 
-    // Freeze summary now — add close-time withdrawal on top of session withdrawals
+    // Freeze summary. closingBalance and withdrawalAmount reflect only in-session activities
+    // (Tarik Kas entries). The close-time emptying WITHDRAWAL is NOT added to withdrawalAmount —
+    // it is communicated via the cashEmptied note instead.
     setFrozenSummary({
       ...summarySnapshot,
-      withdrawalAmount: summarySnapshot.withdrawalAmount + closeTimeWithdrawal,
+      cashEmptied: resetToZero,
     });
 
     // 4. Close the cashier session record
@@ -253,7 +267,7 @@ export default function SettingsScreen() {
       const closed = await closeCashierSession(supabase, activeSession.id, {
         closed_at: now,
         closing_balance: currentBalance,
-        withdrawal_amount: closeTimeWithdrawal > 0 ? closeTimeWithdrawal : null,
+        withdrawal_amount: closeTimeWithdrawal,
         match_status: closeMatch ? "MATCH" : "MISMATCH",
         mismatch_note: closeMatch === false ? closeMismatchNote : null,
         updated_at: now,
@@ -325,6 +339,7 @@ export default function SettingsScreen() {
     <tr><td>${copy.settings.debtSettlement}</td><td>${formatRupiah((s as { debtSettlements?: number }).debtSettlements ?? 0)}</td></tr>
     <tr><td>${copy.dashboard.cashWithdrawal}</td><td>−${formatRupiah((s as { withdrawalAmount?: number }).withdrawalAmount ?? 0)}</td></tr>
     <tr class="total"><td>${copy.settings.closingBalance}</td><td>${formatRupiah(s.closingBalance)}</td></tr>
+    ${(s as { cashEmptied?: boolean }).cashEmptied ? `<tr><td colspan="2" style="color:#b45309;font-style:italic;font-size:12px">${copy.settings.cashEmptiedNote}</td></tr>` : ""}
   </table>
   <div class="match">
     <div class="match-label">${copy.settings.matchQuestion}</div>
@@ -357,12 +372,47 @@ export default function SettingsScreen() {
   const [showQris, setShowQris] = useState(false);
   const [qrisMerchantName, setQrisMerchantName] = useState("");
   const [qrisImageUrl, setQrisImageUrl] = useState("");
+  const [qrisUploading, setQrisUploading] = useState(false);
+  const [qrisUploadError, setQrisUploadError] = useState<string | null>(null);
 
   const openQrisDialog = useCallback(() => {
     setQrisMerchantName(state.restaurant?.qris_merchant_name || "");
     setQrisImageUrl(state.restaurant?.qris_image_url || "");
+    setQrisUploadError(null);
     setShowQris(true);
   }, [state.restaurant]);
+
+  const handleQrisFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 1024 * 1024) {
+      setQrisUploadError(copy.settings.qrisImageTooLarge);
+      e.target.value = "";
+      return;
+    }
+    setQrisUploadError(null);
+    setQrisUploading(true);
+    try {
+      const supabase = createBrowserClient();
+      const ext = file.name.split(".").pop() ?? "png";
+      const path = `${state.restaurant?.id}/qris.${ext}`;
+      const { error: uploadError } = await supabase.storage
+        .from("qris-images")
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (uploadError) {
+        setQrisUploadError(copy.settings.qrisUploadError);
+        return;
+      }
+      const { data } = supabase.storage.from("qris-images").getPublicUrl(path);
+      // Bust cache by appending timestamp
+      setQrisImageUrl(`${data.publicUrl}?t=${Date.now()}`);
+    } catch {
+      setQrisUploadError(copy.settings.qrisUploadError);
+    } finally {
+      setQrisUploading(false);
+      e.target.value = "";
+    }
+  }, [copy.settings, state.restaurant?.id]);
 
   // ── User management ──────────────────────────────────────────
   const [showUserDialog, setShowUserDialog] = useState(false);
@@ -576,36 +626,70 @@ export default function SettingsScreen() {
     const fromMs = new Date(csvFrom + "T00:00:00").getTime();
     const toMs = new Date(csvTo + "T23:59:59.999").getTime();
 
-    const { txMap, customerMap, customerCatMap, productMap, categoryMap, txItemsByTx, userMap } = exportLookups;
+    const { txMap, customerMap, customerCatMap, productMap, categoryMap, txItemsByTx, userMap, variantMap, grItemsByReceiving } = exportLookups;
 
     const filtered = state.generalLedger.filter((e) => e.date >= fromMs && e.date <= toMs);
 
     const escape = (s: string | null | undefined) => `"${(s || "").replace(/"/g, '""')}"`;
+    const fmtDate = (ms: number) => { const d = new Date(ms + 7 * 3600000); const p = (n: number) => String(n).padStart(2, "0"); return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`; };
 
     const headers = "id,reference_id,tenant_name,date,type,description,customer_category,customer_name,product_category,product_name,variant_name,qty,unit_price,discount_type,discount_value,discount_per_unit,amount,payment_method,transaction_notes,person_in_charge";
 
-    const rows = filtered.map((e) => {
+    const rows: string[] = [];
+    for (const e of filtered) {
       const tx = e.reference_id ? txMap.get(e.reference_id) : undefined;
       const customer = tx?.customer_id ? customerMap.get(tx.customer_id) : undefined;
       const customerCat = customer?.category_id ? customerCatMap.get(customer.category_id) : undefined;
-      const txItems = e.reference_id ? (txItemsByTx.get(e.reference_id) || []) : [];
-
-      // For SALE/COGS types, try to enrich with first matching transaction item
-      const isItemType = e.type === "SALE" || e.type === "SALE_QRIS" || e.type === "SALE_TRANSFER" || e.type === "SALE_DEBT" || e.type === "COGS";
-      const item = isItemType && txItems.length > 0 ? txItems[0] : undefined;
-      const product = item ? productMap.get(item.product_id) : undefined;
-      const category = product?.category_id ? categoryMap.get(product.category_id) : undefined;
       const personInCharge = userMap.get(tx?.user_id || e.user_id)?.name || state.user?.name || "";
-
-      return [
+      const baseFields = [
         e.id,
         e.reference_id || "",
         escape(state.restaurant?.name),
-        new Date(e.date).toISOString(),
+        fmtDate(e.date),
         e.type,
         escape(e.description),
         escape(customerCat?.name),
         escape(tx?.notes && !tx.customer_id ? tx.notes : customer?.name),
+      ];
+      const tailFields = [
+        tx?.payment_method || "",
+        escape(tx?.notes),
+        escape(personInCharge),
+      ];
+
+      if (e.type === "COGS" && e.reference_id) {
+        const grItems = grItemsByReceiving.get(e.reference_id) || [];
+        if (grItems.length > 0) {
+          for (const grItem of grItems) {
+            const product = productMap.get(grItem.product_id);
+            const variant = grItem.variant_id ? variantMap.get(grItem.variant_id) : undefined;
+            const category = product?.category_id ? categoryMap.get(product.category_id) : undefined;
+            rows.push([
+              ...baseFields,
+              escape(category?.name),
+              escape(product?.name),
+              escape(variant?.name),
+              grItem.qty,
+              grItem.cost_per_unit,
+              "",  // discount_type
+              "",  // discount_value
+              "",  // discount_per_unit
+              -(grItem.qty * grItem.cost_per_unit),
+              ...tailFields,
+            ].join(","));
+          }
+          continue;
+        }
+      }
+
+      // SALE types and all other entries
+      const txItems = e.reference_id ? (txItemsByTx.get(e.reference_id) || []) : [];
+      const isSaleType = e.type === "SALE" || e.type === "SALE_QRIS" || e.type === "SALE_TRANSFER" || e.type === "SALE_DEBT";
+      const item = isSaleType && txItems.length > 0 ? txItems[0] : undefined;
+      const product = item ? productMap.get(item.product_id) : undefined;
+      const category = product?.category_id ? categoryMap.get(product.category_id) : undefined;
+      rows.push([
+        ...baseFields,
         escape(category?.name),
         escape(item?.product_name || product?.name),
         escape(item?.variant_name),
@@ -615,11 +699,9 @@ export default function SettingsScreen() {
         item?.discount_value ?? "",
         item?.discount_per_unit ?? "",
         e.amount,
-        tx?.payment_method || "",
-        escape(tx?.notes),
-        escape(personInCharge),
-      ].join(",");
-    });
+        ...tailFields,
+      ].join(","));
+    }
 
     const csv = [headers, ...rows].join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
@@ -925,7 +1007,12 @@ export default function SettingsScreen() {
             ? "Tutup sesi kasir hari ini dan cetak laporan akhir hari."
             : "Close today's cashier session and generate an end-of-day report."}
         </p>
-        <button className="erp-btn erp-btn--danger erp-btn--sm" onClick={handleOpenCloseCashier}>
+        <button
+          className="erp-btn erp-btn--danger erp-btn--sm"
+          onClick={handleOpenCloseCashier}
+          disabled={!activeSession}
+          title={!activeSession ? (locale === "id" ? "Tidak ada sesi kasir aktif" : "No active cashier session") : undefined}
+        >
           {copy.settings.closeCashier}
         </button>
       </div>
@@ -1049,17 +1136,26 @@ export default function SettingsScreen() {
                 />
               </div>
               <div className="erp-input-group">
-                <label className="erp-label">{copy.settings.qrisImageUrl}</label>
-                <input
-                  className="erp-input"
-                  type="url"
-                  value={qrisImageUrl}
-                  onChange={(e) => setQrisImageUrl(e.target.value)}
-                  placeholder="https://..."
-                />
+                <label className="erp-label">{copy.settings.uploadQris}</label>
+                <label
+                  className="erp-btn erp-btn--secondary erp-btn--sm"
+                  style={{ display: "inline-block", cursor: qrisUploading ? "not-allowed" : "pointer", opacity: qrisUploading ? 0.6 : 1 }}
+                >
+                  {qrisUploading ? copy.settings.qrisUploading : copy.settings.uploadQris}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    style={{ display: "none" }}
+                    disabled={qrisUploading}
+                    onChange={handleQrisFileChange}
+                  />
+                </label>
                 <p style={{ fontSize: 12, color: "var(--erp-muted)", marginTop: 4 }}>
-                  {copy.settings.qrisImageUrlHint}
+                  {copy.settings.qrisImageHint}
                 </p>
+                {qrisUploadError && (
+                  <p style={{ fontSize: 12, color: "var(--erp-danger)", marginTop: 4 }}>{qrisUploadError}</p>
+                )}
               </div>
               {qrisImageUrl && (
                 <div style={{ marginTop: 8, textAlign: "center" }}>
@@ -1077,7 +1173,7 @@ export default function SettingsScreen() {
               <button className="erp-btn erp-btn--secondary" onClick={() => setShowQris(false)}>
                 {copy.common.cancel}
               </button>
-              <button className="erp-btn erp-btn--primary" onClick={handleSaveQris} disabled={saving}>
+              <button className="erp-btn erp-btn--primary" onClick={handleSaveQris} disabled={saving || qrisUploading}>
                 {saving ? copy.common.loading : copy.common.save}
               </button>
             </div>
@@ -1430,6 +1526,9 @@ export default function SettingsScreen() {
                     <tr><td>{copy.settings.debtSettlement}</td><td>{formatRupiah(s.debtSettlements)}</td></tr>
                     <tr><td>{copy.dashboard.cashWithdrawal}</td><td>−{formatRupiah(s.withdrawalAmount)}</td></tr>
                     <tr className="erp-close-report-total"><td>{copy.settings.closingBalance}</td><td>{formatRupiah(s.closingBalance)}</td></tr>
+                    {(s as { cashEmptied?: boolean }).cashEmptied && (
+                      <tr><td colSpan={2} style={{ color: "var(--erp-warning)", fontStyle: "italic", fontSize: 13 }}>{copy.settings.cashEmptiedNote}</td></tr>
+                    )}
                   </>); })()}
                 </tbody>
               </table>

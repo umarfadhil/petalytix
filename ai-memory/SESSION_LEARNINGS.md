@@ -1,5 +1,135 @@
 ﻿# Session Learnings
 
+## 2026-03-22 — Settings: QRIS Image Upload via Supabase Storage
+
+- **Change:** Pengaturan QRIS now has a file upload button (max 1 MB, JPG/PNG/WebP) instead of a URL text input.
+- Upload uses `createBrowserClient` → `supabase.storage.from("qris-images").upload(...)` with `upsert: true`.
+- Path: `{tenantId}/qris.{ext}` in the `qris-images` bucket. Public URL with `?t={timestamp}` cache buster stored in `tenants.qris_image_url`.
+- Client-side 1 MB guard before upload; error shown inline in dialog.
+- Save button disabled while upload is in progress.
+- **Requires:** A public `qris-images` Supabase Storage bucket with RLS policy allowing authenticated users to upload.
+- **Files:** `SettingsScreen.tsx` (state + handler + dialog UI), `i18n.ts` (4 new keys: `qrisImageTooLarge`, `qrisUploadError`, `qrisUploading`, `qrisImageHint`).
+
+## 2026-03-22 — POS: Sale Ledger Entry Descriptions Localized by Payment Method
+
+- **Change:** `general_ledger` description for sale entries is now localized and payment-method-specific instead of generic `"${paymentMethod} sale"`.
+- CASH → ID: "Penjualan tunai" / EN: "Cash sale"
+- QRIS → ID: "Penjualan QRIS" / EN: "QRIS sale"
+- TRANSFER → ID: "Penjualan transfer" / EN: "Transfer sale"
+- UTANG → ID: "Penjualan (utang)" / EN: "Sale (debt)"
+- **Location:** `PosScreen.tsx` checkout flow, `description` field on `DbGeneralLedger` insert.
+
+## 2026-03-22 — Settings: Removed Zero-Balance INITIAL_BALANCE Placeholder on Session Close
+
+- **Change:** When closing a cashier session with "empty cash", no zero-balance `INITIAL_BALANCE` (`reference_id: null`) entry is created anymore.
+- **Why removed:** The placeholder's only purpose was to be deleted on the next session open (`deleteUnlinkedInitialBalance`). With session-scoped Saldo Kas, the WITHDRAWAL entry already brings the balance to zero — the placeholder added DB write noise with no functional benefit.
+- **Cascading cleanup:** Removed `deleteUnlinkedInitialBalance` call + local dispatch loop from `PosScreen.tsx` open-session flow; removed `deleteUnlinkedInitialBalance` export from `general-ledger.ts` repository.
+- **Rule:** Do not create zero-amount INITIAL_BALANCE entries as placeholders. Saldo Kas is always session-scoped; the WITHDRAWAL entry is sufficient to represent an emptied session.
+
+## 2026-03-22 — POS: Open Cashier INITIAL_BALANCE Description Includes Date
+
+- **Change:** INITIAL_BALANCE `general_ledger` description now appends the session open date: "Saldo awal — buka kasir (DD/MM/YYYY)" / "Opening balance — open cashier (DD/MM/YYYY)".
+- **Location:** `PosScreen.tsx` — inline IIFE formats `now` (ms timestamp) to `DD/MM/YYYY` using local time.
+- **Pattern:** Date formatted inline with `new Date(now)` → `padStart` dd/mm/yyyy — no extra import needed.
+
+## 2026-03-22 — Purchasing: Raw Materials Unit Shows "—" for Mobile-Synced Items
+
+- **Bug:** Raw Materials tab showed "—" in the Unit column for raw materials created on the mobile app.
+- **Root cause:** `getRawInventoryUnit` filtered `inventory` with `i.variant_id === ""`. The mobile app stores `variant_id` as `NULL` (not `""`) for products with no variants, so the lookup never matched.
+- **Fix:** Changed the filter to `(!i.variant_id || i.variant_id === "")` — matching both `null` and `""`. Also added `g→kg` / `mL→L` display conversion to be consistent with other unit displays.
+- **Rule:** Any inventory lookup for a "no-variant" row must use `(!i.variant_id || i.variant_id === "")` — the mobile app uses `NULL`, the web uses `""`, both must be handled.
+
+## 2026-03-22 — Dashboard/POS: Saldo Kas Scoped to Last Closed Session
+
+- **Bug:** When no active cashier session exists (e.g., after closing Session B), `cashBalance` and `prevCashBalance` summed ALL general_ledger entries of CASH_TYPES across all sessions. INITIAL_BALANCE entries from each session stacked on top of each other, double-counting carried-over cash. Example: Session A (100k initial + 50k sale + 0 withdrawal) + Session B (150k initial + 50k sale − 200k withdrawal) = all-time sum 150k instead of 0.
+- **Root cause:** The fallback when `activeSession === null` was `state.generalLedger.filter(e => CASH_TYPES.includes(e.type))` — no session scoping at all.
+- **Fix:** Introduced `lastClosedSession` (most recently closed session by `closed_at`). When no active session exists, `cashBalance` and `prevCashBalance` scope to `date >= lastClosedSession.opened_at` instead of all-time. Applied to both DashboardScreen and PosScreen.
+- **Rule:** Saldo Kas must always be session-scoped — either to the active session or the last closed session. All-time sum is only used as a final fallback when no sessions exist at all.
+
+## 2026-03-22 — Settings: Close Cashier Keep-Cash WITHDRAWAL
+
+- **Bug:** When closing a cashier session with "keep cash" (not emptying), no WITHDRAWAL ledger entry was created. The `if (resetToZero && currentBalance !== 0)` guard skipped the entire ledger block, and `withdrawal_amount` on `cashier_sessions` was stored as `null`. This left a gap in the ledger audit trail — no record of the close-cashier event existed for keep-cash sessions.
+- **Fix:** Added an `else` branch that creates a WITHDRAWAL ledger entry with `amount: 0` and description "Simpan kas — tutup kasir" / "Cash kept — cashier close". `withdrawal_amount` on the session record is now always a number (`0` for keep-cash, positive for empty-cash) instead of conditionally `null`.
+- **Rule:** Every close-cashier action must produce a WITHDRAWAL general_ledger entry, even if the amount is zero. This ensures consistent audit trail and CSV export data.
+
+## 2026-03-22 — Dashboard/POS: Stale Session Guard
+
+- **Root cause:** `cashier_sessions` rows are only created by the web ERP (mobile app has no cashier session table). If a session was opened in a prior web session and never closed, `cashierSessions.find(s => s.closed_at === null)` returns that old session. The Dashboard shift filter `t.date >= opened_at` then includes all historical transactions since that stale open time — inflating the shift transaction count.
+- **Fix — DashboardScreen:** compute `todayMidnight` via `useMemo`; `activeSession` = unclosed session only if `opened_at >= todayMidnight`, otherwise null. Stale sessions don't drive the shift chip.
+- **Fix — PosScreen:** same `todayMidnight` check → `currentSession` is null for stale sessions, so the lock overlay shows. `staleSession` holds the stale row. On new session open, `closeCashierSession` is called for `staleSession` (if any) before writing the new row.
+- **SettingsScreen:** intentionally NOT changed — users can still manually close a stale session via Close Cashier in Settings.
+- **Rule:** a cashier session opened before today midnight (`opened_at < todayMidnight`) is "stale" and must be treated as inactive by Dashboard and POS.
+
+## 2026-03-22 — POS: Open Cashier Dialog — Remaining Cash Guard
+
+- When no cashier session is active, `prevCashBalance` is derived from all-time general ledger (INITIAL_BALANCE + SALE + WITHDRAWAL + ADJUSTMENT entries).
+- If `prevCashBalance > 0` (cash left from previous session), the Open Cashier dialog shows a warning banner with the amount.
+- Validation in `handleOpenCashierSession`: entered `amount < prevCashBalance` → error shown, submit blocked.
+- i18n keys added: `pos.prevCashBalanceInfo`, `pos.initialBalanceTooLow` (both EN/ID); use `{amount}` placeholder replaced at runtime with `formatRupiah(prevCashBalance)`.
+- CSS: `erp-alert--warning` added to `erp.css` (uses `--erp-warning-light` bg, `--erp-warning` text).
+
+## 2026-03-22 — POS/Settings: INITIAL_BALANCE Scoped to Session
+
+- Bug (v1): open cashier and close cashier both called `deleteInitialBalanceEntries` (deletes ALL INITIAL_BALANCE rows for tenant) then wrote a fresh one — so opening a second session always erased the first session's history.
+- Fix (v1): `reference_id` on INITIAL_BALANCE now stores the cashier session ID.
+- Bug (v2): close cashier (`resetToZero`) still deleted the current session's INITIAL_BALANCE entry (`reference_id = activeSession.id`) and replaced it with a zero-balance placeholder — this changed the `date` from open time to close time and destroyed the historical record.
+- Fix (v2): close cashier no longer deletes the session-linked INITIAL_BALANCE. It only creates a zero-balance unlinked placeholder (`reference_id: null`, `amount: 0`). The session's original INITIAL_BALANCE is preserved with its original `date` and `reference_id`.
+- **Open cashier (PosScreen):** generate `sessionId` upfront → delete unlinked placeholders (`reference_id IS NULL`) via `deleteUnlinkedInitialBalance` → write INITIAL_BALANCE with `reference_id = sessionId`.
+- **Close cashier (SettingsScreen, resetToZero):** keep session's INITIAL_BALANCE intact → write zero INITIAL_BALANCE with `reference_id = null` (placeholder for next open) → write WITHDRAWAL for full closing balance.
+- Bug (v4): WITHDRAWAL ledger entry on cash reset recorded only the sales portion (`closingBalance - initialBalance`), not the full closing balance. Since the session's INITIAL_BALANCE is now preserved, the WITHDRAWAL must offset the entire Saldo Kas (e.g., 75k initial + 25k sale = 100k WITHDRAWAL, not just 25k).
+- Fix (v4): WITHDRAWAL `amount` changed from `-salesPortion` to `-currentBalance` (full closing balance).
+- Cash balance is session-scoped (`date >= currentSession.opened_at`), so historical INITIAL_BALANCE entries from prior sessions don't affect the current session's balance.
+- Bug (v3): `closeCashierSummary.closingBalance` used `calculateCashBalance(state.generalLedger)` which sums ALL ledger entries (no session scoping). With historical INITIAL_BALANCE entries now preserved, this double-counted prior sessions' balances (e.g., 75k + 75k + 25k sale = 175k instead of 100k).
+- Fix (v3): closing balance now session-scoped inline — filters `CASH_TYPES` entries to `date >= activeSession.opened_at`, matching Dashboard/POS behavior. `calculateCashBalance` removed from SettingsScreen import.
+- `deleteLedgerById` and `calculateCashBalance` removed from SettingsScreen imports (no longer used there).
+
+## 2026-03-22 — Settings: CSV COGS Row Expansion
+
+- COGS ledger entries have `reference_id` → goods receiving ID (not a transaction ID).
+- `txItemsByTx` only covers transaction items; COGS entries never matched via that map.
+- Fix: added `grItemsByReceiving` (Map<receiving_id, DbGoodsReceivingItem[]>) and `variantMap` to `exportLookups`.
+- For COGS entries, the export loop expands into one row per `DbGoodsReceivingItem`; product/variant names resolved via `productMap`/`variantMap`; per-item amount = `-(qty * cost_per_unit)`.
+- `DbGoodsReceivingItem` has no `product_name`/`variant_name` — must look up from `productMap`/`variantMap`.
+- Refactored the `filtered.map()` into a `for...of` loop with `continue` so COGS expansion can emit multiple rows cleanly.
+
+## 2026-03-22 — Settings: CSV Export Date Format GMT+7
+
+- `date` column in CSV export was `toISOString()` (UTC); changed to `DD/MM/YYYY HH:MM:SS` in GMT+7.
+- Approach: offset the BIGINT timestamp by `+7 * 3600000` ms, then format using UTC getters — avoids `Intl`/timezone API complexity.
+- `e.date` is the record creation timestamp (BIGINT ms); `e.updated_at` is the mutation timestamp. CSV should always use `e.date`.
+
+## 2026-03-22 — Settings: Close Cashier Saldo Akhir Shows Real Balance + Emptied Note
+
+- Saldo Akhir = Saldo Awal + Penjualan Tunai + Pelunasan Utang − Tarik Tunai (real computed balance).
+- When "empty cash" chosen: `cashEmptied: true` in `frozenSummary`; note row "Kas dikosongkan saat tutup kasir / Cash emptied at session close" appended below Saldo Akhir.
+- `closingBalance` and `withdrawalAmount` both reflect only in-session activities (actual Tarik Kas by user). The close-time emptying WITHDRAWAL is NOT added to `withdrawalAmount` in the report — it is a session-close bookkeeping entry, communicated solely via the `cashEmptied` note.
+- `closeTimeWithdrawal` is still written to `cashier_sessions.withdrawal_amount` (DB audit) but excluded from report display.
+- i18n key added: `settings.cashEmptiedNote` (EN/ID).
+
+## 2026-03-22 — Settings: Tutup Kasir Button Disabled When No Active Session
+
+- Added `disabled={!activeSession}` to the "Tutup Kasir / Close Cashier" button in `SettingsScreen.tsx`.
+- Added a `title` tooltip: `"Tidak ada sesi kasir aktif"` (ID) / `"No active cashier session"` (EN) when disabled.
+- `activeSession` is already derived at the top of the component: `state.cashierSessions.find((s) => s.closed_at === null) ?? null`.
+- No new i18n strings needed — tooltip is hardcoded inline (consistent with similar inline hints elsewhere).
+
+## 2026-03-22 — Landing Page: Google Play Store Badge
+
+- Replaced `<a className="button primary ayakasir-btn-primary">` CTA in `Hero.tsx` with a `next/image` `<Image>` badge.
+- Badge image copied to `public/images/Google_Play_Store_Badge.png`.
+- New CSS classes: `.ayakasir-play-badge-link` (inline-flex wrapper) + `.ayakasir-play-badge` (height 52px, hover lift).
+- The `alt` text reuses `copy.hero.ctaPlayStore` for i18n accessibility.
+- `.ayakasir-btn-primary` CSS retained (may be used elsewhere).
+
+## 2026-03-22 — Purchasing: Variant Preset Edit — "Applied To" Management
+
+- Edit dialog for variant preset groups now includes an "Applied To" section.
+- Users can remove a raw material from the preset (deletes its variant+inventory rows matching group value names).
+- Users can add a new raw material to the preset (creates variant+inventory rows for each group value).
+- Apply/remove logic runs inside `handleSaveGroup` after syncing group name + values.
+- `DbInventory` has no `id` field — composite key `{ product_id, variant_id }`. Delete dispatch uses `compositeKey`, not `id`. Pattern: `dispatch({ type: "DELETE", table: "inventory", id: "", compositeKey: { product_id, variant_id } })`.
+- `deleteInventoryByProductVariant(supabase, productId, variantId)` is the correct repo function (not `deleteInventory`).
+
 ## 2026-03-21 — Build Fix: Type Errors in DashboardScreen + SettingsScreen
 
 - **DashboardScreen.tsx:529** — `copy.settings.openCashier` does not exist; `openCashier` lives in `copy.pos`. Fixed to `copy.pos.openCashier`.

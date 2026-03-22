@@ -10,8 +10,7 @@ import { calculateCashBalance, createLedgerEntry } from "@/lib/supabase/reposito
 import { createCashWithdrawal } from "@/lib/supabase/repositories/cash-withdrawals";
 import { createCustomer } from "@/lib/supabase/repositories/customers";
 import { adjustInventory } from "@/lib/supabase/repositories/inventory";
-import { openCashierSession } from "@/lib/supabase/repositories/cashier-sessions";
-import { deleteInitialBalanceEntries } from "@/lib/supabase/repositories/general-ledger";
+import { openCashierSession, closeCashierSession } from "@/lib/supabase/repositories/cashier-sessions";
 import { verifyErpPinAction } from "@/app/ayakasir/actions/auth";
 import type { DbTransaction, DbTransactionItem, DbGeneralLedger, DbCashWithdrawal, DbCustomer } from "@/lib/supabase/types";
 
@@ -95,7 +94,11 @@ export default function PosScreen() {
   const customerSearchRef = useRef<HTMLInputElement>(null);
 
   // Derive current active cashier session (null = locked)
-  const currentSession = state.cashierSessions.find((s) => s.closed_at === null) ?? null;
+  // A session opened before today midnight is treated as stale — POS shows lock overlay so user opens a fresh session
+  const todayMidnight = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }, []);
+  const rawCurrentSession = state.cashierSessions.find((s) => s.closed_at === null) ?? null;
+  const staleSession = rawCurrentSession && rawCurrentSession.opened_at < todayMidnight ? rawCurrentSession : null;
+  const currentSession = rawCurrentSession && rawCurrentSession.opened_at >= todayMidnight ? rawCurrentSession : null;
 
   // Enabled payment methods from tenant settings (comma-separated string)
   const enabledMethods = useMemo<Set<PaymentMethod>>(() => {
@@ -369,7 +372,11 @@ export default function PosScreen() {
         type: ledgerType,
         amount: paymentMethod === "UTANG" ? 0 : cartTotal,
         reference_id: txId,
-        description: `${paymentMethod} sale`,
+        description:
+          paymentMethod === "CASH" ? (locale === "id" ? "Penjualan tunai" : "Cash sale") :
+          paymentMethod === "QRIS" ? (locale === "id" ? "Penjualan QRIS" : "QRIS sale") :
+          paymentMethod === "TRANSFER" ? (locale === "id" ? "Penjualan transfer" : "Transfer sale") :
+          (locale === "id" ? "Penjualan (utang)" : "Sale (debt)"),
         date: now,
         user_id: userId,
         updated_at: now,
@@ -471,17 +478,41 @@ export default function PosScreen() {
     setShowCheckout(false);
   };
 
+  // Last closed session — used to scope Saldo Kas when no active session exists
+  const lastClosedSession = useMemo(() => {
+    if (currentSession) return null;
+    const closed = state.cashierSessions.filter((s) => s.closed_at !== null);
+    return closed.length > 0 ? closed.reduce((a, b) => ((a.closed_at ?? 0) > (b.closed_at ?? 0) ? a : b)) : null;
+  }, [state.cashierSessions, currentSession]);
+
   const cashBalance = useMemo(() => {
     const CASH_TYPES = ["INITIAL_BALANCE", "SALE", "WITHDRAWAL", "ADJUSTMENT"];
-    const entries = currentSession
-      ? state.generalLedger.filter((e) => CASH_TYPES.includes(e.type) && e.date >= currentSession.opened_at)
+    const scopeSession = currentSession ?? lastClosedSession;
+    const entries = scopeSession
+      ? state.generalLedger.filter((e) => CASH_TYPES.includes(e.type) && e.date >= scopeSession.opened_at)
       : state.generalLedger.filter((e) => CASH_TYPES.includes(e.type));
     return entries.reduce((sum, e) => sum + e.amount, 0);
-  }, [state.generalLedger, currentSession]);
+  }, [state.generalLedger, currentSession, lastClosedSession]);
+
+  // Cash balance from last closed session — used to detect remaining cash from previous session
+  const prevCashBalance = useMemo(() => {
+    if (currentSession) return 0;
+    const CASH_TYPES = ["INITIAL_BALANCE", "SALE", "WITHDRAWAL", "ADJUSTMENT"];
+    const entries = lastClosedSession
+      ? state.generalLedger.filter((e) => CASH_TYPES.includes(e.type) && e.date >= lastClosedSession.opened_at)
+      : state.generalLedger.filter((e) => CASH_TYPES.includes(e.type));
+    return entries.reduce((sum, e) => sum + e.amount, 0);
+  }, [state.generalLedger, currentSession, lastClosedSession]);
 
   const handleOpenCashierSession = async () => {
     setOpenSessionError(null);
     const amount = parseInt(openBalance.replace(/\./g, "").replace(/,/g, "")) || 0;
+    if (prevCashBalance > 0 && amount < prevCashBalance) {
+      setOpenSessionError(
+        copy.pos.initialBalanceTooLow.replace("{amount}", formatRupiah(prevCashBalance))
+      );
+      return;
+    }
     if (!openPin || openPin.length < 4) {
       setOpenSessionError(locale === "id" ? "PIN wajib diisi (min. 4 digit)." : "PIN is required (min. 4 digits).");
       return;
@@ -498,21 +529,35 @@ export default function PosScreen() {
     setOpeningSession(true);
     try {
       const now = Date.now();
-      // Write INITIAL_BALANCE general_ledger entry
-      const existingInitialIds = state.generalLedger
-        .filter((e) => e.type === "INITIAL_BALANCE")
-        .map((e) => e.id);
-      await deleteInitialBalanceEntries(supabase, tenantId);
-      for (const id of existingInitialIds) {
-        dispatch({ type: "DELETE", table: "generalLedger", id });
+      // Auto-close any stale session (opened before today midnight) before creating a new one
+      if (staleSession) {
+        const closedStale = await closeCashierSession(supabase, staleSession.id, {
+          closed_at: now,
+          closing_balance: 0,
+          withdrawal_amount: null,
+          match_status: "MATCH",
+          mismatch_note: null,
+          updated_at: now,
+        });
+        dispatch({ type: "UPSERT", table: "cashierSessions", payload: closedStale as unknown as Record<string, unknown> });
       }
+      // Generate session ID upfront so INITIAL_BALANCE can reference it
+      const sessionId = crypto.randomUUID();
+      // Write INITIAL_BALANCE general_ledger entry linked to this session
       const ledgerEntry = await createLedgerEntry(supabase, {
         id: crypto.randomUUID(),
         tenant_id: tenantId,
         type: "INITIAL_BALANCE",
         amount,
-        reference_id: null,
-        description: locale === "id" ? "Saldo awal — buka kasir" : "Opening balance — open cashier",
+        reference_id: sessionId,
+        description: (() => {
+          const d = new Date(now);
+          const dd = String(d.getDate()).padStart(2, "0");
+          const mm = String(d.getMonth() + 1).padStart(2, "0");
+          const yyyy = d.getFullYear();
+          const dateStr = `${dd}/${mm}/${yyyy}`;
+          return locale === "id" ? `Saldo awal — buka kasir (${dateStr})` : `Opening balance — open cashier (${dateStr})`;
+        })(),
         date: now,
         user_id: user.id,
         updated_at: now,
@@ -520,7 +565,7 @@ export default function PosScreen() {
       dispatch({ type: "UPSERT", table: "generalLedger", payload: ledgerEntry as unknown as Record<string, unknown> });
       // Create cashier session row
       const session = await openCashierSession(supabase, {
-        id: crypto.randomUUID(),
+        id: sessionId,
         tenant_id: tenantId,
         user_id: user.id,
         opened_at: now,
@@ -629,6 +674,11 @@ export default function PosScreen() {
               <p style={{ color: "var(--erp-muted)", fontSize: 14, marginBottom: 16 }}>
                 {copy.pos.openCashierHint}
               </p>
+              {prevCashBalance > 0 && (
+                <div className="erp-alert erp-alert--warning" style={{ marginBottom: 12 }}>
+                  {copy.pos.prevCashBalanceInfo.replace("{amount}", formatRupiah(prevCashBalance))}
+                </div>
+              )}
               {openSessionError && (
                 <div className="erp-alert erp-alert--error" style={{ marginBottom: 12 }}>{openSessionError}</div>
               )}

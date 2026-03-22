@@ -41,6 +41,14 @@ export async function deleteInitialBalanceEntries(supabase: SupabaseClient, tena
   if (error) throw error;
 }
 
+export async function deleteLedgerById(supabase: SupabaseClient, id: string) {
+  const { error } = await supabase
+    .from("general_ledger")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+}
+
 /**
  * Saldo Kas — mirrors GeneralLedgerDao.getBalance() in the mobile app exactly:
  *   INITIAL_BALANCE + SALE + WITHDRAWAL + ADJUSTMENT

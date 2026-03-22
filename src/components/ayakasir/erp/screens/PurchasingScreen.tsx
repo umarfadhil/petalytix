@@ -237,6 +237,9 @@ export default function PurchasingScreen() {
   const [groupName, setGroupName] = useState("");
   // Inline value list during group create/edit: array of { tempId, name }
   const [groupFormValues, setGroupFormValues] = useState<{ tempId: string; name: string }[]>([]);
+  // Applied-to product IDs managed inside the edit dialog (edit mode only)
+  const [editAppliedProductIds, setEditAppliedProductIds] = useState<string[]>([]);
+  const [editAddProductId, setEditAddProductId] = useState("");
   const [groupPage, setGroupPage] = useState(0);
   const [groupPageSize, setGroupPageSize] = useState<10 | 25 | 50>(10);
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
@@ -400,7 +403,12 @@ export default function PurchasingScreen() {
   };
 
   const getRawInventoryUnit = (productId: string) => {
-    return state.inventory.find((i) => i.product_id === productId && i.variant_id === "")?.unit || "—";
+    const inv = state.inventory.find((i) => i.product_id === productId && (!i.variant_id || i.variant_id === ""));
+    if (!inv) return "—";
+    // Convert base unit back to display unit (g→kg, mL→L)
+    if (inv.unit === "g") return "kg";
+    if (inv.unit === "mL") return "L";
+    return inv.unit;
   };
 
   const getVendorName = (id: string | null) =>
@@ -1037,6 +1045,8 @@ export default function PurchasingScreen() {
     setGroupName(g.name);
     const existing = getGroupValues(g.id).map((v) => ({ tempId: v.id, name: v.name }));
     setGroupFormValues(existing.length > 0 ? existing : [{ tempId: crypto.randomUUID(), name: "" }]);
+    setEditAppliedProductIds(getGroupAppliedProducts(g.id).map((p) => p.id));
+    setEditAddProductId("");
     setShowGroupForm(true);
   };
 
@@ -1077,6 +1087,61 @@ export default function PurchasingScreen() {
             updated_at: now,
           });
           dispatch({ type: "UPSERT", table: "variantGroupValues", payload: created as unknown as Record<string, unknown> });
+        }
+
+        // Sync applied-to products: apply to newly added, remove from removed
+        const prevApplied = getGroupAppliedProducts(editGroupId).map((p) => p.id);
+        const newValueNames = new Set(validValues.map((v) => v.name.trim().toLowerCase()));
+
+        // Remove from products that were de-listed
+        for (const productId of prevApplied) {
+          if (!editAppliedProductIds.includes(productId)) {
+            const toRemove = state.variants.filter(
+              (v) => v.product_id === productId && newValueNames.has(v.name.toLowerCase())
+            );
+            for (const v of toRemove) {
+              await repo.deleteInventoryByProductVariant(supabase, productId, v.id);
+              dispatch({ type: "DELETE", table: "inventory", id: "", compositeKey: { product_id: productId, variant_id: v.id } });
+              await repo.deleteVariant(supabase, v.id);
+              dispatch({ type: "DELETE", table: "variants", id: v.id });
+            }
+          }
+        }
+
+        // Apply to newly added products
+        for (const productId of editAppliedProductIds) {
+          if (prevApplied.includes(productId)) continue;
+          const existingVariantNames = new Set(
+            state.variants.filter((v) => v.product_id === productId).map((v) => v.name.toLowerCase())
+          );
+          const parentInv = state.inventory.find(
+            (i) => i.product_id === productId && (!i.variant_id || i.variant_id === "")
+          );
+          for (const val of validValues) {
+            const valNameLower = val.name.trim().toLowerCase();
+            if (existingVariantNames.has(valNameLower)) continue;
+            const variantId = crypto.randomUUID();
+            const createdVar = await repo.createVariant(supabase, {
+              id: variantId,
+              tenant_id: tenantId,
+              product_id: productId,
+              name: val.name.trim(),
+              price_adjustment: 0,
+              updated_at: now,
+            });
+            dispatch({ type: "UPSERT", table: "variants", payload: createdVar as unknown as Record<string, unknown> });
+            const inv = await repo.upsertInventory(supabase, {
+              product_id: productId,
+              variant_id: variantId,
+              tenant_id: tenantId,
+              current_qty: 0,
+              min_qty: 0,
+              unit: parentInv?.unit || "pcs",
+              avg_cogs: 0,
+              updated_at: now,
+            });
+            dispatch({ type: "UPSERT", table: "inventory", payload: inv as unknown as Record<string, unknown> });
+          }
         }
       } else {
         const groupId = crypto.randomUUID();
@@ -2438,6 +2503,55 @@ export default function PurchasingScreen() {
                   + {copy.purchasing.addValue}
                 </button>
               </div>
+              {editGroupId && (
+                <div className="erp-input-group">
+                  <label className="erp-label" style={{ marginBottom: 8 }}>{copy.purchasing.appliedTo}</label>
+                  {editAppliedProductIds.length === 0 && (
+                    <p style={{ fontSize: 13, color: "var(--erp-muted)", marginBottom: 6 }}>—</p>
+                  )}
+                  {editAppliedProductIds.map((pid) => {
+                    const p = rawMaterials.find((r) => r.id === pid);
+                    return p ? (
+                      <div key={pid} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
+                        <button
+                          className="erp-btn erp-btn--ghost erp-btn--sm"
+                          style={{ color: "var(--erp-danger)" }}
+                          onClick={() => setEditAppliedProductIds(editAppliedProductIds.filter((id) => id !== pid))}
+                        >{copy.purchasing.removeFromProduct}</button>
+                      </div>
+                    ) : null;
+                  })}
+                  <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                    <select
+                      className="erp-select"
+                      value={editAddProductId}
+                      onChange={(e) => setEditAddProductId(e.target.value)}
+                      style={{ flex: 1 }}
+                    >
+                      <option value="">— {copy.purchasing.applyToProduct} —</option>
+                      {rawMaterials
+                        .filter((p) => {
+                          if (editAppliedProductIds.includes(p.id)) return false;
+                          const assignedGroup = rawMaterialGroupMap.get(p.id);
+                          return !assignedGroup || assignedGroup === editGroupId;
+                        })
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                    </select>
+                    <button
+                      className="erp-btn erp-btn--ghost erp-btn--sm"
+                      disabled={!editAddProductId}
+                      onClick={() => {
+                        if (!editAddProductId) return;
+                        setEditAppliedProductIds([...editAppliedProductIds, editAddProductId]);
+                        setEditAddProductId("");
+                      }}
+                    >+ {copy.purchasing.applyPreset}</button>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="erp-dialog-footer">
               <button className="erp-btn erp-btn--secondary" onClick={() => setShowGroupForm(false)}>{copy.common.cancel}</button>

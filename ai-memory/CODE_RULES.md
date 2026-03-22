@@ -100,13 +100,17 @@
 - `currentSession` is derived: `state.cashierSessions.find(s => s.closed_at === null)`. No extra state.
 - POS is locked when `currentSession === null`; shows Open Cashier overlay (initial balance + PIN).
 - PIN verified via `verifyErpPinAction` server action in `auth.ts`. Imported via dynamic import in PosScreen (client component).
-- Saldo Kas (Dashboard + POS Tarik Tunai) filters generalLedger to `date >= currentSession.opened_at`. Falls back to all-time when no session.
+- Saldo Kas (Dashboard + POS Tarik Tunai) filters generalLedger to `date >= currentSession.opened_at`. When no active session, falls back to `date >= lastClosedSession.opened_at` (most recently closed session by `closed_at`). All-time sum only when no sessions exist at all. `lastClosedSession` derived via `state.cashierSessions.filter(s => s.closed_at !== null)` → max by `closed_at`.
 - UTANG total is always all-time (mirrors mobile `TransactionDao.getTotalUnpaidDebt`).
 - Dashboard "Shift Aktif" chip is the 5th period type; only rendered when `activeSession !== null`.
 - Settle debt: Lunasi button disabled when `activeSession === null`.
-- Close Cashier: writes closed_at, closing_balance, withdrawal_amount, match_status, mismatch_note to `cashier_sessions`. Then performs cash-reset. After close, POS auto-locks.
-- Empty cash ledger flow (3 steps): (1) `cash_withdrawals` row with full `closingBalance`; (2) reset INITIAL_BALANCE to 0; (3) WITHDRAWAL ledger entry with `amount = -(closingBalance - initialBalance)` (sales-only). Edge: skip step 3 if salesPortion ≤ 0.
+- Close Cashier: writes closed_at, closing_balance, withdrawal_amount, match_status, mismatch_note to `cashier_sessions`. Then performs cash-reset. After close, POS auto-locks. `withdrawal_amount` is always a number (0 for keep-cash, positive for empty-cash), never null.
+- **Every close-cashier must create a WITHDRAWAL ledger entry** — even "keep cash" creates one with `amount: 0`. This ensures a consistent audit trail per session.
+- Empty cash ledger flow (2 steps): (1) `cash_withdrawals` row with full `closingBalance`; (2) WITHDRAWAL ledger entry with `amount = -closingBalance` (full balance, not just sales portion). Edge: skip step 2 if closingBalance ≤ 0. Do NOT create a zero-balance INITIAL_BALANCE placeholder.
+- Keep cash ledger flow (1 step): WITHDRAWAL ledger entry with `amount: 0`, description "Simpan kas — tutup kasir" / "Cash kept — cashier close".
+- INITIAL_BALANCE entries with `reference_id = sessionId` are historical records — never delete them on close. No unlinked placeholder is created or needed.
 - Saldo Awal is no longer in Settings — set exclusively via Open Cashier in PosScreen.
+- **Stale session rule:** a session with `opened_at < todayMidnight` (opened before today midnight) is stale. Dashboard and POS treat it as if no session exists. PosScreen exposes `staleSession` and auto-closes it when the user opens a new session. SettingsScreen still allows manual close of stale sessions. `todayMidnight` computed via `useMemo` with `new Date(); d.setHours(0,0,0,0)` pattern.
 
 ### ERP Variant Preset Groups Rules
 - `variant_groups` table: `id, tenant_id, name, sync_status, updated_at`.

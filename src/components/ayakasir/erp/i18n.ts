@@ -95,6 +95,8 @@ export interface ErpCopy {
     enterPin: string;
     openCashierBtn: string;
     sessionLocked: string;
+    prevCashBalanceInfo: string;
+    initialBalanceTooLow: string;
   };
   products: {
     title: string;
@@ -274,6 +276,7 @@ export interface ErpCopy {
     filterByCategory: string;
     searchRawMaterial: string;
     applyPresetInline: string;
+    removeFromProduct: string;
   };
   settings: {
     title: string;
@@ -290,6 +293,10 @@ export interface ErpCopy {
     qrisImageUrlHint: string;
     qrisSaved: string;
     uploadQris: string;
+    qrisImageTooLarge: string;
+    qrisUploadError: string;
+    qrisUploading: string;
+    qrisImageHint: string;
     merchantName: string;
     initialBalance: string;
     setBalance: string;
@@ -354,6 +361,7 @@ export interface ErpCopy {
     shiftFrom: string;
     cashBalanceSection: string;
     debtSettlement: string;
+    cashEmptiedNote: string;
   };
   customers: {
     title: string;
@@ -594,6 +602,8 @@ const en: ErpCopy = {
     enterPin: "PIN",
     openCashierBtn: "Open Cashier",
     sessionLocked: "Cashier session is not active. Please open the cashier to start.",
+    prevCashBalanceInfo: "There is remaining cash from the previous session: {amount}. Opening balance cannot be lower than this amount.",
+    initialBalanceTooLow: "Opening balance cannot be lower than the remaining cash: {amount}.",
   },
   products: {
     title: "Products",
@@ -777,6 +787,7 @@ const en: ErpCopy = {
     filterByCategory: "Category",
     searchRawMaterial: "Search item...",
     applyPresetInline: "Apply Preset",
+    removeFromProduct: "Remove",
   },
   settings: {
     title: "Settings",
@@ -793,6 +804,10 @@ const en: ErpCopy = {
     qrisImageUrlHint: "Paste the public URL of your QRIS image.",
     qrisSaved: "QRIS settings saved.",
     uploadQris: "Upload QRIS Image",
+    qrisImageTooLarge: "Image must be under 1 MB.",
+    qrisUploadError: "Upload failed. Please try again.",
+    qrisUploading: "Uploading…",
+    qrisImageHint: "Upload a QRIS image (max 1 MB). JPG, PNG, or WebP.",
     merchantName: "Merchant Name",
     initialBalance: "Initial Balance",
     setBalance: "Set Initial Balance",
@@ -857,6 +872,7 @@ const en: ErpCopy = {
     shiftFrom: "Shift from",
     cashBalanceSection: "Cash Balance Summary",
     debtSettlement: "Debt Settlement",
+    cashEmptiedNote: "Cash emptied at session close",
   },
   customers: {
     title: "Customers",
@@ -1097,6 +1113,8 @@ const id: ErpCopy = {
     enterPin: "PIN",
     openCashierBtn: "Buka Kasir",
     sessionLocked: "Sesi kasir belum aktif. Silakan buka kasir untuk memulai.",
+    prevCashBalanceInfo: "Terdapat sisa kas dari sesi sebelumnya: {amount}. Saldo awal tidak boleh kurang dari jumlah ini.",
+    initialBalanceTooLow: "Saldo awal tidak boleh kurang dari sisa kas: {amount}.",
   },
   products: {
     title: "Produk",
@@ -1280,6 +1298,7 @@ const id: ErpCopy = {
     filterByCategory: "Kategori",
     searchRawMaterial: "Cari item...",
     applyPresetInline: "Terapkan Preset",
+    removeFromProduct: "Hapus",
   },
   settings: {
     title: "Pengaturan",
@@ -1296,6 +1315,10 @@ const id: ErpCopy = {
     qrisImageUrlHint: "Tempel URL publik dari gambar QRIS Anda.",
     qrisSaved: "Pengaturan QRIS berhasil disimpan.",
     uploadQris: "Unggah Gambar QRIS",
+    qrisImageTooLarge: "Gambar harus di bawah 1 MB.",
+    qrisUploadError: "Unggah gagal. Silakan coba lagi.",
+    qrisUploading: "Mengunggah…",
+    qrisImageHint: "Unggah gambar QRIS (maks 1 MB). JPG, PNG, atau WebP.",
     merchantName: "Nama Merchant",
     initialBalance: "Saldo Awal",
     setBalance: "Atur Saldo Awal",
@@ -1360,6 +1383,7 @@ const id: ErpCopy = {
     shiftFrom: "Shift mulai",
     cashBalanceSection: "Rincian Saldo Kas",
     debtSettlement: "Pelunasan Utang",
+    cashEmptiedNote: "Kas dikosongkan saat tutup kasir",
   },
   customers: {
     title: "Pelanggan",

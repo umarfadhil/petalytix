@@ -1577,6 +1577,23 @@ main {
   box-shadow: 0 24px 40px rgba(29, 114, 233, 0.35) !important;
 }
 
+.ayakasir-play-badge-link {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ayakasir-play-badge {
+  height: 52px;
+  width: auto;
+  border-radius: 8px;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.ayakasir-play-badge-link:hover .ayakasir-play-badge {
+  opacity: 0.88;
+  transform: translateY(-2px);
+}
+
 .ayakasir-card-full {
   width: min(var(--page-max), 100% - 48px);
   max-width: 100%;

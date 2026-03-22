@@ -1554,6 +1554,11 @@ a.erp-auth-logo {
   color: var(--erp-success);
 }
 
+.erp-alert--warning {
+  background: var(--erp-warning-light);
+  color: var(--erp-warning);
+}
+
 /* ── Toggle / Switch ── */
 .erp-toggle {
   position: relative;

@@ -2,6 +2,28 @@
 
 ## Changelog
 
+### v1.1.1
+
+- Landing Page — Play Store Badge: Replaced the text CTA button with the official Google Play Store badge image (`Google_Play_Store_Badge.png`); hover effect lifts the badge.
+- Settings — Tutup Kasir Button: "Tutup Kasir / Close Cashier" button is disabled when no cashier session is active; tooltip explains the reason.
+- Settings — CSV Date Format: `date` column now exports as `DD/MM/YYYY HH:MM:SS` in GMT+7 (was ISO UTC); uses `e.date` (record creation timestamp) as intended.
+- Settings — CSV COGS Rows: COGS ledger entries now expand into one row per goods-receiving item; product name, variant name, qty, unit price, and per-item amount filled from `goods_receiving_items`.
+- POS/Settings — INITIAL_BALANCE History: Closing a cashier session no longer deletes the session's INITIAL_BALANCE ledger entry; the historical record is preserved with its original `date` and `reference_id` (session ID). Close cashier only creates a zero-balance unlinked placeholder (`reference_id: null`); open cashier removes that placeholder before writing the new session's entry.
+- Settings — Close Cashier Saldo Akhir: Closing balance (Saldo Akhir) in the End of Day report is now session-scoped (`date >= activeSession.opened_at`), matching Dashboard/POS behavior; previously it summed all-time ledger entries, double-counting historical INITIAL_BALANCE records. Saldo Akhir now shows the real computed balance (Saldo Awal + Penjualan Tunai + Pelunasan Utang − Tarik Tunai) regardless of cash-reset choice; when "empty cash" is chosen, a note "Kas dikosongkan / Cash emptied at session close" is appended below Saldo Akhir in both the dialog and downloaded report.
+- Settings — Close Cashier Cash Reset: "Empty cash" WITHDRAWAL ledger entry now records the full closing balance (e.g. Rp100,000), not just the sales portion; since the session's INITIAL_BALANCE is preserved, the WITHDRAWAL must offset the entire Saldo Kas to bring it to zero.
+- POS — Open Cashier Remaining Cash Guard: if cash remains from the previous session, the Buka Sesi Kasir dialog shows a warning banner with the remaining amount; the Saldo Kas Awal field rejects any value lower than the remaining balance.
+- Dashboard/POS — Stale Session Guard: a cashier session opened before today midnight is treated as stale; the Dashboard shift chip is hidden for stale sessions (preventing inflated transaction counts), and PosScreen shows the lock overlay so the user opens a fresh session; opening a new session auto-closes any stale unclosed session in the background.
+- Settings — Close Cashier Keep-Cash WITHDRAWAL: Closing a cashier session with "keep cash" now records a zero-amount WITHDRAWAL ledger entry (was skipped entirely); `withdrawal_amount` on `cashier_sessions` is stored as `0` instead of `null`. Every close-cashier action now produces an auditable WITHDRAWAL record regardless of the cash-reset choice.
+- Dashboard/POS — Saldo Kas After Session Close: When no active cashier session exists, Saldo Kas is now scoped to the last closed session (was all-time sum). Fixes double-counting of INITIAL_BALANCE entries across sessions — e.g., withdrawing all cash in Session B now correctly shows Rp0 instead of carrying over Session A's balance. `prevCashBalance` (Open Cashier remaining-cash guard) uses the same scoping.
+
+### v1.1.1
+
+- Purchasing — Raw Materials Unit Display: Unit column now shows `kg`/`L` instead of `—` for raw materials synced from the mobile app. Root cause: mobile app stores `variant_id` as `NULL` (not `""`) on inventory rows with no variant; the lookup now matches both. Base units (`g`/`mL`) are also converted back to display units (`kg`/`L`) for consistency.
+- POS — Open Cashier Description: INITIAL_BALANCE `general_ledger` description now includes the session open date — "Saldo awal — buka kasir (DD/MM/YYYY)" / "Opening balance — open cashier (DD/MM/YYYY)".
+- Settings — Close Cashier Empty Cash: Removed the redundant zero-balance INITIAL_BALANCE placeholder entry that was created on session close; the WITHDRAWAL entry already brings Saldo Kas to zero, and session-scoped balance calculation makes the placeholder unnecessary.
+- POS — Sale Ledger Descriptions: CASH sale → "Penjualan tunai" / "Cash sale"; QRIS sale → "Penjualan QRIS" / "QRIS sale"; TRANSFER sale → "Penjualan transfer" / "Transfer sale"; UTANG sale → "Penjualan (utang)" / "Sale (debt)". Previously all were generic `"${paymentMethod} sale"`.
+- Settings — QRIS Image Upload: Pengaturan QRIS now has a file upload button (max 1 MB, JPG/PNG/WebP) instead of a URL text input; file is uploaded to the `qris-images` Supabase Storage bucket at `{tenantId}/qris.{ext}` with `upsert: true`; public URL (with cache-busting `?t=` param) is saved to `tenants.qris_image_url`; 1 MB size guard shown inline; Save button disabled during upload.
+
 ### v1.1.0
 
 - Registration — TUMBUH Promo: New tenants are automatically assigned the TUMBUH plan with a free 3-month trial (`plan_started_at` = registration date, `plan_expires_at` = 3 months later).
@@ -18,7 +40,7 @@
 - Dashboard — Settle Debt Session Gate: Lunasi button disabled when no active cashier session.
 - Inventory — Delete Zero-Stock Row: OWNER can delete an inventory row when `current_qty === 0`; confirm dialog + in-flight guard.
 - Inventory — Hide Base Row When Variants Exist: base (`variant_id: ""`) row hidden if product has variants and base row has `current_qty === 0`.
-- Purchasing — Variant Preset Groups: new `variant_groups` + `variant_group_values` DB tables; Variants tab redesigned — manage reusable presets (e.g. "Size → S/M/L/XL"); Apply to raw material creates `DbVariant` + `DbInventory` rows per value.
+- Purchasing — Variant Preset Groups: new `variant_groups` + `variant_group_values` DB tables; Variants tab redesigned — manage reusable presets (e.g. "Size → S/M/L/XL"); Apply to raw material creates `DbVariant` + `DbInventory` rows per value; Edit dialog now includes "Applied To" management — add new raw materials or remove existing ones (removes corresponding variant+inventory rows).
 - Purchasing — Goods Receiving Variant Expand: "Use Variants" toggle per item expands product row into per-variant sub-rows; save produces one receiving item per variant; edit restores correctly.
 - Purchasing — Add Receiving Dialog: redesigned to card-based layout (`.erp-rec-item-card`) with labeled fields, grand total display, clean variant sub-rows.
 - Products — Inline Add Category: `+ Add Category` sentinel option in product form's category select creates category without leaving the dialog; auto-selects new category on save.

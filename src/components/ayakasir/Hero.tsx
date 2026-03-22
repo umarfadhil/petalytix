@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { AyaKasirCopyType } from "@/lib/ayakasir-content";
 
@@ -63,12 +64,18 @@ export default function AyaKasirHero({
           <p className="subtitle ayakasir-hero-subtitle">{copy.hero.subtitle}</p>
           <div className="project-links">
             <a
-              className="button primary ayakasir-btn-primary"
+              className="ayakasir-play-badge-link"
               href="https://play.google.com/store/apps/details?id=com.ayakasir.app"
               target="_blank"
               rel="noopener noreferrer"
             >
-              {copy.hero.ctaPlayStore}
+              <Image
+                src="/images/Google_Play_Store_Badge.png"
+                alt={copy.hero.ctaPlayStore}
+                width={200}
+                height={59}
+                className="ayakasir-play-badge"
+              />
             </a>
             <Link
               className="button ghost"
