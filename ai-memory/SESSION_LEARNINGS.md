@@ -1,5 +1,13 @@
 ﻿# Session Learnings
 
+## 2026-03-23 — Vercel Deployment: Login 500 Error (Missing SUPABASE_SERVICE_ROLE_KEY)
+
+- **Symptom:** After deploying to Vercel, ERP login fails with generic Server Components error. Runtime logs show `Error: supabaseKey is required` on `POST /id/app/login` (500).
+- **Root cause:** `SUPABASE_SERVICE_ROLE_KEY` env var was missing from Vercel production environment. `createAdminClient()` in `src/lib/supabase/server-admin.ts` passes `undefined` to `createClient()` due to `!` non-null assertion.
+- **Secondary issue:** `MongoNetworkTimeoutError` on main site routes (`GET /id`, `/favicon.ico`) — MongoDB Atlas connection timing out (likely IP allowlist or `MONGODB_URI` env var issue).
+- **Fix:** Add `SUPABASE_SERVICE_ROLE_KEY` to Vercel env vars. Verify `NEXT_PUBLIC_SUPABASE_URL`, `AUTH_SECRET`, and `MONGODB_URI` are also set.
+- **Lesson:** When deploying new features that introduce new env vars (e.g., `SUPABASE_SERVICE_ROLE_KEY` for `server-admin.ts`, `AUTH_SECRET` for JWT signing), always verify they are configured in Vercel before deploying.
+
 ## 2026-03-22 — Settings: QRIS Image Upload via Supabase Storage
 
 - **Change:** Pengaturan QRIS now has a file upload button (max 1 MB, JPG/PNG/WebP) instead of a URL text input.
