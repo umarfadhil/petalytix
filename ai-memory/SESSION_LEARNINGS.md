@@ -1,5 +1,37 @@
 ﻿# Session Learnings
 
+## v1.1.4 (2026-03-23)
+
+## 2026-03-23 — ERP Realtime: Status Handling + Fallback Reconcile
+
+- **Files:** `src/lib/supabase/realtime.ts`, `src/components/ayakasir/erp/store.tsx`
+- **Changes:**
+  - `useRealtimeSync` now accepts an optional `onStatusChange(status: RealtimeStatus)` callback; passes it to `channel.subscribe()` — maps `SUBSCRIBED` → `"SUBSCRIBED"`, `CHANNEL_ERROR`/`TIMED_OUT`/`CLOSED` → `"DISCONNECTED"`, initial call → `"CONNECTING"`.
+  - `RealtimeStatus = "CONNECTING" | "SUBSCRIBED" | "DISCONNECTED"` exported from `realtime.ts`, re-exported from `store.tsx`.
+  - `ErpState.realtimeStatus` field added (default `"CONNECTING"`); `SET_REALTIME_STATUS` action + reducer case added.
+  - `ErpProvider` wires `onStatusChange` → dispatches `SET_REALTIME_STATUS`.
+  - **Focus reconcile:** `window.addEventListener("focus", reconcile)` — always re-fetches on tab focus regardless of status.
+  - **Interval reconcile:** `setInterval(5 min)` — only fires when `realtimeStatus === "DISCONNECTED"`.
+  - Reconcile fetches same shape as SSR layout (static tables all + windowed 90-day tables), then dispatches `SET_ALL` to overwrite state. Uses `reconcileRef` pattern to avoid stale closures.
+  - `realtimeStatusRef` kept in sync via `useEffect` for use inside the interval without re-creating it.
+
+## 2026-03-23 — Landing Page: Reduced ISR Revalidation from 1 hour to 5 minutes
+
+- **File:** `src/app/ayakasir/[locale]/(marketing)/page.tsx`
+- **Change:** `export const revalidate = 3600` → `export const revalidate = 300`
+- **Why:** Metrics section (tenant count, provinces, cities, transactions) now refreshes every 5 minutes instead of every hour — better balance between Supabase query load and data freshness.
+- The 3 Supabase count queries in `getAyaKasirMetrics()` run only on ISR revalidation, not on every request.
+
+## 2026-03-23 — Supabase: Added tenant_id and Compound Date Indexes
+
+- **Migration:** `add_tenant_id_and_compound_date_indexes` applied to the `ayakasir` Supabase project.
+- **New `tenant_id` indexes (4 tables previously missing):**
+  - `cashier_sessions`, `users`, `variant_groups`, `variant_group_values`
+- **New `(tenant_id, date)` compound indexes (5 tables with both columns):**
+  - `transactions`, `general_ledger`, `cash_withdrawals`, `inventory_movements`, `goods_receiving`
+- **Rationale:** All tenant queries filter by `tenant_id`; time-range queries (Dashboard periods, CSV export date range) additionally filter by `date`. Compound indexes let Postgres satisfy both predicates from one index scan, avoiding full-table scans as tenant data grows.
+- **All other tables** already had `tenant_id` indexes or don't have a `date` column (`categories`, `variants`, `products`, etc.).
+
 ## 2026-03-23 — Vercel Deployment: Login 500 Error (Missing SUPABASE_SERVICE_ROLE_KEY)
 
 - **Symptom:** After deploying to Vercel, ERP login fails with generic Server Components error. Runtime logs show `Error: supabaseKey is required` on `POST /id/app/login` (500).
@@ -1130,7 +1162,7 @@
 - **Mobile app:** Android app presumably uses Supabase Auth directly — tenant-scoped RLS with `auth.uid()` should work there without changes.
 - **Recommended order:** (1) Restrict `users` table immediately. (2) Implement tenant-scoped RLS on all tables. (3) Resolve ERP auth architecture.
 
-## 2026-03-23 — Scalability Analysis: 1000 Concurrent ERP Users
+## 2026-03-23 — Scalability Analysis: 1000 Concurrent ERP Users (by Claude)
 
 - **Critical: SSR loads ALL data** — `(erp)/layout.tsx` fires 19 parallel `SELECT *` queries per page load (no time/pagination filters). At 1000 users, this means 19,000 concurrent Supabase queries. Fix: paginate by date (e.g., last 30 days) and lazy-load older data.
 - **Critical: Supabase Realtime limits** — each user opens 1 channel with ~19 table subscriptions. Supabase Free/Pro supports 200-500 concurrent connections; 1000 users will exceed this. Fix: upgrade to Team/Enterprise or self-host Supabase.
@@ -1142,4 +1174,22 @@
 - **Low: Single Vercel region** — if not deployed to `sin1` (Singapore), Indonesian users get latency.
 - **Already good:** tenant-scoped realtime filters, stateless JWT auth, client-side state after initial load, Vercel CDN for static assets.
 - **Recommendations (priority):** (1) Paginate SSR data. (2) Upgrade Supabase plan for realtime. (3) Add `tenant_id` + compound indexes. (4) Cache landing page metrics with ISR. (5) Use PgBouncer connection string server-side. (6) Deploy to `sin1` region.
+
+## 2026-03-23 — Scalability Revalidation: 1000 Concurrent ERP Users (by Codex)
+
+- **Critical: ERP bootstrap fanout is still high** — `(erp)/layout.tsx` performs 2 prefetch queries (`users`, `tenants`) plus 19 parallel table reads in `fetchErpData` (all `SELECT *`). At 1000 simultaneous cold loads, this is ~21,000 DB queries at once.
+- **Critical: full-dataset loading** — no server-side pagination/date window for heavy tables (`transactions`, `transaction_items`, `general_ledger`, `inventory_movements`, etc.). Busy tenants will push large payloads, slower TTFB, and higher browser memory usage.
+- **High: realtime scales linearly with users/tabs** — each open ERP tab creates 1 realtime channel and registers 19 Postgres change listeners (18 tenant tables + `tenants`). 1000 concurrent users means roughly 1000 live websocket clients for ERP alone.
+- **High: realtime health is not monitored** — `channel.subscribe()` is called without status/error callback and there is no periodic reconciliation pull while tab stays open. If realtime degrades, clients can stay stale until manual refresh.
+- **Moderate: two browser Supabase clients per ERP tab** — one in `store.tsx` and one in `realtime.ts`; increases per-tab resource usage.
+- **Moderate: index posture is unknown in this repo** — code filters heavily by `tenant_id`, but no Supabase SQL migration/index files are present in this repository to confirm supporting indexes.
+- **Correction from prior note:** AyaKasir landing metrics are now ISR-cached (`src/app/ayakasir/[locale]/(marketing)/page.tsx` has `revalidate = 3600`), so marketing traffic is not a per-request DB hot path.
+- **Bottom line:** 1000 concurrently online users are risky with current ERP bootstrap and realtime design; likely acceptable only for low-activity tenants and controlled concurrency.
+- **Priority improvements:** (1) Paginate/window initial ERP fetch by date. (2) Add on-demand lazy loading for history tables. (3) Add realtime subscribe status handling + fallback reconcile on focus/interval. (4) Verify/add `tenant_id` and common sort/filter indexes in Supabase. (5) Stress-test with realistic tenant sizes before production 1000-user target.
+
+## 2026-03-23 — ERP Layout: Pagination Info Relocated to Filter Bar Row
+
+- **Products screen:** `erp-table-pagination-info` (rows-per-page chips + count) moved from bottom `erp-table-pagination` to a flex row above the search bar, right-aligned parallel with the `erp-filter-bar` category chips.
+- **Customers screen:** Same pattern — rows-per-page chips + count moved to a flex row above the search bar, right-aligned parallel with the category `erp-filter-bar`. Bottom `erp-table-pagination` now contains only the prev/next nav buttons (rendered only when `totalPages > 1`).
+- Both use `display:flex; justify-content:space-between` wrapper to keep chips left and pagination info right.
 

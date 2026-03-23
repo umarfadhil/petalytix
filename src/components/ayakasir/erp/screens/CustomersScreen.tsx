@@ -511,23 +511,43 @@ export default function CustomersScreen() {
         </div>
       )}
 
-      {/* Category filter chips */}
-      <div className="erp-filter-bar" style={{ marginBottom: 12 }}>
-        <span
-          className={`erp-chip${selectedCategoryId === null ? " erp-chip--active" : ""}`}
-          onClick={() => { setSelectedCategoryId(null); setPage(0); setSelectedIds(new Set()); }}
-        >
-          {copy.customers.allCategories}
-        </span>
-        {state.customerCategories.map((cat) => (
+      {/* Category filter chips + pagination info */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        <div className="erp-filter-bar" style={{ margin: 0 }}>
           <span
-            key={cat.id}
-            className={`erp-chip${selectedCategoryId === cat.id ? " erp-chip--active" : ""}`}
-            onClick={() => { setSelectedCategoryId(cat.id); setPage(0); setSelectedIds(new Set()); }}
+            className={`erp-chip${selectedCategoryId === null ? " erp-chip--active" : ""}`}
+            onClick={() => { setSelectedCategoryId(null); setPage(0); setSelectedIds(new Set()); }}
           >
-            {cat.name}
+            {copy.customers.allCategories}
           </span>
-        ))}
+          {state.customerCategories.map((cat) => (
+            <span
+              key={cat.id}
+              className={`erp-chip${selectedCategoryId === cat.id ? " erp-chip--active" : ""}`}
+              onClick={() => { setSelectedCategoryId(cat.id); setPage(0); setSelectedIds(new Set()); }}
+            >
+              {cat.name}
+            </span>
+          ))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--erp-ink-secondary)" }}>
+          <span>{copy.customers.rowsPerPage}:</span>
+          {([10, 25, 50] as const).map((n) => (
+            <span
+              key={n}
+              className={`erp-chip${pageSize === n ? " erp-chip--active" : ""}`}
+              style={{ padding: "2px 10px", fontSize: 12 }}
+              onClick={() => { setPageSize(n); setPage(0); setSelectedIds(new Set()); }}
+            >
+              {n}
+            </span>
+          ))}
+          <span style={{ marginLeft: 8 }}>
+            {filteredCustomers.length > 0
+              ? `${page * pageSize + 1}–${Math.min((page + 1) * pageSize, filteredCustomers.length)} / ${filteredCustomers.length}`
+              : "0"}
+          </span>
+        </div>
       </div>
 
       <div className="erp-customers-layout">
@@ -659,32 +679,12 @@ export default function CustomersScreen() {
           </div>
 
           {/* Pagination */}
-          <div className="erp-table-pagination" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, flexWrap: "wrap", gap: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--erp-ink-secondary)" }}>
-              <span>{copy.customers.rowsPerPage}:</span>
-              {([10, 25, 50] as const).map((n) => (
-                <span
-                  key={n}
-                  className={`erp-chip${pageSize === n ? " erp-chip--active" : ""}`}
-                  style={{ padding: "2px 10px", fontSize: 12 }}
-                  onClick={() => { setPageSize(n); setPage(0); setSelectedIds(new Set()); }}
-                >
-                  {n}
-                </span>
-              ))}
-              <span style={{ marginLeft: 8 }}>
-                {filteredCustomers.length > 0
-                  ? `${page * pageSize + 1}–${Math.min((page + 1) * pageSize, filteredCustomers.length)} / ${filteredCustomers.length}`
-                  : "0"}
-              </span>
+          {totalPages > 1 && (
+            <div className="erp-table-pagination" style={{ display: "flex", justifyContent: "flex-end", marginTop: 8, gap: 4 }}>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={page === 0} onClick={() => setPage(page - 1)}>‹</button>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={page >= totalPages - 1} onClick={() => setPage(page + 1)}>›</button>
             </div>
-            {totalPages > 1 && (
-              <div style={{ display: "flex", gap: 4 }}>
-                <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={page === 0} onClick={() => setPage(page - 1)}>‹</button>
-                <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={page >= totalPages - 1} onClick={() => setPage(page + 1)}>›</button>
-              </div>
-            )}
-          </div>
+          )}
         </div>
 
         {/* ── Right panel ── */}

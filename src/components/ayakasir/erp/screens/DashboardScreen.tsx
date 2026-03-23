@@ -2,10 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { useErp } from "../store";
+import type { OlderData } from "../store";
 import { getErpCopy } from "../i18n";
 import { formatRupiah, formatDateTime, todayRange, monthRange, yearRange } from "../utils";
 import { createLedgerEntry } from "@/lib/supabase/repositories/general-ledger";
 import { settleDebt } from "@/lib/supabase/repositories/transactions";
+import { fetchOlderErpData } from "@/app/ayakasir/actions/fetch-older-data";
 import type { DbTransaction } from "@/lib/supabase/types";
 
 type Period = "today" | "month" | "year" | "custom" | "shift";
@@ -26,6 +28,22 @@ export default function DashboardScreen() {
   const [settleLoading, setSettleLoading] = useState(false);
   const [settleError, setSettleError] = useState<string | null>(null);
   const [settledReceipt, setSettledReceipt] = useState<{ tx: DbTransaction; paymentMethod: "CASH" | "QRIS" | "TRANSFER" } | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderError, setOlderError] = useState<string | null>(null);
+
+  async function handleLoadOlderData() {
+    if (loadingOlder || state.olderDataLoaded) return;
+    setLoadingOlder(true);
+    setOlderError(null);
+    try {
+      const older = await fetchOlderErpData(tenantId, 0, state.dataWindowStart) as OlderData;
+      dispatch({ type: "MERGE_OLDER", payload: older, newWindowStart: 0 });
+    } catch {
+      setOlderError(copy.common.error);
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
 
   // Active cashier session (null = no open session)
   // A session opened before today midnight is considered stale and excluded from shift filtering
@@ -197,10 +215,13 @@ export default function DashboardScreen() {
       existing.revenue += item.subtotal;
       map.set(item.product_name, existing);
     }
-    return Array.from(map.values())
-      .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 10);
+    return Array.from(map.values()).sort((a, b) => b.revenue - a.revenue);
   }, [filteredTransactions, state.transactionItems]);
+
+  const [topPage, setTopPage] = useState(0);
+  const [topPageSize, setTopPageSize] = useState<PageSize>(10);
+  const topTotalPages = Math.ceil(topProducts.length / topPageSize);
+  const pagedTopProducts = topProducts.slice(topPage * topPageSize, topPage * topPageSize + topPageSize);
 
   // Pagination
   const totalPages = Math.ceil(filteredTransactions.length / txPageSize);
@@ -212,6 +233,7 @@ export default function DashboardScreen() {
   function handlePeriodChange(p: Period) {
     setPeriod(p);
     setTxPage(0);
+    setTopPage(0);
   }
 
   function handlePageSizeChange(size: PageSize) {
@@ -295,6 +317,25 @@ export default function DashboardScreen() {
           </div>
         )}
       </div>
+
+      {/* Older data banner — shown when selected range extends before the 90-day window */}
+      {!state.olderDataLoaded && range[0] < state.dataWindowStart && (
+        <div className="erp-alert erp-alert--warning erp-older-data-banner">
+          <span>
+            {locale === "id"
+              ? "Data ditampilkan terbatas 90 hari. Muat data lebih lama untuk melihat periode ini."
+              : "Data is limited to the last 90 days. Load older data to view this period."}
+          </span>
+          <button
+            className="erp-btn erp-btn--sm erp-btn--secondary"
+            onClick={handleLoadOlderData}
+            disabled={loadingOlder}
+          >
+            {loadingOlder ? copy.common.loading : (locale === "id" ? "Muat Data Lama" : "Load Older Data")}
+          </button>
+          {olderError && <span className="erp-text--error">{olderError}</span>}
+        </div>
+      )}
 
       {/* Stats — row 1: 3 cards */}
       <div className="erp-stats-grid erp-stats-grid--3">
@@ -471,8 +512,20 @@ export default function DashboardScreen() {
 
         {/* Top products */}
         <div className="erp-table-wrap">
-          <div style={{ padding: "16px 20px", fontWeight: 600 }}>
-            {copy.dashboard.topProducts}
+          <div style={{ padding: "16px 20px 8px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600, flex: 1 }}>{copy.dashboard.topProducts}</span>
+            <div className="erp-table-pagination-info">
+              <span>{copy.purchasing.rowsPerPage}:</span>
+              {([10, 25, 50] as PageSize[]).map((n) => (
+                <span
+                  key={n}
+                  className={`erp-chip erp-chip--sm${topPageSize === n ? " erp-chip--active" : ""}`}
+                  onClick={() => { setTopPageSize(n); setTopPage(0); }}
+                >
+                  {n}
+                </span>
+              ))}
+            </div>
           </div>
           <table className="erp-table">
             <thead>
@@ -490,7 +543,7 @@ export default function DashboardScreen() {
                   </td>
                 </tr>
               ) : (
-                topProducts.map((p) => (
+                pagedTopProducts.map((p) => (
                   <tr key={p.name}>
                     <td>{p.name}</td>
                     <td>{p.qty}</td>
@@ -500,6 +553,27 @@ export default function DashboardScreen() {
               )}
             </tbody>
           </table>
+          {topTotalPages > 1 && (
+            <div className="erp-table-pagination">
+              <button
+                className="erp-btn erp-btn--secondary erp-btn--sm"
+                disabled={topPage === 0}
+                onClick={() => setTopPage((p) => p - 1)}
+              >
+                ‹
+              </button>
+              <span className="erp-table-pagination-info">
+                {topPage + 1} / {topTotalPages}
+              </span>
+              <button
+                className="erp-btn erp-btn--secondary erp-btn--sm"
+                disabled={topPage >= topTotalPages - 1}
+                onClick={() => setTopPage((p) => p + 1)}
+              >
+                ›
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

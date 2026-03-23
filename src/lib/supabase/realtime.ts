@@ -3,19 +3,22 @@
 import { useEffect, useMemo } from "react";
 import { createBrowserClient } from "./client";
 import { TENANT_TABLES, TenantTable } from "./types";
-import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import type { RealtimePostgresChangesPayload, REALTIME_SUBSCRIBE_STATES } from "@supabase/supabase-js";
 
 type ChangeHandler = (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => void;
+export type RealtimeStatus = "CONNECTING" | "SUBSCRIBED" | "DISCONNECTED";
 
 export function useRealtimeSync(
   tenantId: string | null,
-  handlers: Partial<Record<TenantTable | "tenants", ChangeHandler>>
+  handlers: Partial<Record<TenantTable | "tenants", ChangeHandler>>,
+  onStatusChange?: (status: RealtimeStatus) => void
 ) {
   const supabase = useMemo(() => createBrowserClient(), []);
 
   useEffect(() => {
     if (!tenantId) return;
 
+    onStatusChange?.("CONNECTING");
     const channel = supabase.channel(`erp:${tenantId}`);
 
     // Subscribe to all tenant tables filtered by tenant_id
@@ -48,7 +51,18 @@ export function useRealtimeSync(
       );
     }
 
-    channel.subscribe();
+    channel.subscribe((status: `${REALTIME_SUBSCRIBE_STATES}`, err?: Error) => {
+      if (status === "SUBSCRIBED") {
+        onStatusChange?.("SUBSCRIBED");
+      } else if (
+        status === "CHANNEL_ERROR" ||
+        status === "TIMED_OUT" ||
+        status === "CLOSED"
+      ) {
+        onStatusChange?.("DISCONNECTED");
+        if (err) console.warn("[realtime] channel error:", err.message);
+      }
+    });
 
     return () => {
       supabase.removeChannel(channel);

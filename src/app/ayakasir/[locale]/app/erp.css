@@ -1559,6 +1559,18 @@ a.erp-auth-logo {
   color: var(--erp-warning);
 }
 
+.erp-older-data-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.erp-text--error {
+  color: var(--erp-danger);
+  font-size: 13px;
+}
+
 /* ── Toggle / Switch ── */
 .erp-toggle {
   position: relative;
@@ -2027,10 +2039,11 @@ a.erp-auth-logo {
 }
 
 .erp-table-pagination-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   color: var(--erp-muted);
-  min-width: 60px;
-  text-align: center;
 }
 
 /* ── Dashboard date range picker ── */

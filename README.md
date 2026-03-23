@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### v1.1.4
+
+- Realtime — Status Handling + Fallback Reconcile: `useRealtimeSync` now accepts an optional `onStatusChange(status: RealtimeStatus)` callback; maps Supabase channel states to `"CONNECTING" | "SUBSCRIBED" | "DISCONNECTED"`. `ErpState.realtimeStatus` tracks current channel health. `ErpProvider` re-fetches all data on `window focus` (always) and every 5 min when `DISCONNECTED`; uses `reconcileRef` + `realtimeStatusRef` to avoid stale closures.
+- Landing Page — ISR Revalidation: Metrics section revalidation reduced from 1 hour to 5 minutes (`revalidate = 300`); Supabase count queries only run on ISR revalidation, not per-request.
+- Database — Indexes: Added `tenant_id` indexes on 4 previously unindexed tables (`cashier_sessions`, `users`, `variant_groups`, `variant_group_values`) and compound `(tenant_id, date)` indexes on 5 time-range-queried tables (`transactions`, `general_ledger`, `cash_withdrawals`, `inventory_movements`, `goods_receiving`); eliminates full-table scans on tenant queries and period filters.
+- Deployment — Login 500 Fix: ERP login was failing on Vercel with `supabaseKey is required` because `SUPABASE_SERVICE_ROLE_KEY` was missing from production env vars; `createAdminClient()` now correctly reads the key. Lesson: verify all new env vars in Vercel before deploying.
+
 ### v1.1.3
 
 - Realtime Sync — Cross-Device Lag Diagnosis: Identified that web-to-mobile sync lag is caused by Supabase Realtime subscription silently degrading; both web (`realtime.ts`) and mobile (`RealtimeManager.kt`) lack status/error callback handling, so stale state persists until manual refresh.

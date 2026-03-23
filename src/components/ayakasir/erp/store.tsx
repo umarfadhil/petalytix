@@ -1,8 +1,8 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, useReducer } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from "react";
 import { createBrowserClient } from "@/lib/supabase/client";
-import { useRealtimeSync } from "@/lib/supabase/realtime";
+import { useRealtimeSync, type RealtimeStatus } from "@/lib/supabase/realtime";
 import type {
   DbCategory, DbProduct, DbVariant, DbInventory, DbProductComponent,
   DbVendor, DbGoodsReceiving, DbGoodsReceivingItem, DbTransaction,
@@ -13,6 +13,8 @@ import type {
 
 // Re-export types for screen components
 export type { DbUser, DbCustomerCategory, DbCashierSession };
+
+export { type RealtimeStatus };
 
 // ── State ──────────────────────────────────────────────────────
 export interface ErpState {
@@ -37,6 +39,11 @@ export interface ErpState {
   cashierSessions: DbCashierSession[];
   variantGroups: DbVariantGroup[];
   variantGroupValues: DbVariantGroupValue[];
+  // Pagination metadata
+  dataWindowStart: number; // ms timestamp — rows with date < this were not loaded initially
+  olderDataLoaded: boolean; // true once all-time data has been fetched and merged
+  // Realtime connection status
+  realtimeStatus: RealtimeStatus;
 }
 
 export const EMPTY_STATE: ErpState = {
@@ -61,14 +68,30 @@ export const EMPTY_STATE: ErpState = {
   cashierSessions: [],
   variantGroups: [],
   variantGroupValues: [],
+  dataWindowStart: 0,
+  olderDataLoaded: false,
+  realtimeStatus: "CONNECTING" as RealtimeStatus,
 };
 
 // ── Actions ────────────────────────────────────────────────────
+export interface OlderData {
+  transactions: DbTransaction[];
+  transactionItems: DbTransactionItem[];
+  generalLedger: DbGeneralLedger[];
+  cashWithdrawals: DbCashWithdrawal[];
+  goodsReceivings: DbGoodsReceiving[];
+  goodsReceivingItems: DbGoodsReceivingItem[];
+  inventoryMovements: DbInventoryMovement[];
+  cashierSessions: DbCashierSession[];
+}
+
 type ErpAction =
   | { type: "SET_ALL"; payload: Partial<ErpState> }
   | { type: "SET_RESTAURANT"; payload: DbTenant }
   | { type: "UPSERT"; table: keyof ErpState; payload: Record<string, unknown> }
-  | { type: "DELETE"; table: keyof ErpState; id: string; compositeKey?: { product_id: string; variant_id: string } };
+  | { type: "DELETE"; table: keyof ErpState; id: string; compositeKey?: { product_id: string; variant_id: string } }
+  | { type: "MERGE_OLDER"; payload: OlderData; newWindowStart: number }
+  | { type: "SET_REALTIME_STATUS"; status: RealtimeStatus };
 
 function upsertInList<T extends Record<string, unknown>>(
   list: T[],
@@ -134,6 +157,29 @@ function erpReducer(state: ErpState, action: ErpAction): ErpState {
 
       return { ...state, [table]: deleteFromList(list as unknown as Record<string, unknown>[], id) };
     }
+    case "MERGE_OLDER": {
+      // Merge older rows by deduplicating on id — existing rows (from realtime) take precedence
+      const { payload, newWindowStart } = action;
+      function mergeById<T extends { id: string }>(existing: T[], older: T[]): T[] {
+        const existingIds = new Set(existing.map((r) => r.id));
+        return [...older.filter((r) => !existingIds.has(r.id)), ...existing];
+      }
+      return {
+        ...state,
+        transactions: mergeById(state.transactions, payload.transactions as DbTransaction[]),
+        transactionItems: mergeById(state.transactionItems, payload.transactionItems as DbTransactionItem[]),
+        generalLedger: mergeById(state.generalLedger, payload.generalLedger as DbGeneralLedger[]),
+        cashWithdrawals: mergeById(state.cashWithdrawals, payload.cashWithdrawals as DbCashWithdrawal[]),
+        goodsReceivings: mergeById(state.goodsReceivings, payload.goodsReceivings as DbGoodsReceiving[]),
+        goodsReceivingItems: mergeById(state.goodsReceivingItems, payload.goodsReceivingItems as DbGoodsReceivingItem[]),
+        inventoryMovements: mergeById(state.inventoryMovements, payload.inventoryMovements as DbInventoryMovement[]),
+        cashierSessions: mergeById(state.cashierSessions, payload.cashierSessions as DbCashierSession[]),
+        dataWindowStart: newWindowStart,
+        olderDataLoaded: newWindowStart === 0,
+      };
+    }
+    case "SET_REALTIME_STATUS":
+      return { ...state, realtimeStatus: action.status };
     default:
       return state;
   }
@@ -233,7 +279,112 @@ export function ErpProvider({ children, tenantId, locale, initialData }: ErpProv
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useRealtimeSync(tenantId, handlers);
+  const onStatusChange = useCallback((status: RealtimeStatus) => {
+    dispatch({ type: "SET_REALTIME_STATUS", status });
+  }, []);
+
+  useRealtimeSync(tenantId, handlers, onStatusChange);
+
+  // ── Fallback reconcile ────────────────────────────────────────
+  // Re-fetch all static + recent windowed tables when realtime is disconnected.
+  // Triggered on: window focus (always) and a 5-minute interval (only when DISCONNECTED).
+  const realtimeStatusRef = useRef<RealtimeStatus>("CONNECTING");
+  const reconcileRef = useRef<() => Promise<void>>();
+
+  reconcileRef.current = async () => {
+    try {
+      const windowStart = Date.now() - 90 * 24 * 60 * 60 * 1000;
+      const [
+        categories, products, variants, inventory, productComponents,
+        vendors, customers, customerCategories, tenantUsers,
+        variantGroups, variantGroupValues,
+        goodsReceivings, transactions, cashWithdrawals,
+        generalLedger, inventoryMovements, cashierSessions,
+        tenantRow,
+      ] = await Promise.all([
+        supabase.from("categories").select("*").eq("tenant_id", tenantId).order("sort_order"),
+        supabase.from("products").select("*").eq("tenant_id", tenantId).order("name"),
+        supabase.from("variants").select("*").eq("tenant_id", tenantId),
+        supabase.from("inventory").select("*").eq("tenant_id", tenantId),
+        supabase.from("product_components").select("*").eq("tenant_id", tenantId).order("sort_order"),
+        supabase.from("vendors").select("*").eq("tenant_id", tenantId).order("name"),
+        supabase.from("customers").select("*").eq("tenant_id", tenantId).order("name"),
+        supabase.from("customer_categories").select("*").eq("tenant_id", tenantId).order("name"),
+        supabase.from("users").select("*").eq("tenant_id", tenantId).order("name"),
+        supabase.from("variant_groups").select("*").eq("tenant_id", tenantId).order("name"),
+        supabase.from("variant_group_values").select("*").eq("tenant_id", tenantId).order("sort_order"),
+        supabase.from("goods_receiving").select("*").eq("tenant_id", tenantId).gte("date", windowStart).order("date", { ascending: false }),
+        supabase.from("transactions").select("*").eq("tenant_id", tenantId).gte("date", windowStart).order("date", { ascending: false }),
+        supabase.from("cash_withdrawals").select("*").eq("tenant_id", tenantId).gte("date", windowStart).order("date", { ascending: false }),
+        supabase.from("general_ledger").select("*").eq("tenant_id", tenantId).gte("date", windowStart).order("date", { ascending: false }),
+        supabase.from("inventory_movements").select("*").eq("tenant_id", tenantId).gte("date", windowStart).order("date", { ascending: false }),
+        supabase.from("cashier_sessions").select("*").eq("tenant_id", tenantId).gte("opened_at", windowStart).order("opened_at", { ascending: false }),
+        supabase.from("tenants").select("*").eq("id", tenantId).single(),
+      ]);
+
+      const txIds = (transactions.data || []).map((t: { id: string }) => t.id);
+      const grIds = (goodsReceivings.data || []).map((r: { id: string }) => r.id);
+      const [transactionItems, goodsReceivingItems] = await Promise.all([
+        txIds.length > 0
+          ? supabase.from("transaction_items").select("*").in("transaction_id", txIds)
+          : Promise.resolve({ data: [] }),
+        grIds.length > 0
+          ? supabase.from("goods_receiving_items").select("*").in("receiving_id", grIds)
+          : Promise.resolve({ data: [] }),
+      ]);
+
+      dispatch({
+        type: "SET_ALL",
+        payload: {
+          categories: categories.data || [],
+          products: products.data || [],
+          variants: variants.data || [],
+          inventory: inventory.data || [],
+          productComponents: productComponents.data || [],
+          vendors: vendors.data || [],
+          customers: customers.data || [],
+          customerCategories: customerCategories.data || [],
+          tenantUsers: tenantUsers.data || [],
+          variantGroups: variantGroups.data || [],
+          variantGroupValues: variantGroupValues.data || [],
+          goodsReceivings: goodsReceivings.data || [],
+          goodsReceivingItems: goodsReceivingItems.data || [],
+          transactions: transactions.data || [],
+          transactionItems: transactionItems.data || [],
+          cashWithdrawals: cashWithdrawals.data || [],
+          generalLedger: generalLedger.data || [],
+          inventoryMovements: inventoryMovements.data || [],
+          cashierSessions: cashierSessions.data || [],
+          ...(tenantRow.data ? { restaurant: tenantRow.data as DbTenant } : {}),
+          dataWindowStart: windowStart,
+        },
+      });
+    } catch (err) {
+      console.warn("[erp] reconcile failed:", err);
+    }
+  };
+
+  // Keep ref in sync with latest status
+  useEffect(() => {
+    realtimeStatusRef.current = state.realtimeStatus;
+  }, [state.realtimeStatus]);
+
+  // Focus reconcile — always run on tab focus
+  useEffect(() => {
+    const onFocus = () => reconcileRef.current?.();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
+  // Interval reconcile — only while DISCONNECTED (5-minute poll)
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (realtimeStatusRef.current === "DISCONNECTED") {
+        reconcileRef.current?.();
+      }
+    }, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const value = useMemo(
     () => ({ state, dispatch, supabase, tenantId, locale }),

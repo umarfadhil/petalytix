@@ -37,7 +37,8 @@
 - Browser (client components): `import { createBrowserClient } from "@/lib/supabase/client"`
 - Server (Server Components, server actions): `import { createServerClient } from "@/lib/supabase/server"`
 - Middleware: `import { createMiddlewareClient } from "@/lib/supabase/middleware"`
-- Env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- Env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (server-only, required by `createAdminClient()` in `src/lib/supabase/server-admin.ts`)
+- When deploying features that introduce new env vars, always verify they are configured in Vercel before deploying.
 
 ### ERP Repository Pattern
 - One file per table in `src/lib/supabase/repositories/`.
@@ -49,7 +50,9 @@
 - `ErpProvider` (React Context + useReducer) wraps all authenticated ERP pages.
 - Server-side `(erp)/layout.tsx` fetches all data and passes as `initialData` to provider.
 - Mutations: call repository function → dispatch UPSERT/DELETE to local state → realtime handles cross-device sync.
-- Realtime: `useRealtimeSync` hook subscribes to Postgres Changes on all 12 tenant tables + `tenants`.
+- Realtime: `useRealtimeSync` hook subscribes to Postgres Changes on all 12 tenant tables + `tenants`. Accepts optional `onStatusChange(status: RealtimeStatus)` callback — maps channel subscribe states to `"CONNECTING" | "SUBSCRIBED" | "DISCONNECTED"`.
+- `ErpState.realtimeStatus` reflects current channel status. Screens can read it to show a connection indicator.
+- Fallback reconcile: `ErpProvider` re-fetches all data on `window focus` (always) and every 5 min when `DISCONNECTED`. Uses `reconcileRef` + `realtimeStatusRef` to avoid stale closures.
 - All tenant queries MUST filter by `tenant_id`.
 
 ### ERP Styling

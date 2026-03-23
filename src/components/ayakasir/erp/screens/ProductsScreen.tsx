@@ -961,23 +961,41 @@ export default function ProductsScreen() {
 
       {tab === "products" && (
         <>
-          {/* Category filter chips */}
-          <div className="erp-filter-bar">
-            <span
-              className={`erp-chip${filterCategory === "" ? " erp-chip--active" : ""}`}
-              onClick={() => { setFilterCategory(""); resetPageAndSelection(); }}
-            >
-              {copy.pos.allCategories}
-            </span>
-            {categories.map((c) => (
+          {/* Category filter chips + pagination info */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+            <div className="erp-filter-bar" style={{ margin: 0 }}>
               <span
-                key={c.id}
-                className={`erp-chip${filterCategory === c.id ? " erp-chip--active" : ""}`}
-                onClick={() => { setFilterCategory(filterCategory === c.id ? "" : c.id); resetPageAndSelection(); }}
+                className={`erp-chip${filterCategory === "" ? " erp-chip--active" : ""}`}
+                onClick={() => { setFilterCategory(""); resetPageAndSelection(); }}
               >
-                {c.name}
+                {copy.pos.allCategories}
               </span>
-            ))}
+              {categories.map((c) => (
+                <span
+                  key={c.id}
+                  className={`erp-chip${filterCategory === c.id ? " erp-chip--active" : ""}`}
+                  onClick={() => { setFilterCategory(filterCategory === c.id ? "" : c.id); resetPageAndSelection(); }}
+                >
+                  {c.name}
+                </span>
+              ))}
+            </div>
+            <div className="erp-table-pagination-info">
+              <span>{copy.products.rowsPerPage}:</span>
+              {[10, 25, 50].map((size) => (
+                <span
+                  key={size}
+                  className={`erp-chip${prodPageSize === size ? " erp-chip--active" : ""}`}
+                  onClick={() => { setProdPageSize(size); setProdPage(0); setSelectedProdIds(new Set()); }}
+                  style={{ cursor: "pointer" }}
+                >
+                  {size}
+                </span>
+              ))}
+              <span>
+                {safePage * prodPageSize + 1}–{Math.min((safePage + 1) * prodPageSize, filteredProducts.length)} / {filteredProducts.length}
+              </span>
+            </div>
           </div>
 
           <div className="erp-search">
@@ -1094,22 +1112,6 @@ export default function ProductsScreen() {
 
           {/* Pagination */}
           <div className="erp-table-pagination">
-            <div className="erp-table-pagination-info">
-              <span>{copy.products.rowsPerPage}:</span>
-              {[10, 25, 50].map((size) => (
-                <span
-                  key={size}
-                  className={`erp-chip${prodPageSize === size ? " erp-chip--active" : ""}`}
-                  onClick={() => { setProdPageSize(size); setProdPage(0); setSelectedProdIds(new Set()); }}
-                  style={{ cursor: "pointer" }}
-                >
-                  {size}
-                </span>
-              ))}
-              <span>
-                {safePage * prodPageSize + 1}–{Math.min((safePage + 1) * prodPageSize, filteredProducts.length)} / {filteredProducts.length}
-              </span>
-            </div>
             <div style={{ display: "flex", gap: "0.25rem" }}>
               <button
                 className="erp-btn erp-btn--ghost erp-btn--sm"

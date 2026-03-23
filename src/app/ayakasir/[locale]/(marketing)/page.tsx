@@ -5,7 +5,7 @@ import AyaKasirHero from "@/components/ayakasir/Hero";
 import MetricCounter from "@/components/ayakasir/MetricCounter";
 import { createServerClient } from "@/lib/supabase/server";
 
-export const revalidate = 3600;
+export const revalidate = 300;
 
 type AyaKasirMetrics = {
   tenants: number;

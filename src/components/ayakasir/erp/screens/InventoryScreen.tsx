@@ -15,6 +15,8 @@ export default function InventoryScreen() {
 
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
+  const [invPage, setInvPage] = useState(0);
+  const [invPageSize, setInvPageSize] = useState<10 | 25 | 50>(10);
   const [adjustItem, setAdjustItem] = useState<DbInventory | null>(null);
   const [newQty, setNewQty] = useState("");
   const [minQtyInput, setMinQtyInput] = useState("");
@@ -228,6 +230,9 @@ export default function InventoryScreen() {
     [inventoryRows]
   );
 
+  const invTotalPages = Math.ceil(inventoryRows.length / invPageSize);
+  const pagedInventoryRows = inventoryRows.slice(invPage * invPageSize, invPage * invPageSize + invPageSize);
+
   return (
     <div>
       {lowStockItems.length > 0 && (
@@ -257,6 +262,41 @@ export default function InventoryScreen() {
         </div>
       </div>
 
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+        <div className="erp-filter-bar" style={{ margin: 0 }}>
+          <span
+            className={`erp-chip${filterCategory === "" ? " erp-chip--active" : ""}`}
+            onClick={() => { setFilterCategory(""); setInvPage(0); }}
+          >
+            {copy.pos.allCategories}
+          </span>
+          {rawCategories.map((c) => (
+            <span
+              key={c.id}
+              className={`erp-chip${filterCategory === c.id ? " erp-chip--active" : ""}`}
+              onClick={() => { setFilterCategory(filterCategory === c.id ? "" : c.id); setInvPage(0); }}
+            >
+              {c.name}
+            </span>
+          ))}
+        </div>
+        <div className="erp-table-pagination-info">
+          <span>{copy.purchasing.rowsPerPage}:</span>
+          {([10, 25, 50] as const).map((n) => (
+            <span
+              key={n}
+              className={`erp-chip erp-chip--sm${invPageSize === n ? " erp-chip--active" : ""}`}
+              onClick={() => { setInvPageSize(n); setInvPage(0); }}
+            >
+              {n}
+            </span>
+          ))}
+          <span>
+            {inventoryRows.length === 0 ? "0" : `${invPage * invPageSize + 1}–${Math.min((invPage + 1) * invPageSize, inventoryRows.length)}`} / {inventoryRows.length}
+          </span>
+        </div>
+      </div>
+
       <div className="erp-search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -265,26 +305,8 @@ export default function InventoryScreen() {
           type="text"
           placeholder={copy.common.search}
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => { setSearch(e.target.value); setInvPage(0); }}
         />
-      </div>
-
-      <div className="erp-filter-bar">
-        <span
-          className={`erp-chip${filterCategory === "" ? " erp-chip--active" : ""}`}
-          onClick={() => setFilterCategory("")}
-        >
-          {copy.pos.allCategories}
-        </span>
-        {rawCategories.map((c) => (
-          <span
-            key={c.id}
-            className={`erp-chip${filterCategory === c.id ? " erp-chip--active" : ""}`}
-            onClick={() => setFilterCategory(filterCategory === c.id ? "" : c.id)}
-          >
-            {c.name}
-          </span>
-        ))}
       </div>
 
       <div className="erp-table-wrap">
@@ -309,7 +331,7 @@ export default function InventoryScreen() {
                 </td>
               </tr>
             ) : (
-              inventoryRows.map((inv) => {
+              pagedInventoryRows.map((inv) => {
                 const isLow = inv.current_qty < inv.min_qty && inv.min_qty > 0;
                 const dispUnit = getDisplayUnit(inv);
                 const dispCurrent = convertToDisplayUnit(inv.current_qty, dispUnit);
@@ -392,6 +414,13 @@ export default function InventoryScreen() {
             )}
           </tbody>
         </table>
+        {invTotalPages > 1 && (
+          <div className="erp-table-pagination">
+            <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={invPage === 0} onClick={() => setInvPage((p) => p - 1)}>‹</button>
+            <span style={{ fontSize: 13 }}>{invPage + 1} / {invTotalPages}</span>
+            <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={invPage >= invTotalPages - 1} onClick={() => setInvPage((p) => p + 1)}>›</button>
+          </div>
+        )}
       </div>
 
       {/* Adjust stock dialog */}

@@ -17,6 +17,8 @@ import {
   deleteTenantUserAction,
   updateQrisSettingsAction,
 } from "@/app/ayakasir/actions/auth";
+import { fetchOlderErpData } from "@/app/ayakasir/actions/fetch-older-data";
+import type { OlderData } from "../store";
 import type { DbGeneralLedger, DbTenant, DbUser } from "@/lib/supabase/types";
 
 type PaymentMethod = "CASH" | "QRIS" | "TRANSFER" | "UTANG";
@@ -64,6 +66,8 @@ export default function SettingsScreen() {
   const todayStr = new Date().toISOString().split("T")[0];
   const [csvFrom, setCsvFrom] = useState(todayStr);
   const [csvTo, setCsvTo] = useState(todayStr);
+  const [loadingOlderCsv, setLoadingOlderCsv] = useState(false);
+  const [olderCsvError, setOlderCsvError] = useState<string | null>(null);
   const exportLookups = useMemo(() => {
     const txMap = new Map(state.transactions.map((t) => [t.id, t]));
     const customerMap = new Map(state.customers.map((c) => [c.id, c]));
@@ -620,6 +624,20 @@ export default function SettingsScreen() {
       setMessage({ type: "error", text: copy.common.error });
     }
     setSaving(false);
+  };
+
+  const handleLoadOlderForCsv = async () => {
+    if (loadingOlderCsv || state.olderDataLoaded) return;
+    setLoadingOlderCsv(true);
+    setOlderCsvError(null);
+    try {
+      const older = await fetchOlderErpData(tenantId, 0, state.dataWindowStart) as OlderData;
+      dispatch({ type: "MERGE_OLDER", payload: older, newWindowStart: 0 });
+    } catch {
+      setOlderCsvError(copy.common.error);
+    } finally {
+      setLoadingOlderCsv(false);
+    }
   };
 
   const handleExportCsv = () => {
@@ -1350,6 +1368,30 @@ export default function SettingsScreen() {
                 />
               </div>
             </div>
+            {/* Older data warning inside CSV dialog */}
+            {(() => {
+              const fromMs = csvFrom ? new Date(csvFrom + "T00:00:00").getTime() : null;
+              if (fromMs && !state.olderDataLoaded && fromMs < state.dataWindowStart) {
+                return (
+                  <div className="erp-alert erp-alert--warning" style={{ margin: "0 0 12px" }}>
+                    <span style={{ flex: 1 }}>
+                      {locale === "id"
+                        ? "Periode ini mungkin tidak lengkap — data lebih lama belum dimuat."
+                        : "This period may be incomplete — older data has not been loaded yet."}
+                    </span>
+                    <button
+                      className="erp-btn erp-btn--sm erp-btn--secondary"
+                      onClick={handleLoadOlderForCsv}
+                      disabled={loadingOlderCsv}
+                    >
+                      {loadingOlderCsv ? copy.common.loading : (locale === "id" ? "Muat Data Lama" : "Load Older Data")}
+                    </button>
+                    {olderCsvError && <span className="erp-text--error">{olderCsvError}</span>}
+                  </div>
+                );
+              }
+              return null;
+            })()}
             <div className="erp-dialog-footer">
               <button className="erp-btn erp-btn--secondary" onClick={() => setShowCsvDialog(false)}>
                 {copy.common.cancel}

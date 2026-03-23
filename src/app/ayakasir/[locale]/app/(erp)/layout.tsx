@@ -14,7 +14,15 @@ function getServerBasePath() {
   return "/ayakasir";
 }
 
+// Initial load fetches only the last DATA_WINDOW_DAYS of time-based tables.
+// Screens that need older data call fetchOlderErpData() server action and dispatch MERGE_OLDER.
+const DATA_WINDOW_DAYS = 90;
+
 async function fetchErpData(supabase: ReturnType<typeof createAdminClient>, tenantId: string) {
+  const windowStart = Date.now() - DATA_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+  // Static tables (load all) and time-based tables (load last 90 days) in parallel.
+  // goods_receiving_items and transaction_items have no date column — fetched by parent IDs below.
   const [
     categories,
     products,
@@ -22,39 +30,51 @@ async function fetchErpData(supabase: ReturnType<typeof createAdminClient>, tena
     inventory,
     productComponents,
     vendors,
-    goodsReceivings,
-    goodsReceivingItems,
-    transactions,
-    transactionItems,
-    cashWithdrawals,
-    generalLedger,
     customers,
     customerCategories,
-    inventoryMovements,
     tenantUsers,
-    cashierSessions,
     variantGroups,
     variantGroupValues,
+    // Time-based
+    goodsReceivings,
+    transactions,
+    cashWithdrawals,
+    generalLedger,
+    inventoryMovements,
+    cashierSessions,
   ] = await Promise.all([
+    // Static
     supabase.from("categories").select("*").eq("tenant_id", tenantId).order("sort_order"),
     supabase.from("products").select("*").eq("tenant_id", tenantId).order("name"),
     supabase.from("variants").select("*").eq("tenant_id", tenantId),
     supabase.from("inventory").select("*").eq("tenant_id", tenantId),
     supabase.from("product_components").select("*").eq("tenant_id", tenantId).order("sort_order"),
     supabase.from("vendors").select("*").eq("tenant_id", tenantId).order("name"),
-    supabase.from("goods_receiving").select("*").eq("tenant_id", tenantId).order("date", { ascending: false }),
-    supabase.from("goods_receiving_items").select("*").eq("tenant_id", tenantId),
-    supabase.from("transactions").select("*").eq("tenant_id", tenantId).order("date", { ascending: false }),
-    supabase.from("transaction_items").select("*").eq("tenant_id", tenantId),
-    supabase.from("cash_withdrawals").select("*").eq("tenant_id", tenantId).order("date", { ascending: false }),
-    supabase.from("general_ledger").select("*").eq("tenant_id", tenantId).order("date", { ascending: false }),
     supabase.from("customers").select("*").eq("tenant_id", tenantId).order("name"),
     supabase.from("customer_categories").select("*").eq("tenant_id", tenantId).order("name"),
-    supabase.from("inventory_movements").select("*").eq("tenant_id", tenantId).order("date", { ascending: false }),
     supabase.from("users").select("*").eq("tenant_id", tenantId).order("name"),
-    supabase.from("cashier_sessions").select("*").eq("tenant_id", tenantId).order("opened_at", { ascending: false }),
     supabase.from("variant_groups").select("*").eq("tenant_id", tenantId).order("name"),
     supabase.from("variant_group_values").select("*").eq("tenant_id", tenantId).order("sort_order"),
+    // Time-based (windowed)
+    supabase.from("goods_receiving").select("*").eq("tenant_id", tenantId).gte("date", windowStart).order("date", { ascending: false }),
+    supabase.from("transactions").select("*").eq("tenant_id", tenantId).gte("date", windowStart).order("date", { ascending: false }),
+    supabase.from("cash_withdrawals").select("*").eq("tenant_id", tenantId).gte("date", windowStart).order("date", { ascending: false }),
+    supabase.from("general_ledger").select("*").eq("tenant_id", tenantId).gte("date", windowStart).order("date", { ascending: false }),
+    supabase.from("inventory_movements").select("*").eq("tenant_id", tenantId).gte("date", windowStart).order("date", { ascending: false }),
+    supabase.from("cashier_sessions").select("*").eq("tenant_id", tenantId).gte("opened_at", windowStart).order("opened_at", { ascending: false }),
+  ]);
+
+  // Fetch child records by parent IDs (no date column — no independent windowing)
+  const txIds = (transactions.data || []).map((t: { id: string }) => t.id);
+  const grIds = (goodsReceivings.data || []).map((r: { id: string }) => r.id);
+
+  const [transactionItems, goodsReceivingItems] = await Promise.all([
+    txIds.length > 0
+      ? supabase.from("transaction_items").select("*").in("transaction_id", txIds)
+      : Promise.resolve({ data: [] }),
+    grIds.length > 0
+      ? supabase.from("goods_receiving_items").select("*").in("receiving_id", grIds)
+      : Promise.resolve({ data: [] }),
   ]);
 
   return {
@@ -77,6 +97,7 @@ async function fetchErpData(supabase: ReturnType<typeof createAdminClient>, tena
     cashierSessions: cashierSessions.data || [],
     variantGroups: variantGroups.data || [],
     variantGroupValues: variantGroupValues.data || [],
+    dataWindowStart: windowStart,
   };
 }
 

@@ -257,6 +257,9 @@ export default function PurchasingScreen() {
   const [filterDate, setFilterDate] = useState("");
   const [filterVendorId, setFilterVendorId] = useState("");
   const [filterItemName, setFilterItemName] = useState("");
+  // Receiving pagination
+  const [receivingPage, setReceivingPage] = useState(0);
+  const [receivingPageSize, setReceivingPageSize] = useState<10 | 25 | 50>(10);
 
   const rawMaterials = useMemo(
     () => state.products.filter((p) => p.product_type === "RAW_MATERIAL"),
@@ -296,6 +299,9 @@ export default function PurchasingScreen() {
     }
     return list;
   }, [state.goodsReceivings, state.goodsReceivingItems, state.products, filterDate, filterVendorId, filterItemName]);
+
+  const receivingTotalPages = Math.ceil(filteredReceivings.length / receivingPageSize);
+  const pagedReceivings = filteredReceivings.slice(receivingPage * receivingPageSize, receivingPage * receivingPageSize + receivingPageSize);
 
   const sortedVendors = useMemo(
     () => [...state.vendors].sort((a, b) => a.name.localeCompare(b.name)),
@@ -1973,18 +1979,39 @@ export default function PurchasingScreen() {
 
       {tab === "receiving" && (
         <>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--erp-ink-secondary)" }}>
+              <span>{copy.purchasing.rowsPerPage}:</span>
+              {([10, 25, 50] as const).map((n) => (
+                <span
+                  key={n}
+                  className={`erp-chip${receivingPageSize === n ? " erp-chip--active" : ""}`}
+                  style={{ padding: "2px 10px", fontSize: 12 }}
+                  onClick={() => { setReceivingPageSize(n); setReceivingPage(0); }}
+                >
+                  {n}
+                </span>
+              ))}
+              <span style={{ marginLeft: 8 }}>
+                {filteredReceivings.length > 0
+                  ? `${receivingPage * receivingPageSize + 1}–${Math.min((receivingPage + 1) * receivingPageSize, filteredReceivings.length)} / ${filteredReceivings.length}`
+                  : "0"}
+              </span>
+            </div>
+          </div>
+
           <div className="erp-filter-bar" style={{ flexWrap: "wrap", gap: 8 }}>
             <input
               className="erp-input"
               type="date"
               value={filterDate}
-              onChange={(e) => setFilterDate(e.target.value)}
+              onChange={(e) => { setFilterDate(e.target.value); setReceivingPage(0); }}
               style={{ width: "auto" }}
             />
             <select
               className="erp-select"
               value={filterVendorId}
-              onChange={(e) => setFilterVendorId(e.target.value)}
+              onChange={(e) => { setFilterVendorId(e.target.value); setReceivingPage(0); }}
               style={{ width: "auto" }}
             >
               <option value="">{locale === "id" ? "Semua Vendor" : "All Vendors"}</option>
@@ -2000,18 +2027,19 @@ export default function PurchasingScreen() {
                 type="text"
                 placeholder={copy.products.name}
                 value={filterItemName}
-                onChange={(e) => setFilterItemName(e.target.value)}
+                onChange={(e) => { setFilterItemName(e.target.value); setReceivingPage(0); }}
               />
             </div>
             {(filterDate || filterVendorId || filterItemName) && (
               <button
                 className="erp-btn erp-btn--ghost erp-btn--sm"
-                onClick={() => { setFilterDate(""); setFilterVendorId(""); setFilterItemName(""); }}
+                onClick={() => { setFilterDate(""); setFilterVendorId(""); setFilterItemName(""); setReceivingPage(0); }}
               >
                 ✕ {copy.common.close}
               </button>
             )}
           </div>
+
           <div className="erp-table-wrap">
           <table className="erp-table">
             <thead>
@@ -2032,7 +2060,7 @@ export default function PurchasingScreen() {
                   </td>
                 </tr>
               ) : (
-                filteredReceivings.map((r) => {
+                pagedReceivings.map((r) => {
                   const isExpanded = expandedReceivingId === r.id;
                   const lineItems = state.goodsReceivingItems.filter((i) => i.receiving_id === r.id);
                   return (
@@ -2107,6 +2135,13 @@ export default function PurchasingScreen() {
               )}
             </tbody>
           </table>
+          {receivingTotalPages > 1 && (
+            <div className="erp-table-pagination">
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={receivingPage === 0} onClick={() => setReceivingPage((p) => p - 1)}>‹</button>
+              <span style={{ fontSize: 13 }}>{receivingPage + 1} / {receivingTotalPages}</span>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" disabled={receivingPage >= receivingTotalPages - 1} onClick={() => setReceivingPage((p) => p + 1)}>›</button>
+            </div>
+          )}
           </div>
         </>
       )}
