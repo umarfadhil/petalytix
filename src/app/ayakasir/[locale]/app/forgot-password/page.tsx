@@ -3,11 +3,13 @@
 import { useState } from "react";
 import { useParams } from "next/navigation";
 import { getErpCopy } from "@/components/ayakasir/erp/i18n";
+import { useBasePath } from "@/components/ayakasir/erp/useBasePath";
 import { requestPasswordResetAction } from "@/app/ayakasir/actions/auth";
 
 export default function ForgotPasswordPage() {
   const params = useParams();
   const locale = (params.locale as string) || "id";
+  const base = useBasePath();
   const { auth: authCopy } = getErpCopy(locale);
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
@@ -78,7 +80,7 @@ export default function ForgotPasswordPage() {
 
         <p style={{ textAlign: "center", marginTop: 20, fontSize: 14, color: "var(--erp-muted)" }}>
           <a
-            href={`/${locale}/app/login`}
+            href={`${base}/${locale}/app/login`}
             style={{ color: "var(--erp-primary)", fontWeight: 500 }}
           >
             {authCopy.backToLogin}

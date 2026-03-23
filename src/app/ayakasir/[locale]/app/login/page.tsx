@@ -4,11 +4,13 @@ import { useState } from "react";
 import { loginErpAction } from "@/app/ayakasir/actions/auth";
 import { useParams, useRouter } from "next/navigation";
 import { getErpCopy } from "@/components/ayakasir/erp/i18n";
+import { useBasePath } from "@/components/ayakasir/erp/useBasePath";
 
 export default function LoginPage() {
   const params = useParams();
   const locale = (params.locale as string) || "id";
   const router = useRouter();
+  const base = useBasePath();
   const { auth: authCopy } = getErpCopy(locale);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -33,7 +35,7 @@ export default function LoginPage() {
         return;
       }
 
-      router.push(`/${locale}/app/dashboard`);
+      router.push(`${base}/${locale}/app/dashboard`);
       router.refresh();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -94,7 +96,7 @@ export default function LoginPage() {
 
         <p style={{ textAlign: "center", marginTop: 14, fontSize: 14 }}>
           <a
-            href={`/${locale}/app/forgot-password`}
+            href={`${base}/${locale}/app/forgot-password`}
             style={{ color: "var(--erp-primary)", fontWeight: 500 }}
           >
             {authCopy.forgotPassword}
@@ -104,7 +106,7 @@ export default function LoginPage() {
         <p style={{ textAlign: "center", marginTop: 20, fontSize: 14, color: "var(--erp-muted)" }}>
           {authCopy.noAccount}{" "}
           <a
-            href={`/${locale}/app/register`}
+            href={`${base}/${locale}/app/register`}
             style={{ color: "var(--erp-primary)", fontWeight: 500 }}
           >
             {authCopy.registerLink}

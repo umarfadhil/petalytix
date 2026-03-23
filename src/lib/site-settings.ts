@@ -287,15 +287,15 @@ async function getCollection() {
 }
 
 export async function getSiteSettings(): Promise<SiteSettings> {
-  const collection = await getCollection();
-  const record = await collection.findOne({ _id: SETTINGS_ID });
   const defaults = getDefaultSiteSettings();
-
-  if (!record?.settings) {
+  try {
+    const collection = await getCollection();
+    const record = await collection.findOne({ _id: SETTINGS_ID });
+    if (!record?.settings) return defaults;
+    return mergeSettings(defaults, record.settings);
+  } catch {
     return defaults;
   }
-
-  return mergeSettings(defaults, record.settings);
 }
 
 export async function updateSiteSettings(settings: SiteSettings) {

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { createBrowserClient } from "@/lib/supabase/client";
 import { getErpCopy } from "@/components/ayakasir/erp/i18n";
+import { useBasePath } from "@/components/ayakasir/erp/useBasePath";
 import { activateAccountAction } from "@/app/ayakasir/actions/auth";
 
 type ConfirmStatus = "loading" | "success" | "error";
@@ -11,6 +12,7 @@ type ConfirmStatus = "loading" | "success" | "error";
 export default function ConfirmPage() {
   const params = useParams();
   const locale = (params.locale as string) || "id";
+  const base = useBasePath();
   const { auth: authCopy } = getErpCopy(locale);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -26,8 +28,8 @@ export default function ConfirmPage() {
       (!otpType && tokenHash?.startsWith("pkce_")) ? "recovery" : otpType;
     const defaultTarget =
       effectiveType === "recovery"
-        ? `/${locale}/app/reset-password`
-        : `/${locale}/app/login`;
+        ? `${base}/${locale}/app/reset-password`
+        : `${base}/${locale}/app/login`;
 
     if (nextParam) {
       if (nextParam.startsWith("/")) {
@@ -45,7 +47,7 @@ export default function ConfirmPage() {
     }
 
     return defaultTarget;
-  }, [nextParam, locale, otpType]);
+  }, [nextParam, locale, otpType, base]);
 
   useEffect(() => {
     let isActive = true;
@@ -163,7 +165,7 @@ export default function ConfirmPage() {
               {authCopy.confirmActivatedHint}
             </p>
             <a
-              href={`/${locale}/app/login`}
+              href={`${base}/${locale}/app/login`}
               className="erp-btn erp-btn--primary"
               style={{ display: "inline-block", textDecoration: "none" }}
             >

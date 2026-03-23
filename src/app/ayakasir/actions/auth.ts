@@ -1,6 +1,7 @@
 "use server";
 
 import { createServerClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server-admin";
 import {
   clearErpSessionCookie,
   createErpSession,
@@ -50,7 +51,7 @@ function isIdLocale(locale: string) {
 }
 
 async function resolveTenantId(
-  supabase: ReturnType<typeof createServerClient>,
+  supabase: ReturnType<typeof createAdminClient>,
   user: DbUser,
   fallbackEmail: string
 ) {
@@ -102,7 +103,7 @@ export async function loginErpAction({
     };
   }
 
-  const supabase = createServerClient();
+  const supabase = createAdminClient();
   const { data: user, error } = await supabase
     .from("users")
     .select("*")
@@ -143,7 +144,8 @@ export async function loginErpAction({
   let passwordSalt = dbUser.password_salt;
 
   if (!passwordHash || !passwordSalt) {
-    const authResult = await supabase.auth.signInWithPassword({
+    const authClient = createServerClient();
+    const authResult = await authClient.auth.signInWithPassword({
       email: normalizedEmail,
       password,
     });
@@ -171,7 +173,7 @@ export async function loginErpAction({
       .eq("id", dbUser.id);
 
     try {
-      await supabase.auth.signOut();
+      await authClient.auth.signOut();
     } catch {
       // Ignore cookie cleanup failure here; ERP session uses its own cookie.
     }
@@ -255,7 +257,7 @@ export async function registerErpAction({
     };
   }
 
-  const supabase = createServerClient();
+  const supabase = createAdminClient();
 
   const { data: existingUser, error: existingUserError } = await supabase
     .from("users")
@@ -349,7 +351,7 @@ export async function registerErpAction({
 
   try {
     const redirectBase = resolveAuthRedirectBase(origin);
-    await supabase.auth.signUp({
+    await createServerClient().auth.signUp({
       email: normalizedEmail,
       password,
       options: {
@@ -460,8 +462,8 @@ export async function resetErpPasswordAction({
     };
   }
 
-  const supabase = createServerClient();
-  const { data, error: userError } = await supabase.auth.getUser();
+  const authClient = createServerClient();
+  const { data, error: userError } = await authClient.auth.getUser();
   const authUser = data?.user;
 
   if (userError || !authUser?.email) {
@@ -477,7 +479,8 @@ export async function resetErpPasswordAction({
   const nextSalt = generatePasswordSalt();
   const nextHash = hashPassword(newPassword, nextSalt);
 
-  const { error: updateError } = await supabase
+  const admin = createAdminClient();
+  const { error: updateError } = await admin
     .from("users")
     .update({
       password_hash: nextHash,
@@ -523,7 +526,7 @@ export async function upsertTenantUserAction(
     return { ok: false, message: "Unauthorized" };
   }
 
-  const supabase = createServerClient();
+  const supabase = createAdminClient();
   const now = Date.now();
   const trimmedName = input.name.trim();
   const normalizedEmail = input.email.trim().toLowerCase();
@@ -599,7 +602,7 @@ export async function updateQrisSettingsAction(input: {
     return { ok: false, message: "Unauthorized" };
   }
 
-  const supabase = createServerClient();
+  const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("tenants")
     .update({
@@ -628,7 +631,7 @@ export async function deleteTenantUserAction(userId: string): Promise<ActionResu
     return { ok: false, message: "Cannot delete your own account." };
   }
 
-  const supabase = createServerClient();
+  const supabase = createAdminClient();
   const { error } = await supabase.from("users").delete().eq("id", userId);
   if (error) {
     return { ok: false, message: error.message };
@@ -662,7 +665,7 @@ export async function changeErpPasswordAction({
     };
   }
 
-  const supabase = createServerClient();
+  const supabase = createAdminClient();
   const { data: user, error } = await supabase
     .from("users")
     .select("*")
@@ -747,7 +750,7 @@ export async function activateAccountAction(email: string): Promise<ActionResult
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) return { ok: false };
 
-  const supabase = createServerClient();
+  const supabase = createAdminClient();
   const now = Date.now();
 
   const { error: userError } = await supabase
@@ -776,7 +779,7 @@ export async function verifyErpPinAction({
   userId: string;
   pin: string;
 }): Promise<boolean> {
-  const supabase = createServerClient();
+  const supabase = createAdminClient();
   const { data: dbUser } = await supabase
     .from("users")
     .select("pin_hash, pin_salt")

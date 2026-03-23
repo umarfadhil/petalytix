@@ -48,7 +48,8 @@
       "Bash(grep -v \"//\")",
       "Bash(grep -v \"^$\")",
       "Bash(npx skills:*)",
-      "Bash(echo \"Exit: $?\")"
+      "Bash(echo \"Exit: $?\")",
+      "mcp__claude_ai_Supabase__list_tables"
     ]
   }
 }

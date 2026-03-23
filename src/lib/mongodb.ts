@@ -15,9 +15,9 @@ declare global {
 }
 
 const mongoOptions = {
-  connectTimeoutMS: 10000,
-  serverSelectionTimeoutMS: 10000,
-  socketTimeoutMS: 15000,
+  connectTimeoutMS: 5000,
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 8000,
 };
 
 if (process.env.NODE_ENV === "development") {

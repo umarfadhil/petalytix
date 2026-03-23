@@ -2,7 +2,15 @@
 
 ## Changelog
 
-### v1.1.1
+### v1.1.3
+
+- Realtime Sync — Cross-Device Lag Diagnosis: Identified that web-to-mobile sync lag is caused by Supabase Realtime subscription silently degrading; both web (`realtime.ts`) and mobile (`RealtimeManager.kt`) lack status/error callback handling, so stale state persists until manual refresh.
+- Supabase Realtime — Backend Health Check: Direct websocket handshake to project `tlkykpcznaieulbwkapc` initially returned `UnableToConnectToProject`; later retests succeeded with `Subscribed to PostgreSQL`, confirming intermittent Realtime-to-DB connectivity.
+- Supabase Realtime — Publication Gap: `supabase_realtime` publication is missing 6 tables: `cashier_sessions`, `customer_categories`, `customers`, `inventory_movements`, `variant_groups`, `variant_group_values`; changes to these tables do not trigger realtime events.
+- RLS Security Audit (P0): All 20 public tables have RLS enabled but use `USING (true)` / role `public` policies — effectively no tenant isolation. The anon key (visible in browser bundle) grants unrestricted read/write on all tables, including `users` (password hashes, PINs, emails exposed). Requires auth architecture decision to fix: Supabase Auth sessions, server-side proxy, or hybrid approach.
+- Scalability Analysis — 1000 Concurrent Users: SSR loads ALL data via 19 parallel unfiltered `SELECT *` per page load; Realtime free/pro tier supports 200–500 connections (insufficient); no data pagination in React state; no caching layer; no documented DB indexes on `tenant_id`. Recommendations: paginate SSR data, upgrade Supabase plan, add compound indexes, cache landing metrics with ISR, deploy to `sin1` region.
+
+### v1.1.2
 
 - Landing Page — Play Store Badge: Replaced the text CTA button with the official Google Play Store badge image (`Google_Play_Store_Badge.png`); hover effect lifts the badge.
 - Settings — Tutup Kasir Button: "Tutup Kasir / Close Cashier" button is disabled when no cashier session is active; tooltip explains the reason.

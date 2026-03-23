@@ -4,11 +4,13 @@ import { useState } from "react";
 import { registerErpAction } from "@/app/ayakasir/actions/auth";
 import { useParams } from "next/navigation";
 import { getErpCopy } from "@/components/ayakasir/erp/i18n";
+import { useBasePath } from "@/components/ayakasir/erp/useBasePath";
 import provincesData from "@/data/indonesia-provinces.json";
 
 export default function RegisterPage() {
   const params = useParams();
   const locale = (params.locale as string) || "id";
+  const base = useBasePath();
   const copy = getErpCopy(locale);
   const authCopy = copy.auth;
   const [email, setEmail] = useState("");
@@ -73,7 +75,7 @@ export default function RegisterPage() {
           </div>
           <p style={{ textAlign: "center", marginTop: 16, fontSize: 14 }}>
             <a
-              href={`/${locale}/app/login`}
+              href={`${base}/${locale}/app/login`}
               style={{ color: "var(--erp-primary)", fontWeight: 500 }}
             >
               {authCopy.backToLogin}
@@ -231,7 +233,7 @@ export default function RegisterPage() {
         <p style={{ textAlign: "center", marginTop: 20, fontSize: 14, color: "var(--erp-muted)" }}>
           {authCopy.haveAccount}{" "}
           <a
-            href={`/${locale}/app/login`}
+            href={`${base}/${locale}/app/login`}
             style={{ color: "var(--erp-primary)", fontWeight: 500 }}
           >
             {authCopy.signIn}

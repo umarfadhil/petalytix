@@ -3,12 +3,14 @@
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getErpCopy } from "@/components/ayakasir/erp/i18n";
+import { useBasePath } from "@/components/ayakasir/erp/useBasePath";
 import { createBrowserClient } from "@/lib/supabase/client";
 import { resetErpPasswordAction } from "@/app/ayakasir/actions/auth";
 
 export default function ResetPasswordPage() {
   const params = useParams();
   const locale = (params.locale as string) || "id";
+  const base = useBasePath();
   const { auth: authCopy } = getErpCopy(locale);
   const router = useRouter();
   const [password, setPassword] = useState("");
@@ -58,7 +60,7 @@ export default function ResetPasswordPage() {
     setMessage(authCopy.resetSuccess);
 
     setTimeout(() => {
-      router.replace(`/${locale}/app/login`);
+      router.replace(`${base}/${locale}/app/login`);
     }, 1000);
   }
 
@@ -121,7 +123,7 @@ export default function ResetPasswordPage() {
 
         <p style={{ textAlign: "center", marginTop: 20, fontSize: 14, color: "var(--erp-muted)" }}>
           <a
-            href={`/${locale}/app/login`}
+            href={`${base}/${locale}/app/login`}
             style={{ color: "var(--erp-primary)", fontWeight: 500 }}
           >
             {authCopy.backToLogin}

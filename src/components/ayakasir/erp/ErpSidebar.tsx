@@ -4,6 +4,7 @@ import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useErp } from "./store";
 import { getErpCopy } from "./i18n";
+import { useBasePath } from "./useBasePath";
 import { logoutErpAction } from "@/app/ayakasir/actions/auth";
 
 const NAV_ITEMS = [
@@ -20,6 +21,7 @@ export default function ErpSidebar() {
   const { state, locale } = useErp();
   const pathname = usePathname();
   const router = useRouter();
+  const base = useBasePath();
   const copy = getErpCopy(locale);
   const [collapsed, setCollapsed] = useState(false);
 
@@ -36,7 +38,7 @@ export default function ErpSidebar() {
 
   async function handleLogout() {
     await logoutErpAction();
-    router.push(`/${locale}/app/login`);
+    router.push(`${base}/${locale}/app/login`);
     router.refresh();
   }
 
@@ -55,7 +57,7 @@ export default function ErpSidebar() {
 
       <nav className="erp-sidebar-nav">
         {NAV_ITEMS.filter(({ feature }) => allowedFeatures === null || allowedFeatures.has(feature)).map(({ key, icon: Icon, path }) => {
-          const href = `/${locale}${path}`;
+          const href = `${base}/${locale}${path}`;
           const isActive = pathname.includes(path);
 
           return (

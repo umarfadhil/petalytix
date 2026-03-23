@@ -64,13 +64,16 @@ function toClient(record: PortfolioRecord): PortfolioItem {
 }
 
 export async function getPortfolioItems(): Promise<PortfolioItem[]> {
-  const collection = await getCollection();
-  const items = await collection
-    .find({})
-    .sort({ featured: -1, updatedAt: -1 })
-    .toArray();
-
-  return items.map(toClient);
+  try {
+    const collection = await getCollection();
+    const items = await collection
+      .find({})
+      .sort({ featured: -1, updatedAt: -1 })
+      .toArray();
+    return items.map(toClient);
+  } catch {
+    return [];
+  }
 }
 
 export async function getPortfolioItemById(

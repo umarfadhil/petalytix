@@ -1064,3 +1064,74 @@
 
 - **Files affected:** `SettingsScreen.tsx`, `i18n.ts`. TypeScript passes clean.
 
+## 2026-03-23 - Cross-Device Sync Lag (Web <-> Mobile) Requires Manual Refresh
+
+- Observed symptom: transactions/activities created on one client are not reflected on the other client until manual refresh/pull.
+- Architecture reality: both clients rely on Supabase Realtime for live cross-device updates.
+  - Web: `src/lib/supabase/realtime.ts` updates ERP context state through handlers in `src/components/ayakasir/erp/store.tsx`.
+  - Mobile: `repos/ayakasir/app/src/main/java/com/ayakasir/app/core/sync/RealtimeManager.kt` subscribes and upserts into Room.
+- Primary risk point: realtime subscription health is not observed explicitly on either side.
+  - Web calls `channel.subscribe()` without status/error callback handling.
+  - Mobile calls `ch.subscribe()` without status/error callback handling.
+  - If subscription is unauthorized/disconnected/misconfigured (RLS/publication), both apps silently degrade to stale views.
+- Why refresh fixes it:
+  - Web refresh reloads SSR data in `(erp)/layout.tsx` via direct Supabase selects.
+  - Mobile pull-to-refresh calls `SyncManager.pullAllFromSupabase(tenantId)`.
+- Secondary gap: web has no active reconciliation loop while the page stays open (initial load + realtime only). If realtime fails, stale state persists until full page refresh.
+- Direction: add realtime status logging/monitoring plus fallback reconcile pull (window focus and interval) so sync remains resilient when websocket/realtime is unhealthy.
+
+## 2026-03-23 - Supabase Realtime Backend Health Check (Project `tlkykpcznaieulbwkapc`)
+
+- Diagnostic method: direct websocket handshake to `wss://<project-ref>.supabase.co/realtime/v1/websocket` and manual Phoenix `phx_join` frames (with anon JWT).
+- Result: Realtime join fails with:
+  - `UnableToConnectToProject: Realtime was unable to connect to the project database`
+- This indicates infra-level Realtime-to-DB connectivity failure on Supabase side/project config, not only app code wiring.
+- Impact: web and mobile subscriptions may initialize but will not receive postgres change streams, forcing manual refresh/pull behavior.
+- Note: MCP endpoint exists in `.vscode/mcp.json`, but from shell it returns `401` without OAuth access token, so project logs/policies/publication metadata could not be read through MCP in this environment.
+
+## 2026-03-23 - Supabase MCP Deep Check (Logs + RLS + Publication)
+
+- Access method: Supabase MCP authenticated with `SUPABASE_ACCESS_TOKEN` and project ref `tlkykpcznaieulbwkapc`.
+- Realtime logs showed intermittent DB connectivity:
+  - Earlier entries: `UnableToConnectToProject: Realtime was unable to connect to the project database`.
+  - Latest entries: successful reconnect and `Subscribed to PostgreSQL` with replication slot started.
+- Manual websocket diagnostic (`phx_join`) also confirmed this pattern:
+  - Initially failed with `UnableToConnectToProject`.
+  - Retest succeeded with `phx_reply status=ok` and `system: Subscribed to PostgreSQL`.
+- Publication status (`pg_publication_tables`) for `supabase_realtime` is incomplete for expected ERP tables:
+  - Missing: `cashier_sessions`, `customer_categories`, `customers`, `inventory_movements`, `variant_groups`, `variant_group_values`.
+  - Present for transaction pipeline: `transactions`, `transaction_items`, `general_ledger`, `inventory`, `goods_receiving`, `goods_receiving_items`, `cash_withdrawals`, `products`, `variants`, `tenants`, `users`.
+- RLS status:
+  - RLS is enabled on ERP tables, but policies are broadly permissive (`Allow all ...` with `USING (true)` / role `public`), effectively bypassing tenant isolation.
+  - Security advisor flags these as `rls_policy_always_true` warnings.
+- Operational note:
+  - `pg_stat_activity` shows active/idle realtime backend processes (`realtime_replication_connection`, `realtime_subscription_checker`, etc.) when healthy.
+
+## 2026-03-23 — RLS Security Audit: "Allow All" Policies Are Critical Vulnerability
+
+- **Finding:** All 20 public tables have RLS enabled but each has a single `PERMISSIVE` policy: `"Allow all on {table}"` with `qual = true`, `roles = {public}`, `cmd = ALL`. This means RLS is effectively disabled.
+- **Impact (P0/Critical):**
+  - The anon key (publicly visible in browser JS bundle) grants unrestricted SELECT/INSERT/UPDATE/DELETE on every table.
+  - The `users` table exposes `password_hash`, `password_salt`, `pin_hash`, `pin_salt`, `email` — full credential dump risk.
+  - Any tenant's financial data (transactions, ledger, inventory, cash) is readable and writable by anyone.
+  - No tenant isolation exists at the database level.
+- **Blocker for tenant-scoped RLS:** The ERP uses custom signed-cookie auth (`erp-auth.ts`), not Supabase Auth sessions. Standard `auth.uid()`-based RLS policies won't work with the current ERP client because the browser Supabase client has no Supabase Auth session. Options:
+  - (a) Switch ERP auth to Supabase Auth sessions (significant refactor — registration already uses `supabase.auth.signUp()`).
+  - (b) Use service role key server-side only, remove direct browser-to-Supabase calls, proxy all writes through server actions.
+  - (c) Hybrid: mint a Supabase Auth session at ERP login alongside the cookie, so the browser client carries `auth.uid()`.
+- **Mobile app:** Android app presumably uses Supabase Auth directly — tenant-scoped RLS with `auth.uid()` should work there without changes.
+- **Recommended order:** (1) Restrict `users` table immediately. (2) Implement tenant-scoped RLS on all tables. (3) Resolve ERP auth architecture.
+
+## 2026-03-23 — Scalability Analysis: 1000 Concurrent ERP Users
+
+- **Critical: SSR loads ALL data** — `(erp)/layout.tsx` fires 19 parallel `SELECT *` queries per page load (no time/pagination filters). At 1000 users, this means 19,000 concurrent Supabase queries. Fix: paginate by date (e.g., last 30 days) and lazy-load older data.
+- **Critical: Supabase Realtime limits** — each user opens 1 channel with ~19 table subscriptions. Supabase Free/Pro supports 200-500 concurrent connections; 1000 users will exceed this. Fix: upgrade to Team/Enterprise or self-host Supabase.
+- **Critical: No data pagination in state** — all transactions, ledger entries, inventory movements loaded into React state as full arrays. Busy tenants could hold 10k+ rows in browser memory per user.
+- **Moderate: No caching layer** — no Redis, no ISR, no `Cache-Control`. Every page load hits Supabase directly. Landing page metrics also query Supabase on every visitor.
+- **Moderate: No documented DB indexes** — 19 queries all filter by `tenant_id`. Missing indexes degrade linearly with total rows.
+- **Moderate: Dual Supabase client instances** — `store.tsx` and `realtime.ts` each create a separate `createBrowserClient()` per user.
+- **Low: Middleware JWT verify per request** — `verifyErpSessionToken` is fast (HS256), but adds CPU at scale.
+- **Low: Single Vercel region** — if not deployed to `sin1` (Singapore), Indonesian users get latency.
+- **Already good:** tenant-scoped realtime filters, stateless JWT auth, client-side state after initial load, Vercel CDN for static assets.
+- **Recommendations (priority):** (1) Paginate SSR data. (2) Upgrade Supabase plan for realtime. (3) Add `tenant_id` + compound indexes. (4) Cache landing page metrics with ISR. (5) Use PgBouncer connection string server-side. (6) Deploy to `sin1` region.
+

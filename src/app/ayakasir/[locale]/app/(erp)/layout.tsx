@@ -1,11 +1,20 @@
 import { redirect } from "next/navigation";
-import { createServerClient } from "@/lib/supabase/server";
+import { headers } from "next/headers";
+import { createAdminClient } from "@/lib/supabase/server-admin";
 import { ErpProvider } from "@/components/ayakasir/erp/store";
 import ErpSidebar from "@/components/ayakasir/erp/ErpSidebar";
 import { getErpSession } from "@/lib/erp-auth";
 import type { DbTenant, DbUser } from "@/lib/supabase/types";
 
-async function fetchErpData(supabase: ReturnType<typeof createServerClient>, tenantId: string) {
+function getServerBasePath() {
+  const host = headers().get("host") || "";
+  // On the subdomain, middleware rewrites — browser paths have no /ayakasir prefix
+  if (host.startsWith("ayakasir.") || host.startsWith("ayakasir:")) return "";
+  // On localhost or non-subdomain hosts, the /ayakasir prefix is in the real URL
+  return "/ayakasir";
+}
+
+async function fetchErpData(supabase: ReturnType<typeof createAdminClient>, tenantId: string) {
   const [
     categories,
     products,
@@ -78,12 +87,13 @@ export default async function ErpLayout({
   children: React.ReactNode;
   params: { locale: string };
 }) {
-  const supabase = createServerClient();
+  const supabase = createAdminClient();
+  const base = getServerBasePath();
 
   const session = await getErpSession();
 
   if (!session) {
-    redirect(`/${params.locale}/app/login`);
+    redirect(`${base}/${params.locale}/app/login`);
   }
 
   // Get the user record from public.users
@@ -94,14 +104,14 @@ export default async function ErpLayout({
     .single();
 
   if (!dbUser || !dbUser.is_active) {
-    redirect(`/${params.locale}/app/login`);
+    redirect(`${base}/${params.locale}/app/login`);
   }
 
   const typedUser = dbUser as DbUser;
   const tenantId = typedUser.tenant_id || session.tenantId;
 
   if (!tenantId) {
-    redirect(`/${params.locale}/app/login`);
+    redirect(`${base}/${params.locale}/app/login`);
   }
 
   // Get restaurant info
