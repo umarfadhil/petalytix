@@ -447,10 +447,13 @@ export default function CustomersScreen() {
         catByName.set(cat.name.toLowerCase(), cat.id);
       }
 
+      const maxCustomers = planLimits.limits.maxCustomers;
       let imported = 0;
       let skippedDup = 0;
+      let hitPlanLimit = false;
       for (const row of importPreview) {
         if (row.phoneIsDuplicate) { skippedDup++; continue; }
+        if (state.customers.length + imported >= maxCustomers) { hitPlanLimit = true; break; }
         // Create missing category on the fly
         let category_id: string | null = null;
         if (row.categoryName) {
@@ -475,9 +478,10 @@ export default function CustomersScreen() {
       }
 
       setImportPreview(null);
+      const limitNote = hitPlanLimit ? ` — ${copy.customers.importPlanLimit}` : "";
       setImportMsg({
-        text: `${copy.customers.importSuccess} (${imported})${skippedDup ? ` — ${skippedDup} ${copy.customers.importDuplicatePhone}` : ""}`,
-        ok: true,
+        text: `${copy.customers.importSuccess} (${imported})${skippedDup ? ` — ${skippedDup} ${copy.customers.importDuplicatePhone}` : ""}${limitNote}`,
+        ok: !hitPlanLimit,
       });
     } catch (err) {
       setImportMsg({ text: err instanceof Error ? err.message : copy.customers.importError, ok: false });

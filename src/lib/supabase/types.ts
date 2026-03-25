@@ -118,6 +118,7 @@ export interface DbProductComponent {
   id: string;
   tenant_id: string;
   parent_product_id: string;
+  parent_variant_id: string;
   component_product_id: string;
   component_variant_id: string;
   required_qty: number;
@@ -165,8 +166,9 @@ export interface DbGoodsReceivingItem {
   receiving_id: string;
   product_id: string;
   variant_id: string;
-  qty: number;
-  cost_per_unit: number;
+  variant_name: string; // NOT NULL in DB — empty string for no-variant rows
+  qty: number;          // stored as integer in DB — must be Math.round()'ed
+  cost_per_unit: number; // BIGINT in DB — must be Math.round()'ed
   unit: string;
   sync_status: string;
   updated_at: number;

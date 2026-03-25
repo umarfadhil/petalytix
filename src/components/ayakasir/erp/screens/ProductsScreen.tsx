@@ -18,6 +18,7 @@ interface FormVariant {
 
 interface FormComponent {
   id: string | null;
+  parent_variant_id: string;
   component_product_id: string;
   component_variant_id: string;
   required_qty: string;
@@ -264,6 +265,31 @@ export default function ProductsScreen() {
       const existing = formVariants.find((fv) => fv.name.trim().toLowerCase() === gv.name.toLowerCase());
       return { id: existing?.id ?? null, name: gv.name, price_adjustment: existing?.price_adjustment ?? "0" };
     });
+
+    // Remap BOM parent_variant_ids: old variant key → new variant key
+    const oldKeyToNewKey = new Map<string, string>();
+    for (const fv of formVariants) {
+      const oldKey = fv.id || fv.name;
+      const matchingNew = newVariants.find((nv) => nv.name.trim().toLowerCase() === fv.name.trim().toLowerCase());
+      if (matchingNew) {
+        oldKeyToNewKey.set(oldKey, matchingNew.id || matchingNew.name);
+      }
+    }
+    // Remove BOM rows for variants that no longer exist, remap kept ones
+    const newVarKeys = new Set(newVariants.map((v) => v.id || v.name));
+    setFormComponents((prev) =>
+      prev
+        .map((c) => {
+          if (!c.parent_variant_id) return c; // shared — keep
+          const newKey = oldKeyToNewKey.get(c.parent_variant_id);
+          if (newKey) return { ...c, parent_variant_id: newKey };
+          // Check if the parent_variant_id is already a valid new key
+          if (newVarKeys.has(c.parent_variant_id)) return c;
+          return null; // orphaned — remove
+        })
+        .filter((c): c is FormComponent => c !== null)
+    );
+
     setFormVariants(newVariants);
   };
 
@@ -303,6 +329,7 @@ export default function ProductsScreen() {
       .filter((c) => c.parent_product_id === product.id)
       .map((c) => ({
         id: c.id,
+        parent_variant_id: c.parent_variant_id || "",
         component_product_id: c.component_product_id,
         component_variant_id: c.component_variant_id || "",
         required_qty: String(c.required_qty),
@@ -316,15 +343,22 @@ export default function ProductsScreen() {
   const addVariant = () =>
     setFormVariants((prev) => [...prev, { id: null, name: "", price_adjustment: "0" }]);
 
-  const removeVariant = (idx: number) =>
+  const removeVariant = (idx: number) => {
+    const removed = formVariants[idx];
+    if (removed) {
+      const varKey = removed.id || removed.name;
+      // Remove BOM components tied to this variant
+      setFormComponents((prev) => prev.filter((c) => c.parent_variant_id !== varKey));
+    }
     setFormVariants((prev) => prev.filter((_, i) => i !== idx));
+  };
 
   const updateVariant = (idx: number, field: keyof FormVariant, value: string) =>
     setFormVariants((prev) => prev.map((v, i) => (i === idx ? { ...v, [field]: value } : v)));
 
   // BOM helpers
-  const addComponent = () =>
-    setFormComponents((prev) => [...prev, { id: null, component_product_id: "", component_variant_id: "", required_qty: "1", unit: "pcs" }]);
+  const addComponent = (parentVariantId = "") =>
+    setFormComponents((prev) => [...prev, { id: null, parent_variant_id: parentVariantId, component_product_id: "", component_variant_id: "", required_qty: "1", unit: "pcs" }]);
 
   const removeComponent = (idx: number) =>
     setFormComponents((prev) => prev.filter((_, i) => i !== idx));
@@ -412,7 +446,8 @@ export default function ProductsScreen() {
 
       if (!productId) throw new Error("No product ID");
 
-      // Save variants: delete old, insert new
+      // Save variants: delete old, insert new — track old→new ID mapping
+      const variantIdMap = new Map<string, string>(); // oldId/tempKey → newId
       const oldVariants = state.variants.filter((v) => v.product_id === productId);
       for (const v of oldVariants) {
         await repo.deleteVariant(supabase, v.id);
@@ -420,8 +455,9 @@ export default function ProductsScreen() {
       }
       for (const fv of formVariants) {
         if (!fv.name.trim()) continue;
+        const newVarId = crypto.randomUUID();
         const saved = await repo.createVariant(supabase, {
-          id: crypto.randomUUID(),
+          id: newVarId,
           tenant_id: tenantId,
           product_id: productId,
           name: fv.name.trim(),
@@ -429,6 +465,10 @@ export default function ProductsScreen() {
           updated_at: now,
         });
         dispatch({ type: "UPSERT", table: "variants", payload: saved as unknown as Record<string, unknown> });
+        // Map old variant ID (if editing) or temp key to new saved ID
+        if (fv.id) variantIdMap.set(fv.id, newVarId);
+        // Also map by name for robustness
+        variantIdMap.set(`name:${fv.name.trim().toLowerCase()}`, newVarId);
       }
 
       // Req 8 & 9: Save BOM components with unit normalization
@@ -438,12 +478,25 @@ export default function ProductsScreen() {
         const baseUnit = getInventoryUnit(c.component_product_id);
         const normalized = normalizeToBaseUnit(parseFloat(c.required_qty), c.unit, baseUnit);
         if (normalized === null) {
-          // Incompatible units — skip with warning
           alert(`Unit mismatch: cannot convert "${c.unit}" to "${baseUnit}" for raw material. Row skipped.`);
           continue;
         }
         validComponents.push({ ...c, required_qty: String(normalized), unit: baseUnit });
       }
+
+      // Resolve parent_variant_id to newly saved variant IDs
+      const resolveParentVariantId = (pvId: string): string => {
+        if (!pvId) return "";
+        // Direct ID mapping (old variant ID → new)
+        if (variantIdMap.has(pvId)) return variantIdMap.get(pvId)!;
+        // Try by name
+        const fv = formVariants.find((v) => v.id === pvId);
+        if (fv) {
+          const byName = variantIdMap.get(`name:${fv.name.trim().toLowerCase()}`);
+          if (byName) return byName;
+        }
+        return pvId; // fallback — already a valid new ID
+      };
 
       const savedComponents = await repo.setProductComponents(
         supabase,
@@ -452,6 +505,7 @@ export default function ProductsScreen() {
           id: crypto.randomUUID(),
           tenant_id: tenantId,
           parent_product_id: productId!,
+          parent_variant_id: resolveParentVariantId(c.parent_variant_id),
           component_product_id: c.component_product_id,
           component_variant_id: c.component_variant_id || "",
           required_qty: parseFloat(c.required_qty),
@@ -541,10 +595,13 @@ export default function ProductsScreen() {
       });
       dispatch({ type: "UPSERT", table: "products", payload: cloned as unknown as Record<string, unknown> });
 
+      const cloneVarMap = new Map<string, string>(); // old variant ID → new variant ID
       const variants = state.variants.filter((v) => v.product_id === product.id);
       for (const v of variants) {
+        const newVarId = crypto.randomUUID();
+        cloneVarMap.set(v.id, newVarId);
         const clonedV = await repo.createVariant(supabase, {
-          id: crypto.randomUUID(),
+          id: newVarId,
           tenant_id: tenantId,
           product_id: newId,
           name: v.name,
@@ -563,6 +620,7 @@ export default function ProductsScreen() {
             id: crypto.randomUUID(),
             tenant_id: tenantId,
             parent_product_id: newId,
+            parent_variant_id: comp.parent_variant_id ? (cloneVarMap.get(comp.parent_variant_id) || "") : "",
             component_product_id: comp.component_product_id,
             component_variant_id: comp.component_variant_id,
             required_qty: comp.required_qty,
@@ -724,14 +782,18 @@ export default function ProductsScreen() {
         }
       }
 
+      const maxProducts = planLimits.limits.maxProducts;
+      const currentMenuCount = state.products.filter((p) => p.product_type === "MENU_ITEM").length;
       let imported = 0;
       let skipped = 0;
+      let hitPlanLimit = false;
 
       for (const row of csvRows) {
         if (row.isDuplicate) {
           skipped++;
           continue;
         }
+        if (currentMenuCount + imported >= maxProducts) { hitPlanLimit = true; break; }
 
         let categoryId: string | null = null;
 
@@ -804,6 +866,7 @@ export default function ProductsScreen() {
               id: crypto.randomUUID(),
               tenant_id: tenantId,
               parent_product_id: newProdId,
+              parent_variant_id: "",
               component_product_id: rm.id,
               component_variant_id: "",
               required_qty: normalizedQty,
@@ -823,11 +886,12 @@ export default function ProductsScreen() {
         imported++;
       }
 
+      const limitNote = hitPlanLimit ? ` — ${copy.products.importPlanLimit}` : "";
       const msg =
         skipped > 0
-          ? `${copy.products.importSuccess} (${skipped} ${copy.products.importSkipped})`
-          : copy.products.importSuccess;
-      setImportMsg({ text: msg, ok: true });
+          ? `${copy.products.importSuccess} (${skipped} ${copy.products.importSkipped})${limitNote}`
+          : `${copy.products.importSuccess}${limitNote}`;
+      setImportMsg({ text: msg, ok: !hitPlanLimit });
     } catch (err) {
       console.error("Import failed:", err);
       setImportMsg({ text: copy.products.importError, ok: false });
@@ -1253,20 +1317,6 @@ export default function ProductsScreen() {
                 <input className="erp-input" value={formName} onChange={(e) => setFormName(e.target.value)} />
               </div>
               <div className="erp-input-group">
-                <label className="erp-label">{copy.products.price}</label>
-                <input
-                  className="erp-input"
-                  type="text"
-                  inputMode="numeric"
-                  value={formPrice ? parseInt(formPrice.replace(/\./g, ""), 10).toLocaleString("id-ID") : ""}
-                  onChange={(e) => {
-                    const raw = e.target.value.replace(/\./g, "").replace(/\D/g, "");
-                    setFormPrice(raw);
-                  }}
-                  placeholder="0"
-                />
-              </div>
-              <div className="erp-input-group">
                 <label className="erp-label">{copy.products.category}</label>
                 <select
                   className="erp-select"
@@ -1285,6 +1335,20 @@ export default function ProductsScreen() {
                   ))}
                   <option value="__NEW_CAT__">+ {copy.products.addCategory}</option>
                 </select>
+              </div>
+              <div className="erp-input-group">
+                <label className="erp-label">{copy.products.price}</label>
+                <input
+                  className="erp-input"
+                  type="text"
+                  inputMode="numeric"
+                  value={formPrice ? parseInt(formPrice.replace(/\./g, ""), 10).toLocaleString("id-ID") : ""}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/\./g, "").replace(/\D/g, "");
+                    setFormPrice(raw);
+                  }}
+                  placeholder="0"
+                />
               </div>
               <div className="erp-input-group">
                 <label className="erp-label">{copy.products.description}</label>
@@ -1370,89 +1434,167 @@ export default function ProductsScreen() {
                 <div className="erp-form-section-header">
                   <span className="erp-form-section-title">
                     {copy.products.bom}
-                    {formVariants.length > 0 && productPresetGroupId && (
+                    {formVariants.filter((v) => v.name.trim()).length > 0 && (
                       <span style={{ fontSize: "0.75rem", color: "var(--erp-muted)", marginLeft: "0.5rem" }}>
                         ({copy.products.bomPerVariant})
                       </span>
                     )}
                   </span>
-                  <button type="button" className="erp-btn erp-btn--ghost erp-btn--sm" onClick={addComponent}>
-                    + {copy.products.addComponent}
-                  </button>
+                  {formVariants.filter((v) => v.name.trim()).length === 0 && (
+                    <button type="button" className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => addComponent("")}>
+                      + {copy.products.addComponent}
+                    </button>
+                  )}
                 </div>
-                {formComponents.length > 0 && (
-                  <div className="erp-bom-list">
-                    {formComponents.map((fc, idx) => {
-                      const usedIds = formComponents
-                        .filter((_, i) => i !== idx)
-                        .map((c) => `${c.component_product_id}|${c.component_variant_id}`);
-                      const available = rawMaterials.filter(
-                        (rm) => !usedIds.includes(`${rm.id}|${fc.component_variant_id}`) || rm.id === fc.component_product_id
-                      );
-                      const rmVariants = fc.component_product_id ? getRawMaterialVariants(fc.component_product_id) : [];
-                      const hasMatchingVariants = fc.component_product_id && rawHasMatchingVariants(fc.component_product_id);
-                      return (
-                        <div key={idx} className="erp-bom-row" style={hasMatchingVariants ? { flexWrap: "wrap" } : undefined}>
+                {(() => {
+                  const activeVariants = formVariants.filter((v) => v.name.trim());
+                  const hasVariants = activeVariants.length > 0;
+
+                  const renderBomRow = (fc: FormComponent, idx: number, groupParentVarId: string) => {
+                    const sameGroupComponents = formComponents.filter((c) => c.parent_variant_id === groupParentVarId);
+                    const usedIds = sameGroupComponents
+                      .filter((c) => c !== fc)
+                      .map((c) => `${c.component_product_id}|${c.component_variant_id}`);
+                    const available = rawMaterials.filter(
+                      (rm) => !usedIds.includes(`${rm.id}|${fc.component_variant_id}`) || rm.id === fc.component_product_id
+                    );
+                    const rmVariants = fc.component_product_id ? getRawMaterialVariants(fc.component_product_id) : [];
+                    const hasRmVariants = rmVariants.length > 0;
+                    return (
+                      <div key={idx} className="erp-bom-row" style={hasRmVariants ? { flexWrap: "wrap" } : undefined}>
+                        <select
+                          className="erp-select erp-bom-material"
+                          value={fc.component_product_id}
+                          onChange={(e) => updateComponent(idx, "component_product_id", e.target.value)}
+                        >
+                          <option value="">{copy.products.rawMaterial}</option>
+                          {available.map((rm) => (
+                            <option key={rm.id} value={rm.id}>{rm.name}</option>
+                          ))}
+                        </select>
+                        {hasRmVariants && (
                           <select
-                            className="erp-select erp-bom-material"
-                            value={fc.component_product_id}
-                            onChange={(e) => updateComponent(idx, "component_product_id", e.target.value)}
+                            className="erp-select erp-bom-variant"
+                            value={fc.component_variant_id}
+                            onChange={(e) => updateComponent(idx, "component_variant_id", e.target.value)}
+                            style={{ maxWidth: 120 }}
                           >
-                            <option value="">{copy.products.rawMaterial}</option>
-                            {available.map((rm) => (
-                              <option key={rm.id} value={rm.id}>{rm.name}</option>
+                            <option value="">{copy.products.selectComponentVariant}</option>
+                            {rmVariants.map((v) => (
+                              <option key={v.id} value={v.id}>{v.name}</option>
                             ))}
                           </select>
-                          {hasMatchingVariants && rmVariants.length > 0 && (
+                        )}
+                        <input
+                          className="erp-input erp-bom-qty"
+                          type="number"
+                          min="0"
+                          step="any"
+                          placeholder={copy.products.qty}
+                          value={fc.required_qty}
+                          onChange={(e) => updateComponent(idx, "required_qty", e.target.value)}
+                        />
+                        {(() => {
+                          const base = fc.component_product_id ? getInventoryUnit(fc.component_product_id) : "pcs";
+                          const units = getCompatibleUnits(base);
+                          return units.length > 1 ? (
                             <select
-                              className="erp-select erp-bom-variant"
-                              value={fc.component_variant_id}
-                              onChange={(e) => updateComponent(idx, "component_variant_id", e.target.value)}
-                              style={{ maxWidth: 120 }}
+                              className="erp-select erp-bom-unit"
+                              value={fc.unit || base}
+                              onChange={(e) => updateComponent(idx, "unit", e.target.value)}
                             >
-                              <option value="">{copy.products.selectComponentVariant}</option>
-                              {rmVariants.map((v) => (
-                                <option key={v.id} value={v.id}>{v.name}</option>
-                              ))}
+                              {units.map((u) => <option key={u} value={u}>{u}</option>)}
                             </select>
-                          )}
-                          <input
-                            className="erp-input erp-bom-qty"
-                            type="number"
-                            min="0"
-                            step="any"
-                            placeholder={copy.products.qty}
-                            value={fc.required_qty}
-                            onChange={(e) => updateComponent(idx, "required_qty", e.target.value)}
-                          />
-                          {(() => {
-                            const base = fc.component_product_id ? getInventoryUnit(fc.component_product_id) : "pcs";
-                            const units = getCompatibleUnits(base);
-                            return units.length > 1 ? (
-                              <select
-                                className="erp-select erp-bom-unit"
-                                value={fc.unit || base}
-                                onChange={(e) => updateComponent(idx, "unit", e.target.value)}
-                              >
-                                {units.map((u) => <option key={u} value={u}>{u}</option>)}
-                              </select>
+                          ) : (
+                            <span className="erp-bom-unit-label">{fc.unit || base}</span>
+                          );
+                        })()}
+                        <button
+                          type="button"
+                          className="erp-btn erp-btn--ghost erp-btn--sm erp-btn--icon"
+                          style={{ color: "var(--erp-danger)" }}
+                          onClick={() => removeComponent(idx)}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  };
+
+                  if (!hasVariants) {
+                    // No variants — flat BOM list (original behavior)
+                    const sharedComponents = formComponents.filter((c) => !c.parent_variant_id);
+                    return sharedComponents.length > 0 ? (
+                      <div className="erp-bom-list">
+                        {sharedComponents.map((fc) => {
+                          const idx = formComponents.indexOf(fc);
+                          return renderBomRow(fc, idx, "");
+                        })}
+                      </div>
+                    ) : null;
+                  }
+
+                  // Has variants — grouped BOM per variant + shared section
+                  const copyToAllVariants = (sourceVarId: string) => {
+                    const sourceRows = formComponents.filter((c) => c.parent_variant_id === sourceVarId);
+                    if (sourceRows.length === 0) return;
+                    const otherVarIds = activeVariants
+                      .filter((v) => (v.id || v.name) !== sourceVarId)
+                      .map((v) => v.id || v.name);
+                    const newComponents = [...formComponents];
+                    for (const targetVarId of otherVarIds) {
+                      // Remove existing components for this variant
+                      const toRemove = newComponents.filter((c) => c.parent_variant_id === targetVarId);
+                      for (const r of toRemove) {
+                        const ri = newComponents.indexOf(r);
+                        if (ri !== -1) newComponents.splice(ri, 1);
+                      }
+                      // Copy source rows with new parent_variant_id
+                      for (const src of sourceRows) {
+                        newComponents.push({ ...src, id: null, parent_variant_id: targetVarId });
+                      }
+                    }
+                    setFormComponents(newComponents);
+                  };
+
+                  return (
+                    <div className="erp-bom-variant-groups">
+                      {activeVariants.map((fv) => {
+                        const varKey = fv.id || fv.name;
+                        const varComponents = formComponents
+                          .map((fc, idx) => ({ fc, idx }))
+                          .filter(({ fc }) => fc.parent_variant_id === varKey);
+                        return (
+                          <div key={varKey} className="erp-bom-variant-group">
+                            <div className="erp-bom-variant-group-header">
+                              <span className="erp-bom-variant-group-title">{fv.name}</span>
+                              <div style={{ display: "flex", gap: "0.25rem" }}>
+                                <button
+                                  type="button"
+                                  className="erp-btn erp-btn--ghost erp-btn--xs"
+                                  title={copy.products.bomCopyToAll}
+                                  onClick={() => copyToAllVariants(varKey)}
+                                >
+                                  {copy.products.bomCopyToAll}
+                                </button>
+                                <button type="button" className="erp-btn erp-btn--ghost erp-btn--xs" onClick={() => addComponent(varKey)}>
+                                  + {copy.products.addComponent}
+                                </button>
+                              </div>
+                            </div>
+                            {varComponents.length > 0 ? (
+                              <div className="erp-bom-list">
+                                {varComponents.map(({ fc, idx }) => renderBomRow(fc, idx, varKey))}
+                              </div>
                             ) : (
-                              <span className="erp-bom-unit-label">{fc.unit || base}</span>
-                            );
-                          })()}
-                          <button
-                            type="button"
-                            className="erp-btn erp-btn--ghost erp-btn--sm erp-btn--icon"
-                            style={{ color: "var(--erp-danger)" }}
-                            onClick={() => removeComponent(idx)}
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                              <div className="erp-bom-empty">—</div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
             <div className="erp-dialog-footer">

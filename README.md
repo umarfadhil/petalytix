@@ -2,6 +2,18 @@
 
 ## Changelog
 
+### v1.1.5
+
+- Inventory/Purchasing — Value Gap Clarification: documented that Purchasing total (`SUM(qty × cost_per_unit)`) and Inventory value (`SUM(current_qty × avg_cogs)`) can diverge when weighted average HPP is fractional and persisted as integer `avg_cogs`; this is expected by design and matches Android behavior.
+- Inventory — Stock Adjustment Precision + Valuation Rule: quantity conversion in adjustment flow now preserves decimals (`kg↔g`, `L↔mL`) instead of rounding away precision; `adjustment_out` now follows the same value-preserving HPP behavior as `waste` so total historical stock cost stays in remaining units.
+- Purchasing — Receiving DB Compatibility Hardening: receiving items are persisted in base units (`g`/`mL`/`pcs`), `qty` and `cost_per_unit` are integer-safe for current schema, and `variant_name` is now always populated to satisfy DB `NOT NULL`.
+- Purchasing — Inventory Upsert Reliability: fixed `variant_id null` vs `""` conflict during receiving save/edit by preserving the actual DB `variant_id` from fetched inventory rows when upserting.
+- Purchasing — Preset Variant Removal from Raw Material: clearing a raw material’s preset variant group now correctly deletes related generated variant + inventory rows for that material.
+- Purchasing — Receiving UX + Mixed-Unit HPP Safety: receiving qty unit label is now a quick toggle (`g↔kg`, `mL↔L`) that converts entered quantities in-place, and weighted-average/reversal math now converts both qty and unit cost to stored units to prevent x1000 valuation drift.
+- Purchasing — Raw Material Unit Normalization: manual create and CSV import now normalize storage units to base units (`kg→g`, `L→mL`) including preset-generated variant inventory rows.
+- Products/POS — Per-Variant BOM: `product_components.parent_variant_id` added to support shared BOM + variant-specific BOM in product form; POS deduction now matches by variant ID directly; clone/copy/import flows preserve compatibility (`""` = shared).
+- Products — Form Flow: "Tambah Produk" field order updated to `Nama → Kategori → Harga`.
+
 ### v1.1.4
 
 - Realtime — Status Handling + Fallback Reconcile: `useRealtimeSync` now accepts an optional `onStatusChange(status: RealtimeStatus)` callback; maps Supabase channel states to `"CONNECTING" | "SUBSCRIBED" | "DISCONNECTED"`. `ErpState.realtimeStatus` tracks current channel health. `ErpProvider` re-fetches all data on `window focus` (always) and every 5 min when `DISCONNECTED`; uses `reconcileRef` + `realtimeStatusRef` to avoid stale closures.

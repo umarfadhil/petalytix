@@ -72,7 +72,7 @@ src/
 │       ├── middleware.ts            # Middleware client (request/response cookies)
 │       ├── types.ts                 # DB row types + table constants
 │       ├── realtime.ts              # useRealtimeSync hook
-│       └── repositories/            # CRUD per table (14 files + index)
+│       └── repositories/            # CRUD per table (16 files + index)
 │           ├── categories.ts
 │           ├── products.ts
 │           ├── variants.ts
@@ -147,8 +147,8 @@ src/
 |------|---------|
 | `src/middleware.ts` | Subdomain detection and rewriting |
 | `src/app/[locale]/page.tsx` | Main site homepage |
-| `src/app/ayakasir/[locale]/page.tsx` | AyaKasir landing page |
-| `src/app/ayakasir/[locale]/simulator/page.tsx` | App simulator |
+| `src/app/ayakasir/[locale]/(marketing)/page.tsx` | AyaKasir landing page |
+| `src/app/ayakasir/[locale]/(marketing)/simulator/page.tsx` | App simulator |
 | `src/app/ayakasir/[locale]/app/login/page.tsx` | ERP login page (server-action backed custom auth) |
 | `src/app/ayakasir/[locale]/app/(erp)/layout.tsx` | ERP authenticated layout (data fetch + provider) |
 | `src/app/ayakasir/actions/auth.ts` | ERP auth server actions (login/register/logout/change password/upsert user/QRIS settings) |

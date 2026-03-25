@@ -1,5 +1,53 @@
 ﻿# Session Learnings
 
+## 2026-03-25 — Inventory: Purchasing total vs Inventory value discrepancy (Rp7,500 gap)
+
+- **Root cause:** `avg_cogs` (BIGINT) is stored as `Math.round(weightedAvg)`. When a raw material has **multiple receivings**, the weighted-average produces a fractional per-unit cost that gets truncated by rounding. The cumulative stock value (`current_qty × avg_cogs`) then diverges from the true total cost (sum of all `qty × cost_per_unit` from goods_receiving_items).
+- **Affected items (tenant `1adc04d9`):**
+  - *Kopi Ethiopia Yirgacheffe Premium*: 2 receivings (2500g@160 + 5000g@180). Exact avg = 173.33 → stored 173. Inventory: 7500×173 = 1,297,500 vs true 1,300,000. **−2,500**
+  - *Kopi Ethiopia Yirgacheffe Specialty*: 2 receivings (2000g@225 + 5000g@240). Exact avg = 235.71 → stored 235. Inventory: 7000×235 = 1,645,000 vs true 1,650,000. **−5,000**
+  - Total gap: **−7,500** (matches Rp13,160,500 − Rp13,153,000)
+- **This is expected behavior** — the mobile app uses the same `Math.round()` weighted-average formula, so both apps agree. The gap is not a bug but a structural consequence of storing integer HPP per base unit.
+- **Purchasing page** shows `SUM(qty × cost_per_unit)` from `goods_receiving_items` (raw purchase cost). **Inventory page** shows `SUM(current_qty × avg_cogs)` (rounded integer weighted avg). These will always diverge when weighted avg is fractional — by design.
+- **Key rule:** `avg_cogs` is an approximation for HPP tracking. The "true" purchase cost is always the Purchasing page total. The difference grows with multiple receivings at different prices.
+
+## 2026-03-25 — Purchasing: goods_receiving_items DB schema mismatches
+
+- **Bugs found (via Supabase SQL inspection):**
+  1. `qty` is `integer` in DB — sending float (e.g. 1.5 for "L") throws Postgres error
+  2. `cost_per_unit` is `bigint` — sending float (e.g. 13066.67) throws Postgres error
+  3. `variant_name` column is `text NOT NULL` — not present in `DbGoodsReceivingItem` type or insert payload → throws NOT NULL violation
+- **Fix:** Items are now stored in **base units** (mL/g/pcs). Added `toBaseUnit()` helper to convert display unit → base unit. `qty = Math.round(convertQtyBetweenUnits(displayQty, displayUnit, baseUnit))`. `cost_per_unit = Math.round(totalCost / baseQty)` per base unit. `variant_name` added to `DbGoodsReceivingItem` type and populated from `state.variants` lookup.
+- **Edit restore:** `openEditReceiving` already converted base units back to display (g→kg, mL→L) — this remains correct.
+- **File changed:** `src/lib/supabase/types.ts`, `src/components/ayakasir/erp/screens/PurchasingScreen.tsx`
+
+## 2026-03-25 — Purchasing: upsertInventory variant_id null vs "" mismatch
+
+- **Bug:** Saving a goods receiving showed "Terjadi Kesalahan" even though the receiving header + items were saved. Data appeared in list but error was thrown.
+- **Root cause:** `upsertInventory` uses `onConflict: "product_id,variant_id"`. Mobile app stores `variant_id = null` for no-variant rows. The web ERP normalized `null → ""` in `inventorySnapshot` keys (`i.variant_id ?? ""`), but then passed `variant_id: ""` to `upsertInventory`. The conflict key `("product_id", "")` doesn't match the DB row `("product_id", null)`, so Supabase tried to INSERT a duplicate row, throwing a constraint error.
+- **Fix:** In `handleSaveReceiving`, when calling `upsertInventory`, use `existing.variant_id` (the actual DB value, which may be `null`) instead of `item.variant_id` (`""`). Applied to both the add path and the edit reversal path.
+- **Pattern to remember:** Always use the fetched DB row's `variant_id` (not the form value) when upserting inventory. The snapshot keys use `?? ""` for JS Map lookups only — the actual DB value must be preserved.
+- **File changed:** `src/components/ayakasir/erp/screens/PurchasingScreen.tsx`
+
+## 2026-03-25 — Purchasing: Remove Preset Varian from Raw Material
+
+- **Bug:** Changing Preset Varian dropdown to "— Belum ada preset varian —" in the Bahan Baku edit form had no effect — the old variants were not removed.
+- **Fix:** In `handleSaveRawMaterial` (PurchasingScreen.tsx ~line 1020), added a removal branch: when `rawPresetGroupId` is cleared (`""`) and `prevGroupId` exists, delete variants and their inventory rows for that specific `productId` whose names match the old group's values.
+- **Logic:** Filters `state.variants` by `product_id === productId` AND name in `prevValueNames` set, then calls `repo.deleteInventoryByProductVariant` + `repo.deleteVariant` per affected variant and dispatches local DELETE actions.
+- **File changed:** `src/components/ayakasir/erp/screens/PurchasingScreen.tsx`
+
+## 2026-03-25 — Products: Per-Variant BOM (Bill of Materials)
+
+- **Schema change:** Added `parent_variant_id TEXT NOT NULL DEFAULT ''` column to `product_components` table. Needs Supabase migration: `ALTER TABLE product_components ADD COLUMN parent_variant_id TEXT NOT NULL DEFAULT '';`
+- **Type:** `DbProductComponent` in `src/lib/supabase/types.ts` gained `parent_variant_id: string` field.
+- **Products form UI:** When a product has variants, BOM section shows grouped sections per variant (e.g., Small / Medium / Large), each with its own "+ Add Component" button. A "Shared (all variants)" section holds components deducted for any variant. "Copy to all variants" button duplicates one variant's BOM to all others.
+- **POS deduction logic:** Changed from variant-name-matching to direct `parent_variant_id` matching. Components with empty `parent_variant_id` (shared) always deducted; variant-specific components deducted only when `parent_variant_id === item.variantId`.
+- **Clone:** Variant ID mapping tracks old→new variant IDs so cloned BOM rows reference correct new variant IDs.
+- **CSV import:** Components imported via CSV get `parent_variant_id: ""` (shared) by default.
+- **Files changed:** `types.ts`, `ProductsScreen.tsx`, `PosScreen.tsx`, `i18n.ts`, `erp.css`
+- **No repo changes needed:** `setProductComponents` uses object spread, naturally includes new field.
+- **Backward compatible:** Existing components with empty `parent_variant_id` treated as shared (all variants).
+
 ## v1.1.4 (2026-03-23)
 
 ## 2026-03-23 — ERP Realtime: Status Handling + Fallback Reconcile
@@ -1192,4 +1240,36 @@
 - **Products screen:** `erp-table-pagination-info` (rows-per-page chips + count) moved from bottom `erp-table-pagination` to a flex row above the search bar, right-aligned parallel with the `erp-filter-bar` category chips.
 - **Customers screen:** Same pattern — rows-per-page chips + count moved to a flex row above the search bar, right-aligned parallel with the category `erp-filter-bar`. Bottom `erp-table-pagination` now contains only the prev/next nav buttons (rendered only when `totalPages > 1`).
 - Both use `display:flex; justify-content:space-between` wrapper to keep chips left and pagination info right.
+
+## 2026-03-24 - Inventory Adjustments: kg<->g Precision + "Stok Berkurang" Valuation Rule
+
+- **File:** `src/components/ayakasir/erp/screens/InventoryScreen.tsx`
+- **Fix 1 (unit conversion precision):** `toStoredQty()` no longer uses `Math.round(...)`. It now keeps decimal precision (`toFixed(6)`), so adjustments entered in toggled units are preserved accurately (example: `1 kg -> 800 g` saves as `0.8 kg`, not `1 kg`; `1 kg -> 1500 g` saves as `1.5 kg`, not `2 kg`).
+- **Fix 2 (valuation behavior):** `computeNewAvgCogs()` now treats `adjustment_out` the same as `waste` for HPP recalculation: `ceil((oldAvg * oldQty) / newQty)`. This preserves total stock cost in remaining units (Nilai Stok not dropped by `Stok Berkurang`) and increases HPP Rata-rata accordingly.
+- **Rule update:** On inventory stock reduction adjustments (`adjustment_out` and `waste`), preserve historical total cost in the remaining stock by increasing `avg_cogs` rather than keeping it flat.
+
+## 2026-03-24 - Purchasing Receiving: Unit Toggle on Qty Label + Safe Mixed-Unit HPP Math
+
+- **Files:** `src/components/ayakasir/erp/screens/PurchasingScreen.tsx`, `src/app/ayakasir/[locale]/app/erp.css`
+- **UX fix:** In Tambah/Edit Penerimaan, `erp-bom-unit-label` on receiving qty now acts as a quick unit switch for convertible pairs only:
+  - `g <-> kg`
+  - `mL <-> L`
+- **Behavior detail:** Switching unit converts entered qty values in-place (including variant sub-rows) so the physical amount stays the same and users can input large receipts more easily.
+- **Valuation hardening:** Goods-receiving create/edit/delete math now converts both qty and `cost_per_unit` into the inventory row's stored unit before weighted-average / reversal HPP calculations. This prevents x1000 valuation drift when item unit differs from inventory unit.
+
+## 2026-03-24 - Raw Material Storage Unit Normalization (Create + CSV Import)
+
+- **File:** `src/components/ayakasir/erp/screens/PurchasingScreen.tsx`
+- **Rule applied:** raw material inventory storage now normalizes to smallest convertible unit:
+  - `kg -> g`
+  - `L -> mL`
+  - `g`, `mL`, `pcs` unchanged
+- **Coverage:** both manual raw-material create (`handleSaveRaw`) and raw-material CSV import (`handleConfirmRawImport`), including auto-created variant inventory rows from preset groups.
+- **Reason:** ensures inventory starts in base unit so later adjustments/receiving can support smallest-unit operations consistently.
+
+## 2026-03-25 - Products: Tambah Produk Field Order (Nama -> Kategori -> Harga)
+
+- **File:** `src/components/ayakasir/erp/screens/ProductsScreen.tsx`
+- **Change:** In Product form dialog, moved `Kategori` directly below `Nama`, and moved `Harga` below `Kategori` to match requested input flow.
+- **Scope:** UI field order only; no validation/business-logic changes.
 

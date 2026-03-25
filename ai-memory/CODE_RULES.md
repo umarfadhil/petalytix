@@ -50,7 +50,7 @@
 - `ErpProvider` (React Context + useReducer) wraps all authenticated ERP pages.
 - Server-side `(erp)/layout.tsx` fetches all data and passes as `initialData` to provider.
 - Mutations: call repository function → dispatch UPSERT/DELETE to local state → realtime handles cross-device sync.
-- Realtime: `useRealtimeSync` hook subscribes to Postgres Changes on all 12 tenant tables + `tenants`. Accepts optional `onStatusChange(status: RealtimeStatus)` callback — maps channel subscribe states to `"CONNECTING" | "SUBSCRIBED" | "DISCONNECTED"`.
+- Realtime: `useRealtimeSync` hook subscribes to Postgres Changes on all tenant tables + `tenants`. Accepts optional `onStatusChange(status: RealtimeStatus)` callback — maps channel subscribe states to `"CONNECTING" | "SUBSCRIBED" | "DISCONNECTED"`.
 - `ErpState.realtimeStatus` reflects current channel status. Screens can read it to show a connection indicator.
 - Fallback reconcile: `ErpProvider` re-fetches all data on `window focus` (always) and every 5 min when `DISCONNECTED`. Uses `reconcileRef` + `realtimeStatusRef` to avoid stale closures.
 - All tenant queries MUST filter by `tenant_id`.
@@ -85,13 +85,37 @@
 - In screens, use `const isOwner = state.user?.role === "OWNER"` to gate delete/category-management actions.
 - Feature access default for new CASHIER: `POS,INVENTORY`.
 
+### ERP Per-Variant BOM Rules
+- `product_components.parent_variant_id` (TEXT NOT NULL DEFAULT '') links a BOM row to a specific menu item variant.
+- Empty `parent_variant_id` = shared component (deducted for all variants).
+- Non-empty `parent_variant_id` = variant-specific (deducted only when that variant is sold).
+- POS deduction filters by `parent_variant_id === item.variantId` (direct ID match, not name matching).
+- Products form groups BOM rows by variant with "Copy to all variants" helper button.
+- On save, variant IDs are remapped (old→new) since variants are recreated. `resolveParentVariantId()` handles the mapping.
+- Clone carries `parent_variant_id` via `cloneVarMap` (old variant ID → new).
+- CSV import defaults to `parent_variant_id: ""` (shared).
+- `component_variant_id` is still used for raw material variant selection (which inventory row to deduct from).
+
 ### ERP Inventory / HPP Rules
 - `inventory.avg_cogs` (BIGINT) is cost per base unit; 0 when stock is 0.
-- All values written to `current_qty` and `avg_cogs` in Supabase must be `Math.round()`ed — column is BIGINT; floats cause `22P02`.
+- `avg_cogs` must be integer-safe on write (round/floor/ceil per flow) because DB column is BIGINT.
+- `current_qty` is not rounded to integer; preserve decimal precision for unit-converted adjustments (store with up to 6 decimals).
 - Unit conversion before arithmetic: kg→g (×1000), L→mL (×1000), pcs unchanged. Convert back to stored unit after.
-- `adjustment_in`: `newAvg = (oldAvg × oldQty) / newQty`. `adjustment_out`/`waste`: same formula. Zero stock → `avg_cogs = 0`.
+- Raw material inventory rows must store smallest units for convertible measures: save `kg` as `g`, and `L` as `mL` (manual create and CSV import).
+- `adjustment_in`: `newAvg = floor((oldAvg × oldQty) / newQty)` (cost dilution).
+- `adjustment_out` / `waste`: `newAvg = ceil((oldAvg × oldQty) / newQty)` so remaining stock absorbs historical total cost (value-preserving reduction rule).
+- Zero stock (`newQty <= 0`) → `avg_cogs = 0`.
 - Goods receiving avg: `newAvg = (existingAvg × existingQty + costPerBase × receivedBase) / newTotalQty`.
+- Purchasing vs Inventory totals can diverge by design: Purchasing uses exact `SUM(qty × cost_per_unit)` while Inventory uses `SUM(current_qty × avg_cogs)` with integer `avg_cogs`.
+- For goods receiving/edit/delete with mixed units, convert both `qty` and `cost_per_unit` to the inventory row's stored unit before weighted-average/reversal math.
 - Inventory arithmetic must read fresh DB data (`repo.getInventory()`), not cached React state.
+
+### ERP Purchasing Receiving Rules
+- Persist `goods_receiving_items` in base units (`g`, `mL`, `pcs`) to match DB integer columns.
+- `goods_receiving_items.qty` and `cost_per_unit` must be integer-safe on insert/update.
+- `goods_receiving_items.variant_name` is required (`NOT NULL`) — always populate it (empty string for no-variant rows).
+- When upserting inventory from receiving flow, preserve the actual DB `variant_id` (`null` vs `""`) from fetched inventory rows; do not write normalized map-key values.
+- In raw material edit, clearing preset variant group must remove previously generated variant + inventory rows for that product.
 
 ### ERP Inventory Movements
 - Stock adjustments write to `inventory_movements` table (not `general_ledger`).
@@ -123,6 +147,7 @@
 - Apply preset: opens dialog → select raw material → creates `DbVariant` rows per value (skip if name exists) + `DbInventory` row per new variant.
 - Delete group: removes affected DbVariant + DbInventory rows for products using those variant names, then deletes group (cascade deletes values).
 - Goods receiving "Use Variants" toggle: expands product row into per-variant sub-rows (variantId, variantName, qty, costPerUnit). Save produces one `DbGoodsReceivingItem` per variant row with non-zero qty.
+- Goods receiving qty unit label supports quick switch for convertible units (`g <-> kg`, `mL <-> L`) in the Tambah/Edit Penerimaan dialog; switching unit converts entered qty values in-place.
 - `FormItem` extended with `useVariants: boolean` and `variantRows: VariantRow[]`.
 
 ### ERP Plan / Subscription Rules

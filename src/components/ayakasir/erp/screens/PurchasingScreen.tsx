@@ -120,13 +120,23 @@ function normalizeUnit(raw: string): string {
   return u || "pcs";
 }
 
+type GroupImportRow = {
+  presetName: string;
+  values: string[];       // non-blank variant_N values
+  isDuplicate: boolean;   // preset name already exists
+  clashingValues: string[]; // values that exist in another group
+};
+
 type RawImportRow = {
   name: string;
   category: string;  // category name from CSV
   unit: string;
   description: string;
+  presetVariant: string;   // variant group name from CSV
+  presetValues: string[];  // variant_1, variant_2, … values (non-blank only)
   isDuplicate: boolean;
   isNewCategory: boolean;
+  isNewPreset: boolean;
 };
 
 
@@ -148,6 +158,35 @@ interface FormItem {
   // per-row item picker state
   categoryId: string;
   itemSearch: string;
+}
+
+function getConvertibleUnitTarget(unit: string): string | null {
+  if (unit === "g") return "kg";
+  if (unit === "kg") return "g";
+  if (unit === "mL") return "L";
+  if (unit === "L") return "mL";
+  return null;
+}
+
+function convertQtyBetweenUnits(qty: number, fromUnit: string, toUnit: string): number {
+  if (fromUnit === toUnit) return qty;
+  if ((fromUnit === "kg" && toUnit === "g") || (fromUnit === "L" && toUnit === "mL")) return qty * 1000;
+  if ((fromUnit === "g" && toUnit === "kg") || (fromUnit === "mL" && toUnit === "L")) return qty / 1000;
+  return qty;
+}
+
+function convertCostPerUnitBetweenUnits(costPerUnit: number, fromUnit: string, toUnit: string): number {
+  if (fromUnit === toUnit) return costPerUnit;
+  // cost/kg -> cost/g (divide 1000), cost/g -> cost/kg (multiply 1000)
+  if ((fromUnit === "kg" && toUnit === "g") || (fromUnit === "L" && toUnit === "mL")) return costPerUnit / 1000;
+  if ((fromUnit === "g" && toUnit === "kg") || (fromUnit === "mL" && toUnit === "L")) return costPerUnit * 1000;
+  return costPerUnit;
+}
+
+function normalizeInventoryUnit(unit: string): string {
+  if (unit === "kg") return "g";
+  if (unit === "L") return "mL";
+  return unit;
 }
 
 export default function PurchasingScreen() {
@@ -178,7 +217,8 @@ export default function PurchasingScreen() {
   const [vendorPhone, setVendorPhone] = useState("");
   const [vendorAddress, setVendorAddress] = useState("");
 
-  // Vendor tab — pagination, bulk delete, CSV import
+  // Vendor tab — search, pagination, bulk delete, CSV import
+  const [vendorSearch, setVendorSearch] = useState("");
   const [vendorPage, setVendorPage] = useState(0);
   const [vendorPageSize, setVendorPageSize] = useState<10 | 25 | 50>(10);
   const [selectedVendorIds, setSelectedVendorIds] = useState<Set<string>>(new Set());
@@ -196,6 +236,8 @@ export default function PurchasingScreen() {
   const [rawDescription, setRawDescription] = useState("");
   const [rawActive, setRawActive] = useState(true);
   const [rawUnit, setRawUnit] = useState("pcs");
+  // Preset variant group selected in the raw material form ("" = none)
+  const [rawPresetGroupId, setRawPresetGroupId] = useState("");
 
   // Raw material pre-save warning state
   const [showRawWarning, setShowRawWarning] = useState(false);
@@ -206,7 +248,8 @@ export default function PurchasingScreen() {
   const [rawCatName, setRawCatName] = useState("");
   const [rawCatOrder, setRawCatOrder] = useState("0");
 
-  // Category tab — pagination, bulk delete, CSV import
+  // Category tab — search, pagination, bulk delete, CSV import
+  const [catSearch, setCatSearch] = useState("");
   const [catPage, setCatPage] = useState(0);
   const [catPageSize, setCatPageSize] = useState<10 | 25 | 50>(10);
   const [selectedCatIds, setSelectedCatIds] = useState<Set<string>>(new Set());
@@ -246,6 +289,9 @@ export default function PurchasingScreen() {
   const [showGroupBulkConfirm, setShowGroupBulkConfirm] = useState(false);
   const [groupBulkDeleting, setGroupBulkDeleting] = useState(false);
   const [groupSearch, setGroupSearch] = useState("");
+  const [groupImportPreview, setGroupImportPreview] = useState<GroupImportRow[] | null>(null);
+  const [groupImportSaving, setGroupImportSaving] = useState(false);
+  const [groupImportMsg, setGroupImportMsg] = useState<{ text: string; ok: boolean } | null>(null);
   // Apply preset dialog (from Variants tab)
   const [applyGroupTarget, setApplyGroupTarget] = useState<DbVariantGroup | null>(null);
   const [applyProductId, setApplyProductId] = useState("");
@@ -303,10 +349,14 @@ export default function PurchasingScreen() {
   const receivingTotalPages = Math.ceil(filteredReceivings.length / receivingPageSize);
   const pagedReceivings = filteredReceivings.slice(receivingPage * receivingPageSize, receivingPage * receivingPageSize + receivingPageSize);
 
-  const sortedVendors = useMemo(
-    () => [...state.vendors].sort((a, b) => a.name.localeCompare(b.name)),
-    [state.vendors]
-  );
+  const sortedVendors = useMemo(() => {
+    let list = [...state.vendors];
+    if (vendorSearch) {
+      const q = vendorSearch.toLowerCase();
+      list = list.filter((v) => v.name.toLowerCase().includes(q) || (v.phone || "").toLowerCase().includes(q) || (v.address || "").toLowerCase().includes(q));
+    }
+    return list.sort((a, b) => a.name.localeCompare(b.name));
+  }, [state.vendors, vendorSearch]);
 
   const pagedVendors = useMemo(() => {
     const start = vendorPage * vendorPageSize;
@@ -315,10 +365,14 @@ export default function PurchasingScreen() {
 
   const vendorTotalPages = Math.ceil(sortedVendors.length / vendorPageSize);
 
-  const sortedRawCategories = useMemo(
-    () => [...rawCategories].sort((a, b) => a.name.localeCompare(b.name)),
-    [rawCategories]
-  );
+  const sortedRawCategories = useMemo(() => {
+    let list = [...rawCategories];
+    if (catSearch) {
+      const q = catSearch.toLowerCase();
+      list = list.filter((c) => c.name.toLowerCase().includes(q));
+    }
+    return list.sort((a, b) => a.name.localeCompare(b.name));
+  }, [rawCategories, catSearch]);
 
   const pagedRawCategories = useMemo(() => {
     const start = catPage * catPageSize;
@@ -410,11 +464,7 @@ export default function PurchasingScreen() {
 
   const getRawInventoryUnit = (productId: string) => {
     const inv = state.inventory.find((i) => i.product_id === productId && (!i.variant_id || i.variant_id === ""));
-    if (!inv) return "—";
-    // Convert base unit back to display unit (g→kg, mL→L)
-    if (inv.unit === "g") return "kg";
-    if (inv.unit === "mL") return "L";
-    return inv.unit;
+    return inv?.unit ?? "—";
   };
 
   const getVendorName = (id: string | null) =>
@@ -430,6 +480,7 @@ export default function PurchasingScreen() {
 
   // Receiving CRUD
   const openCreateReceiving = () => {
+    if (!planLimits.canAddReceiving) { alert(copy.plan.limitReached); return; }
     setEditReceivingId(null);
     setRecVendor("");
     setRecNotes("");
@@ -508,18 +559,22 @@ export default function PurchasingScreen() {
     raw === "" ? "" : Number(raw.replace(/\D/g, "")).toLocaleString("id-ID");
 
   const parseNum = (formatted: string) => formatted.replace(/\D/g, "");
+  const parseQtyInput = (raw: string): number => parseFloat(raw.replace(",", ".")) || 0;
+  const formatQtyInput = (qty: number): string => {
+    const rounded = parseFloat(qty.toFixed(6));
+    return Number.isFinite(rounded) ? String(rounded) : "0";
+  };
 
   const updateRecItem = (idx: number, field: keyof FormItem, value: string) => {
     const next = [...recItems];
     // qty allows decimals (e.g. 1,5 kg) — store raw; costPerUnit is integer currency — strip non-digits
     const stored = field === "costPerUnit" ? parseNum(value) : value;
     next[idx] = { ...next[idx], [field]: stored };
-    // Auto-set unit from inventory — convert base unit to display unit for user input (g→kg, mL→L)
+    // Auto-set unit from inventory — unit is stored as display unit (kg/L/pcs)
     if (field === "productId") {
       const inv = state.inventory.find((i) => i.product_id === value && (!i.variant_id || i.variant_id === ""));
       if (inv) {
-        const displayUnit = inv.unit === "g" ? "kg" : inv.unit === "mL" ? "L" : inv.unit;
-        next[idx].unit = displayUnit;
+        next[idx].unit = inv.unit;
       }
       // Auto-select category from the raw material
       if (value) {
@@ -534,6 +589,22 @@ export default function PurchasingScreen() {
       setInlineApplyIdx(-1);
       setInlineApplyGroupId("");
     }
+    setRecItems(next);
+  };
+
+  const toggleRecItemUnit = (idx: number) => {
+    const next = [...recItems];
+    const item = next[idx];
+    const targetUnit = getConvertibleUnitTarget(item.unit);
+    if (!targetUnit) return;
+
+    const convertedQty = item.qty ? formatQtyInput(convertQtyBetweenUnits(parseQtyInput(item.qty), item.unit, targetUnit)) : "";
+    const convertedVariantRows = item.variantRows.map((vr) => ({
+      ...vr,
+      qty: vr.qty ? formatQtyInput(convertQtyBetweenUnits(parseQtyInput(vr.qty), item.unit, targetUnit)) : "",
+    }));
+
+    next[idx] = { ...item, unit: targetUnit, qty: convertedQty, variantRows: convertedVariantRows };
     setRecItems(next);
   };
 
@@ -580,13 +651,10 @@ export default function PurchasingScreen() {
       const isEdit = !!editReceivingId;
       const recId = isEdit ? editReceivingId! : crypto.randomUUID();
 
-      const toBaseQty = (qty: number, unit: string): { qty: number; unit: string } => {
-        if (unit === "L") return { qty: qty * 1000, unit: "mL" };
-        if (unit === "kg") return { qty: qty * 1000, unit: "g" };
-        return { qty, unit };
-      };
-      // For inventory rows: current_qty is always stored in base (g/mL/pcs) regardless of unit display label
-      const invToBase = (inv: { current_qty: number; unit: string }): number => inv.current_qty;
+      // Align receiving qty to inventory's stored unit. If inventory is "kg" and item is "kg", just use qty.
+      // If inventory is "g" and item is "kg", convert to grams. Etc.
+      const toInvQty = (itemQty: number, itemUnit: string, invUnit: string): number =>
+        convertQtyBetweenUnits(itemQty, itemUnit, invUnit);
 
       const header: Omit<DbGoodsReceiving, "sync_status"> = {
         id: recId,
@@ -597,42 +665,57 @@ export default function PurchasingScreen() {
         updated_at: now,
       };
 
+      // Determine the base (stored) unit for a display unit — mirrors normalizeInventoryUnit
+      const toBaseUnit = (displayUnit: string): string => {
+        if (displayUnit === "kg") return "g";
+        if (displayUnit === "L") return "mL";
+        return displayUnit;
+      };
+
       const items: Omit<DbGoodsReceivingItem, "sync_status">[] = recItems
         .filter((i) => i.productId)
         .flatMap((i) => {
+          const baseUnit = toBaseUnit(i.unit);
           if (i.useVariants && i.variantRows.length > 0) {
             // Produce one item per variant sub-row (skip rows with no qty)
             return i.variantRows
               .filter((vr) => vr.variantId && vr.qty)
               .map((vr) => {
-                const rawQty = parseFloat(vr.qty.replace(",", ".")) || 0;
-                const { qty: baseQty, unit: baseUnit } = toBaseQty(rawQty, i.unit);
+                const displayQty = parseFloat(vr.qty.replace(",", ".")) || 0;
+                // Convert display qty → base unit (e.g. 1.5 L → 1500 mL)
+                const baseQty = Math.round(convertQtyBetweenUnits(displayQty, i.unit, baseUnit));
                 const totalCost = parseInt(vr.costPerUnit) || 0;
+                // cost_per_unit stored per base unit, rounded to integer
+                const costPerBase = baseQty > 0 ? Math.round(totalCost / baseQty) : 0;
+                const variantName = state.variants.find((v) => v.id === vr.variantId)?.name || vr.variantName || "";
                 return {
                   id: crypto.randomUUID(),
                   tenant_id: tenantId,
                   receiving_id: recId,
                   product_id: i.productId,
                   variant_id: vr.variantId,
-                  qty: Math.round(baseQty),
-                  cost_per_unit: baseQty > 0 ? Math.round(totalCost / baseQty) : 0,
+                  variant_name: variantName,
+                  qty: baseQty,
+                  cost_per_unit: costPerBase,
                   unit: baseUnit,
                   updated_at: now,
                 };
               });
           }
-          const rawQty = parseFloat(i.qty.replace(",", ".")) || 0;
-          // Convert to base unit so DB always stores integers (g, mL, pcs)
-          const { qty: baseQty, unit: baseUnit } = toBaseQty(rawQty, i.unit);
+          const displayQty = parseFloat(i.qty.replace(",", ".")) || 0;
+          // Convert display qty → base unit
+          const baseQty = Math.round(convertQtyBetweenUnits(displayQty, i.unit, baseUnit));
           const totalCost = parseInt(i.costPerUnit) || 0;
+          const costPerBase = baseQty > 0 ? Math.round(totalCost / baseQty) : 0;
           return [{
             id: crypto.randomUUID(),
             tenant_id: tenantId,
             receiving_id: recId,
             product_id: i.productId,
             variant_id: i.variantId || "",
-            qty: Math.round(baseQty),
-            cost_per_unit: baseQty > 0 ? Math.round(totalCost / baseQty) : 0,
+            variant_name: "",
+            qty: baseQty,
+            cost_per_unit: costPerBase,
             unit: baseUnit,
             updated_at: now,
           }];
@@ -649,25 +732,24 @@ export default function PurchasingScreen() {
         // Reverse old items' inventory effect
         const oldItems = state.goodsReceivingItems.filter((i) => i.receiving_id === recId);
         for (const old of oldItems) {
-          const { qty: oldBase, unit: oldBaseUnit } = toBaseQty(old.qty, old.unit);
           const key = `${old.product_id}|${old.variant_id ?? ""}`;
           const existing = inventorySnapshot.get(key);
           if (existing) {
-            const currentBase = invToBase(existing);
-            const newQtyBase = Math.max(0, Math.round(currentBase - oldBase));
-            // Reversal: un-apply weighted-avg. Recover original avg_cogs before this purchase.
-            // If we can, back-calculate: oldAvg = (currentAvg × currentQty - costPerBase × oldBase) / newQtyBase
-            const costPerBase = old.cost_per_unit / (old.unit === "L" || old.unit === "kg" ? 1000 : 1);
-            const recoveredAvg = newQtyBase > 0
-              ? Math.max(0, ((existing.avg_cogs ?? 0) * currentBase - costPerBase * oldBase) / newQtyBase)
+            // Convert old item qty to inventory's stored unit before subtracting
+            const oldInvQty = toInvQty(old.qty, old.unit, existing.unit);
+            const newQty = Math.max(0, existing.current_qty - oldInvQty);
+            const oldCostPerInvUnit = convertCostPerUnitBetweenUnits(old.cost_per_unit, old.unit, existing.unit);
+            // Recover avg_cogs: back-calculate before this purchase was applied
+            const recoveredAvg = newQty > 0
+              ? Math.max(0, ((existing.avg_cogs ?? 0) * existing.current_qty - oldCostPerInvUnit * oldInvQty) / newQty)
               : 0;
             const reversed = await repo.upsertInventory(supabase, {
               product_id: old.product_id,
-              variant_id: old.variant_id,
+              variant_id: existing.variant_id, // use actual DB value (may be null, not "")
               tenant_id: tenantId,
-              current_qty: newQtyBase,
+              current_qty: Math.round(newQty),
               min_qty: existing.min_qty,
-              unit: existing.unit, // preserve display unit marker
+              unit: existing.unit,
               avg_cogs: Math.round(recoveredAvg),
               updated_at: now,
             });
@@ -698,23 +780,28 @@ export default function PurchasingScreen() {
 
       // Apply new items' inventory effect — read from snapshot, not state.inventory
       for (const item of items) {
-        const { qty: receivedBase, unit: baseUnit } = toBaseQty(item.qty, item.unit);
         const key = `${item.product_id}|${item.variant_id ?? ""}`;
         const existing = inventorySnapshot.get(key);
-        const currentBase = existing ? invToBase(existing) : 0;
-        // Weighted-average COGS: new purchase price in base units
-        const costPerBase = item.cost_per_unit / (item.unit === "L" || item.unit === "kg" ? 1000 : 1);
-        const newTotalQty = Math.round(currentBase + receivedBase);
+        // Determine inventory's stored unit: use existing unit, fall back to item's unit for brand-new rows
+        const invUnit = existing?.unit || item.unit;
+        // Convert received qty to inventory's stored unit
+        const receivedInvQty = toInvQty(item.qty, item.unit, invUnit);
+        const costPerInvUnit = convertCostPerUnitBetweenUnits(item.cost_per_unit, item.unit, invUnit);
+        const currentQty = existing?.current_qty ?? 0;
+        const newTotalQty = currentQty + receivedInvQty;
+        // Weighted-average COGS — cost_per_unit is per item.unit; convert to per invUnit
         const newAvgCogs = newTotalQty > 0
-          ? ((existing?.avg_cogs ?? 0) * currentBase + costPerBase * receivedBase) / newTotalQty
+          ? ((existing?.avg_cogs ?? 0) * currentQty + costPerInvUnit * receivedInvQty) / newTotalQty
           : 0;
+        // Use existing row's variant_id (may be null in DB) to match the upsert conflict key correctly
+        const upsertVariantId = existing ? existing.variant_id : (item.variant_id || "");
         const updated = await repo.upsertInventory(supabase, {
           product_id: item.product_id,
-          variant_id: item.variant_id,
+          variant_id: upsertVariantId,
           tenant_id: tenantId,
-          current_qty: newTotalQty,
+          current_qty: Math.round(newTotalQty),
           min_qty: existing?.min_qty || 0,
-          unit: existing?.unit || baseUnit, // preserve display unit marker; fall back to receiving item's base unit for new rows
+          unit: invUnit,
           avg_cogs: Math.round(newAvgCogs),
           updated_at: now,
         });
@@ -743,6 +830,7 @@ export default function PurchasingScreen() {
       setShowReceivingForm(false);
     } catch (err) {
       console.error("Save receiving failed:", err);
+      alert(copy.common.error);
     }
     setSaving(false);
   };
@@ -750,37 +838,27 @@ export default function PurchasingScreen() {
   const handleDeleteReceiving = async (id: string) => {
     if (!confirm(copy.common.deleteWarning)) return;
     try {
-      const toBaseQty = (qty: number, unit: string): { qty: number; unit: string } => {
-        if (unit === "L") return { qty: qty * 1000, unit: "mL" };
-        if (unit === "kg") return { qty: qty * 1000, unit: "g" };
-        return { qty, unit };
-      };
-      // For inventory rows: current_qty is always stored in base (g/mL/pcs) regardless of unit display label
-      const invToBase = (inv: { current_qty: number; unit: string }): number => inv.current_qty;
-
       // Reverse inventory effect of the deleted receiving
       const oldItems = state.goodsReceivingItems.filter((i) => i.receiving_id === id);
       const now = Date.now();
       for (const old of oldItems) {
-        const { qty: oldBase } = toBaseQty(old.qty, old.unit);
         const existing = state.inventory.find(
           (i) => i.product_id === old.product_id && (!i.variant_id || i.variant_id === old.variant_id)
         );
         if (existing) {
-          const currentBase = invToBase(existing);
-          const newQtyBase = Math.max(0, Math.round(currentBase - oldBase));
-          // Reversal: back-calculate avg_cogs before this purchase was applied
-          const costPerBase = old.cost_per_unit / (old.unit === "L" || old.unit === "kg" ? 1000 : 1);
-          const recoveredAvg = newQtyBase > 0
-            ? Math.max(0, ((existing.avg_cogs ?? 0) * currentBase - costPerBase * oldBase) / newQtyBase)
+          const oldInvQty = convertQtyBetweenUnits(old.qty, old.unit, existing.unit);
+          const newQty = Math.max(0, Math.round(existing.current_qty - oldInvQty));
+          const oldCostPerInvUnit = convertCostPerUnitBetweenUnits(old.cost_per_unit, old.unit, existing.unit);
+          const recoveredAvg = newQty > 0
+            ? Math.max(0, ((existing.avg_cogs ?? 0) * existing.current_qty - oldCostPerInvUnit * oldInvQty) / newQty)
             : 0;
           const updated = await repo.upsertInventory(supabase, {
             product_id: old.product_id,
             variant_id: old.variant_id,
             tenant_id: tenantId,
-            current_qty: newQtyBase,
+            current_qty: newQty,
             min_qty: existing.min_qty,
-            unit: existing.unit, // preserve display unit marker
+            unit: existing.unit,
             avg_cogs: Math.round(recoveredAvg),
             updated_at: now,
           });
@@ -802,6 +880,7 @@ export default function PurchasingScreen() {
 
   // Vendor CRUD
   const openCreateVendor = () => {
+    if (!planLimits.canAddVendor) { alert(copy.plan.limitReached); return; }
     setEditVendorId(null);
     setVendorName("");
     setVendorPhone("");
@@ -818,6 +897,10 @@ export default function PurchasingScreen() {
   };
 
   const handleSaveVendor = async () => {
+    if (!editVendorId && !planLimits.canAddVendor) {
+      alert(copy.plan.limitReached);
+      return;
+    }
     const nameLower = vendorName.trim().toLowerCase();
     const duplicate = state.vendors.some(
       (v) => v.name.toLowerCase() === nameLower && v.id !== editVendorId
@@ -874,6 +957,7 @@ export default function PurchasingScreen() {
     setRawDescription("");
     setRawActive(true);
     setRawUnit("pcs");
+    setRawPresetGroupId("");
     setShowRawForm(true);
   };
 
@@ -884,9 +968,8 @@ export default function PurchasingScreen() {
     setRawDescription(p.description || "");
     setRawActive(p.is_active);
     const storedUnit = state.inventory.find((i) => i.product_id === p.id && (!i.variant_id || i.variant_id === ""))?.unit || "pcs";
-    // Convert base unit back to display unit for the form (g→kg, mL→L)
-    const displayUnit = storedUnit === "g" ? "kg" : storedUnit === "mL" ? "L" : storedUnit;
-    setRawUnit(displayUnit);
+    setRawUnit(storedUnit);
+    setRawPresetGroupId(rawMaterialGroupMap.get(p.id) || "");
     setShowRawForm(true);
   };
 
@@ -934,21 +1017,78 @@ export default function PurchasingScreen() {
           updated_at: now,
         });
         dispatch({ type: "UPSERT", table: "products", payload: created as unknown as Record<string, unknown> });
-        // Create initial inventory row — always store unit as base unit (kg→g, L→mL)
-        const baseRawUnit = rawUnit === "kg" ? "g" : rawUnit === "L" ? "mL" : rawUnit;
+        // Store inventory unit in smallest unit to support fine-grained adjustments/receiving.
+        const invUnit = normalizeInventoryUnit(rawUnit);
         const inv = await repo.upsertInventory(supabase, {
           product_id: productId!,
           variant_id: "",
           tenant_id: tenantId,
           current_qty: 0,
           min_qty: 0,
-          unit: baseRawUnit,
+          unit: invUnit,
           avg_cogs: 0,
           updated_at: now,
         });
         dispatch({ type: "UPSERT", table: "inventory", payload: inv as unknown as Record<string, unknown> });
         if (pendingRawItemIdx >= 0) {
           setPendingRawItemIdx(-1);
+        }
+      }
+      // Apply or update preset variant group
+      if (productId) {
+        const prevGroupId = rawMaterialGroupMap.get(productId) || "";
+        if (rawPresetGroupId !== prevGroupId) {
+          // Remove old preset variants if deselected
+          if (!rawPresetGroupId && prevGroupId) {
+            const prevValues = getGroupValues(prevGroupId);
+            const prevValueNames = new Set(prevValues.map((v) => v.name.toLowerCase()));
+            const affectedVariants = state.variants.filter(
+              (v) => v.product_id === productId && prevValueNames.has(v.name.toLowerCase())
+            );
+            for (const v of affectedVariants) {
+              await repo.deleteInventoryByProductVariant(supabase, v.product_id, v.id);
+              dispatch({ type: "DELETE", table: "inventory", id: "", compositeKey: { product_id: v.product_id, variant_id: v.id } });
+              await repo.deleteVariant(supabase, v.id);
+              dispatch({ type: "DELETE", table: "variants", id: v.id });
+            }
+          }
+          // Apply new preset if selected
+          if (rawPresetGroupId) {
+            const group = state.variantGroups.find((g) => g.id === rawPresetGroupId);
+            if (group) {
+              const values = getGroupValues(rawPresetGroupId);
+              const existingVariantNames = new Set(
+                state.variants.filter((v) => v.product_id === productId).map((v) => v.name.toLowerCase())
+              );
+              const parentInv = state.inventory.find(
+                (i) => i.product_id === productId && (!i.variant_id || i.variant_id === "")
+              );
+              for (const val of values) {
+                if (existingVariantNames.has(val.name.toLowerCase())) continue;
+                const variantId = crypto.randomUUID();
+                const created = await repo.createVariant(supabase, {
+                  id: variantId,
+                  tenant_id: tenantId,
+                  product_id: productId,
+                  name: val.name,
+                  price_adjustment: 0,
+                  updated_at: now,
+                });
+                dispatch({ type: "UPSERT", table: "variants", payload: created as unknown as Record<string, unknown> });
+                const varInv = await repo.upsertInventory(supabase, {
+                  product_id: productId,
+                  variant_id: variantId,
+                  tenant_id: tenantId,
+                  current_qty: 0,
+                  min_qty: 0,
+                  unit: parentInv?.unit || normalizeInventoryUnit(rawUnit),
+                  avg_cogs: 0,
+                  updated_at: now,
+                });
+                dispatch({ type: "UPSERT", table: "inventory", payload: varInv as unknown as Record<string, unknown> });
+              }
+            }
+          }
         }
       }
       setShowRawForm(false);
@@ -1038,8 +1178,148 @@ export default function PurchasingScreen() {
     }
   };
 
+  // ── Variant Group CSV ─────────────────────────────────────────────────────
+
+  const handleDownloadGroupTemplate = () => {
+    const headers = ["preset_name", "variant_1", "variant_2", "variant_3"];
+    const example = ["Grade", "Regular", "Premium", "Super"];
+    const csv = "\uFEFF" + headers.join(",") + "\n" + example.map((v) => `"${v}"`).join(",") + "\n";
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "ayakasir_preset_variants_template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportGroupCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setGroupImportMsg(null);
+    try {
+      const text = await file.text();
+      const content = text.startsWith("\uFEFF") ? text.slice(1) : text;
+      const lines = content.split(/\r?\n/).filter((l) => l.trim());
+      if (lines.length < 2) throw new Error(copy.purchasing.groupImportError);
+
+      const headers = parseRawCsvLine(lines[0]).map((h) => h.toLowerCase());
+      const idx = (key: string) => headers.indexOf(key);
+
+      const existingGroupNames = new Set(state.variantGroups.map((g) => g.name.toLowerCase()));
+      // Build cross-group value uniqueness map
+      const allValuesByName = new Map<string, string>();
+      for (const g of state.variantGroups) {
+        for (const v of state.variantGroupValues.filter((v) => v.group_id === g.id)) {
+          allValuesByName.set(v.name.toLowerCase(), g.name);
+        }
+      }
+
+      const rows: GroupImportRow[] = [];
+      const batchGroupNames = new Set<string>();
+      // Track values claimed by earlier rows in this batch
+      const batchValuesByName = new Map<string, string>(); // valueLower → presetName
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = parseRawCsvLine(lines[i]);
+        const presetName = idx("preset_name") >= 0 ? (cols[idx("preset_name")] || "").trim() : "";
+        if (!presetName) continue;
+
+        // Collect variant_N columns
+        const values: string[] = [];
+        for (let hi = 0; hi < headers.length; hi++) {
+          if (/^variant_\d+$/.test(headers[hi])) {
+            const val = (cols[hi] || "").trim();
+            if (val) values.push(val);
+          }
+        }
+
+        const nameLower = presetName.toLowerCase();
+        const isDuplicate = existingGroupNames.has(nameLower) || batchGroupNames.has(nameLower);
+        batchGroupNames.add(nameLower);
+
+        // Find values that clash with existing or batch-earlier groups
+        const clashingValues = values.filter((v) => {
+          const vl = v.toLowerCase();
+          return allValuesByName.has(vl) || batchValuesByName.has(vl);
+        });
+        // Register non-clashing values for later rows in this batch
+        for (const v of values) {
+          const vl = v.toLowerCase();
+          if (!allValuesByName.has(vl) && !batchValuesByName.has(vl)) {
+            batchValuesByName.set(vl, presetName);
+          }
+        }
+
+        rows.push({ presetName, values, isDuplicate, clashingValues });
+      }
+
+      if (rows.length === 0) throw new Error(copy.purchasing.groupImportError);
+      setGroupImportPreview(rows);
+    } catch (err) {
+      setGroupImportMsg({ text: err instanceof Error ? err.message : copy.purchasing.groupImportError, ok: false });
+    }
+  };
+
+  const handleConfirmGroupImport = async () => {
+    if (!groupImportPreview) return;
+    setGroupImportSaving(true);
+    let imported = 0;
+    let skipped = 0;
+    try {
+      const now = Date.now();
+      // Build cross-group value map (existing)
+      const allValuesByName = new Map<string, string>();
+      for (const g of state.variantGroups) {
+        for (const v of state.variantGroupValues.filter((v) => v.group_id === g.id)) {
+          allValuesByName.set(v.name.toLowerCase(), g.name);
+        }
+      }
+
+      for (const row of groupImportPreview) {
+        if (row.isDuplicate) { skipped++; continue; }
+        const newGroupId = crypto.randomUUID();
+        const created = await repo.createVariantGroup(supabase, {
+          id: newGroupId,
+          tenant_id: tenantId,
+          name: row.presetName,
+          updated_at: now,
+        });
+        dispatch({ type: "UPSERT", table: "variantGroups", payload: created as unknown as Record<string, unknown> });
+        let sortIdx = 0;
+        for (const valName of row.values) {
+          const valLower = valName.toLowerCase();
+          if (allValuesByName.has(valLower)) continue; // skip clashing
+          const val = await repo.createVariantGroupValue(supabase, {
+            id: crypto.randomUUID(),
+            group_id: newGroupId,
+            tenant_id: tenantId,
+            name: valName,
+            sort_order: sortIdx++,
+            updated_at: now,
+          });
+          dispatch({ type: "UPSERT", table: "variantGroupValues", payload: val as unknown as Record<string, unknown> });
+          allValuesByName.set(valLower, row.presetName); // register for later rows
+        }
+        imported++;
+      }
+      const msg = skipped > 0
+        ? `${copy.purchasing.groupImportSuccess} (${skipped} ${copy.purchasing.rawImportSkipped})`
+        : copy.purchasing.groupImportSuccess;
+      setGroupImportMsg({ text: msg, ok: true });
+    } catch (err) {
+      setGroupImportMsg({ text: copy.purchasing.groupImportError, ok: false });
+      console.error("Group import failed:", err);
+    } finally {
+      setGroupImportSaving(false);
+      setGroupImportPreview(null);
+    }
+  };
+
   // ── Variant Group CRUD ────────────────────────────────────────────────────
   const openCreateGroup = () => {
+    if (!planLimits.canAddVariantGroup) { alert(copy.plan.limitReached); return; }
     setEditGroupId(null);
     setGroupName("");
     setGroupFormValues([{ tempId: crypto.randomUUID(), name: "" }]);
@@ -1057,6 +1337,10 @@ export default function PurchasingScreen() {
   };
 
   const handleSaveGroup = async () => {
+    if (!editGroupId && !planLimits.canAddVariantGroup) {
+      alert(copy.plan.limitReached);
+      return;
+    }
     const trimName = groupName.trim();
     if (!trimName) return;
     const validValues = groupFormValues.filter((v) => v.name.trim());
@@ -1069,6 +1353,16 @@ export default function PurchasingScreen() {
     // Duplicate value name check within form
     const valueNames = validValues.map((v) => v.name.trim().toLowerCase());
     if (new Set(valueNames).size !== valueNames.length) { alert(copy.purchasing.duplicateGroupValue); return; }
+    // Cross-group duplicate value check — no value may exist in another group
+    for (const otherGroup of state.variantGroups) {
+      if (otherGroup.id === editGroupId) continue;
+      const otherValues = state.variantGroupValues.filter((v) => v.group_id === otherGroup.id);
+      for (const v of validValues) {
+        const nameLower = v.name.trim().toLowerCase();
+        const clash = otherValues.find((ov) => ov.name.toLowerCase() === nameLower);
+        if (clash) { alert(copy.purchasing.duplicateGroupValueCrossGroup(v.name.trim(), otherGroup.name)); return; }
+      }
+    }
 
     setSaving(true);
     try {
@@ -1169,6 +1463,8 @@ export default function PurchasingScreen() {
           });
           dispatch({ type: "UPSERT", table: "variantGroupValues", payload: val as unknown as Record<string, unknown> });
         }
+        // Auto-select the newly created preset if the raw form is open
+        if (showRawForm) setRawPresetGroupId(groupId);
       }
       setShowGroupForm(false);
     } catch (err) {
@@ -1328,8 +1624,8 @@ export default function PurchasingScreen() {
 
   // Raw material CSV template download
   const handleDownloadRawTemplate = () => {
-    const headers = ["name", "category", "unit", "description"];
-    const example = ["Chicken Breast", "Protein", "kg", "Fresh chicken breast"];
+    const headers = ["name", "category", "unit", "description", "preset_variant", "variant_1", "variant_2", "variant_3"];
+    const example = ["Chicken Breast", "Protein", "kg", "Fresh chicken breast", "Grade", "Regular", "Premium", "Super"];
     const csv = "\uFEFF" + headers.join(",") + "\n" + example.map((v) => `"${v}"`).join(",") + "\n";
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -1358,6 +1654,7 @@ export default function PurchasingScreen() {
       const existingNames = new Set(rawMaterials.map((p) => p.name.toLowerCase()));
       const batchNames = new Set<string>();
       const existingCatNames = new Set(rawCategories.map((c) => c.name.toLowerCase()));
+      const existingGroupNames = new Set(state.variantGroups.map((g) => g.name.toLowerCase()));
 
       const rows: RawImportRow[] = [];
       for (let i = 1; i < lines.length; i++) {
@@ -1369,14 +1666,25 @@ export default function PurchasingScreen() {
         const rawUnit = idx("unit") >= 0 ? cols[idx("unit")] || "pcs" : "pcs";
         const unit = normalizeUnit(rawUnit);
         const description = idx("description") >= 0 ? cols[idx("description")] || "" : "";
+        const presetVariant = idx("preset_variant") >= 0 ? cols[idx("preset_variant")] || "" : "";
+
+        // Collect variant_1, variant_2, … variant_N — any column matching /^variant_\d+$/
+        const presetValues: string[] = [];
+        for (let hi = 0; hi < headers.length; hi++) {
+          if (/^variant_\d+$/.test(headers[hi])) {
+            const val = (cols[hi] || "").trim();
+            if (val) presetValues.push(val);
+          }
+        }
 
         const nameLower = name.toLowerCase();
         const isDuplicate = existingNames.has(nameLower) || batchNames.has(nameLower);
         batchNames.add(nameLower);
 
         const isNewCategory = category.length > 0 && !existingCatNames.has(category.toLowerCase());
+        const isNewPreset = presetVariant.length > 0 && !existingGroupNames.has(presetVariant.toLowerCase());
 
-        rows.push({ name, category, unit, description, isDuplicate, isNewCategory });
+        rows.push({ name, category, unit, description, presetVariant, presetValues, isDuplicate, isNewCategory, isNewPreset });
       }
 
       if (rows.length === 0) throw new Error(copy.purchasing.rawImportError);
@@ -1390,15 +1698,34 @@ export default function PurchasingScreen() {
   const handleConfirmRawImport = async () => {
     if (!rawImportPreview) return;
     setRawImportSaving(true);
+    const maxRawMaterials = planLimits.limits.maxRawMaterials;
+    const currentRawCount = state.products.filter((p) => p.product_type === "RAW_MATERIAL").length;
     let imported = 0;
     let skipped = 0;
+    let hitPlanLimit = false;
     try {
       const now = Date.now();
       // Build a live category name map (may have been updated since preview)
       const catByName = new Map(rawCategories.map((c) => [c.name.toLowerCase(), c.id]));
+      // Build a live preset group name map (name → { id, valueNames[] })
+      type GroupEntry = { id: string; valueNames: string[] };
+      const groupByName = new Map<string, GroupEntry>(
+        state.variantGroups.map((g) => [
+          g.name.toLowerCase(),
+          { id: g.id, valueNames: state.variantGroupValues.filter((v) => v.group_id === g.id).map((v) => v.name) },
+        ])
+      );
+      // Build a cross-group value uniqueness map: valueName.lower → groupName (for clash detection)
+      const allValuesByName = new Map<string, string>();
+      for (const g of state.variantGroups) {
+        for (const v of state.variantGroupValues.filter((v) => v.group_id === g.id)) {
+          allValuesByName.set(v.name.toLowerCase(), g.name);
+        }
+      }
 
       for (const row of rawImportPreview) {
         if (row.isDuplicate) { skipped++; continue; }
+        if (currentRawCount + imported >= maxRawMaterials) { hitPlanLimit = true; break; }
 
         // Auto-create category if needed
         let categoryId: string | null = null;
@@ -1422,6 +1749,45 @@ export default function PurchasingScreen() {
           }
         }
 
+        // Auto-create preset variant group if new (group with no values — values must be added manually)
+        let presetGroupEntry: GroupEntry | null = null;
+        if (row.presetVariant) {
+          const presetKey = row.presetVariant.toLowerCase();
+          if (groupByName.has(presetKey)) {
+            presetGroupEntry = groupByName.get(presetKey)!;
+          } else {
+            const newGroupId = crypto.randomUUID();
+            const createdGroup = await repo.createVariantGroup(supabase, {
+              id: newGroupId,
+              tenant_id: tenantId,
+              name: row.presetVariant.trim(),
+              updated_at: now,
+            });
+            dispatch({ type: "UPSERT", table: "variantGroups", payload: createdGroup as unknown as Record<string, unknown> });
+            // Create group values from variant_1..N columns (blank values already filtered in parse step)
+            // Skip any value that already exists in another group (cross-group uniqueness)
+            const newValueNames: string[] = [];
+            let sortIdx = 0;
+            for (const rawVal of row.presetValues) {
+              const valLower = rawVal.toLowerCase();
+              if (allValuesByName.has(valLower)) continue; // clashes with existing/already-created value
+              const val = await repo.createVariantGroupValue(supabase, {
+                id: crypto.randomUUID(),
+                group_id: newGroupId,
+                tenant_id: tenantId,
+                name: rawVal,
+                sort_order: sortIdx++,
+                updated_at: now,
+              });
+              dispatch({ type: "UPSERT", table: "variantGroupValues", payload: val as unknown as Record<string, unknown> });
+              newValueNames.push(rawVal);
+              allValuesByName.set(valLower, row.presetVariant.trim()); // register so later rows in same batch see it
+            }
+            presetGroupEntry = { id: newGroupId, valueNames: newValueNames };
+            groupByName.set(presetKey, presetGroupEntry);
+          }
+        }
+
         const productId = crypto.randomUUID();
         const created = await repo.createProduct(supabase, {
           id: productId,
@@ -1437,25 +1803,54 @@ export default function PurchasingScreen() {
         });
         dispatch({ type: "UPSERT", table: "products", payload: created as unknown as Record<string, unknown> });
 
-        // Always store unit as base unit (kg→g, L→mL); current_qty always stored in base units
-        const baseUnit = row.unit === "kg" ? "g" : row.unit === "L" ? "mL" : row.unit;
+        // Store inventory unit in smallest unit to support fine-grained adjustments/receiving.
+        const invUnit = normalizeInventoryUnit(row.unit);
         const inv = await repo.upsertInventory(supabase, {
           product_id: productId,
           variant_id: "",
           tenant_id: tenantId,
           current_qty: 0,
           min_qty: 0,
-          unit: baseUnit,
+          unit: invUnit,
           avg_cogs: 0,
           updated_at: now,
         });
         dispatch({ type: "UPSERT", table: "inventory", payload: inv as unknown as Record<string, unknown> });
+
+        // Apply preset group variants to the new product
+        if (presetGroupEntry && presetGroupEntry.valueNames.length > 0) {
+          for (const variantName of presetGroupEntry.valueNames) {
+            const variantId = crypto.randomUUID();
+            const createdVar = await repo.createVariant(supabase, {
+              id: variantId,
+              tenant_id: tenantId,
+              product_id: productId,
+              name: variantName,
+              price_adjustment: 0,
+              updated_at: now,
+            });
+            dispatch({ type: "UPSERT", table: "variants", payload: createdVar as unknown as Record<string, unknown> });
+            const varInv = await repo.upsertInventory(supabase, {
+              product_id: productId,
+              variant_id: variantId,
+              tenant_id: tenantId,
+              current_qty: 0,
+              min_qty: 0,
+              unit: invUnit,
+              avg_cogs: 0,
+              updated_at: now,
+            });
+            dispatch({ type: "UPSERT", table: "inventory", payload: varInv as unknown as Record<string, unknown> });
+          }
+        }
+
         imported++;
       }
+      const limitNote = hitPlanLimit ? ` — ${copy.purchasing.rawImportPlanLimit}` : "";
       const msg = skipped > 0
-        ? `${copy.purchasing.rawImportSuccess} (${skipped} ${copy.purchasing.rawImportSkipped})`
-        : copy.purchasing.rawImportSuccess;
-      setRawImportMsg({ text: msg, ok: true });
+        ? `${copy.purchasing.rawImportSuccess} (${skipped} ${copy.purchasing.rawImportSkipped})${limitNote}`
+        : `${copy.purchasing.rawImportSuccess}${limitNote}`;
+      setRawImportMsg({ text: msg, ok: !hitPlanLimit });
     } catch (err) {
       setRawImportMsg({ text: copy.purchasing.rawImportError, ok: false });
       console.error("Raw material import failed:", err);
@@ -1525,12 +1920,16 @@ export default function PurchasingScreen() {
   const handleConfirmVendorImport = async () => {
     if (!vendorImportPreview) return;
     setVendorImportSaving(true);
+    const maxVendors = planLimits.limits.maxVendors;
+    const currentVendorCount = state.vendors.length;
     let imported = 0;
     let skipped = 0;
+    let hitPlanLimit = false;
     try {
       const now = Date.now();
       for (const row of vendorImportPreview) {
         if (row.isDuplicate) { skipped++; continue; }
+        if (currentVendorCount + imported >= maxVendors) { hitPlanLimit = true; break; }
         const newId = crypto.randomUUID();
         const created = await repo.createVendor(supabase, {
           id: newId,
@@ -1543,10 +1942,11 @@ export default function PurchasingScreen() {
         dispatch({ type: "UPSERT", table: "vendors", payload: created as unknown as Record<string, unknown> });
         imported++;
       }
+      const limitNote = hitPlanLimit ? ` — ${copy.purchasing.importPlanLimit}` : "";
       const msg = skipped > 0
-        ? `${copy.purchasing.importSuccess} (${skipped} ${copy.purchasing.importSkipped})`
-        : copy.purchasing.importSuccess;
-      setVendorImportMsg({ text: msg, ok: true });
+        ? `${copy.purchasing.importSuccess} (${skipped} ${copy.purchasing.importSkipped})${limitNote}`
+        : `${copy.purchasing.importSuccess}${limitNote}`;
+      setVendorImportMsg({ text: msg, ok: !hitPlanLimit });
     } catch (err) {
       setVendorImportMsg({ text: copy.purchasing.importError, ok: false });
       console.error("Vendor import failed:", err);
@@ -1614,12 +2014,16 @@ export default function PurchasingScreen() {
   const handleConfirmCatImport = async () => {
     if (!catImportPreview) return;
     setCatImportSaving(true);
+    const maxRawCategories = planLimits.limits.maxRawCategories;
+    const currentCatCount = rawCategories.length;
     let imported = 0;
     let skipped = 0;
+    let hitPlanLimit = false;
     try {
       const now = Date.now();
       for (const row of catImportPreview) {
         if (row.isDuplicate) { skipped++; continue; }
+        if (currentCatCount + imported >= maxRawCategories) { hitPlanLimit = true; break; }
         const newId = crypto.randomUUID();
         const created = await repo.createCategory(supabase, {
           id: newId,
@@ -1632,10 +2036,11 @@ export default function PurchasingScreen() {
         dispatch({ type: "UPSERT", table: "categories", payload: created as unknown as Record<string, unknown> });
         imported++;
       }
+      const limitNote = hitPlanLimit ? ` — ${copy.purchasing.catImportPlanLimit}` : "";
       const msg = skipped > 0
-        ? `${copy.purchasing.catImportSuccess} (${skipped} ${copy.purchasing.importSkipped})`
-        : copy.purchasing.catImportSuccess;
-      setCatImportMsg({ text: msg, ok: true });
+        ? `${copy.purchasing.catImportSuccess} (${skipped} ${copy.purchasing.importSkipped})${limitNote}`
+        : `${copy.purchasing.catImportSuccess}${limitNote}`;
+      setCatImportMsg({ text: msg, ok: !hitPlanLimit });
     } catch (err) {
       setCatImportMsg({ text: copy.purchasing.importError, ok: false });
       console.error("Category import failed:", err);
@@ -1647,6 +2052,7 @@ export default function PurchasingScreen() {
 
   // Raw material category CRUD
   const openCreateRawCat = () => {
+    if (!planLimits.canAddRawCategory) { alert(copy.plan.limitReached); return; }
     setEditRawCatId(null);
     setRawCatName("");
     setRawCatOrder("0");
@@ -1661,6 +2067,10 @@ export default function PurchasingScreen() {
   };
 
   const handleSaveRawCat = async () => {
+    if (!editRawCatId && !planLimits.canAddRawCategory) {
+      alert(copy.plan.limitReached);
+      return;
+    }
     const nameLower = rawCatName.trim().toLowerCase();
     const duplicate = rawCategories.some(
       (c) => c.name.toLowerCase() === nameLower && c.id !== editRawCatId
@@ -1749,8 +2159,8 @@ export default function PurchasingScreen() {
       <div className="erp-page-header">
         <h1 className="erp-page-title">{copy.purchasing.title}</h1>
         {tab === "receiving" && (
-          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateReceiving}>
-            {copy.purchasing.addReceiving}
+          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateReceiving} disabled={!planLimits.canAddReceiving}>
+            {copy.purchasing.addReceiving} {planLimits.limits.maxGoodsReceivings < Infinity ? `(${planLimits.counts.goodsReceivings}/${planLimits.limits.maxGoodsReceivings})` : ""}
           </button>
         )}
         {tab === "vendors" && (
@@ -1762,8 +2172,8 @@ export default function PurchasingScreen() {
               ↑ {copy.purchasing.importCsv}
               <input type="file" accept=".csv" style={{ display: "none" }} onChange={handleImportVendorCsv} />
             </label>
-            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateVendor}>
-              {copy.purchasing.addVendor}
+            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateVendor} disabled={!planLimits.canAddVendor}>
+              {copy.purchasing.addVendor} {planLimits.limits.maxVendors < Infinity ? `(${planLimits.counts.vendors}/${planLimits.limits.maxVendors})` : ""}
             </button>
           </div>
         )}
@@ -1790,15 +2200,24 @@ export default function PurchasingScreen() {
               ↑ {copy.purchasing.importCsv}
               <input type="file" accept=".csv" style={{ display: "none" }} onChange={handleImportCatCsv} />
             </label>
-            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateRawCat}>
-              {copy.purchasing.addRawCategory}
+            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateRawCat} disabled={!planLimits.canAddRawCategory}>
+              {copy.purchasing.addRawCategory} {planLimits.limits.maxRawCategories < Infinity ? `(${planLimits.counts.rawCategories}/${planLimits.limits.maxRawCategories})` : ""}
             </button>
           </div>
         )}
         {tab === "variants" && (
-          <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateGroup}>
-            {copy.purchasing.addVariantGroup}
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={handleDownloadGroupTemplate}>
+              ↓ {copy.purchasing.groupDownloadTemplate}
+            </button>
+            <label className="erp-btn erp-btn--ghost erp-btn--sm" style={{ cursor: "pointer" }}>
+              ↑ {copy.purchasing.groupImportCsv}
+              <input type="file" accept=".csv" style={{ display: "none" }} onChange={handleImportGroupCsv} />
+            </label>
+            <button className="erp-btn erp-btn--primary erp-btn--sm" onClick={openCreateGroup} disabled={!planLimits.canAddVariantGroup}>
+              {copy.purchasing.addVariantGroup} {planLimits.limits.maxVariantGroups < Infinity ? `(${planLimits.counts.variantGroups}/${planLimits.limits.maxVariantGroups})` : ""}
+            </button>
+          </div>
         )}
       </div>
 
@@ -1843,23 +2262,40 @@ export default function PurchasingScreen() {
             </div>
           )}
 
-          {/* Category filter chips */}
-          <div className="erp-filter-bar">
-            <span
-              className={`erp-chip${filterRawCategory === "" ? " erp-chip--active" : ""}`}
-              onClick={() => { setFilterRawCategory(""); setRawPage(0); setSelectedRawIds(new Set()); }}
-            >
-              {copy.pos.allCategories}
-            </span>
-            {rawCategories.map((c) => (
+          {/* Category filter chips + pagination info */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+            <div className="erp-filter-bar" style={{ margin: 0 }}>
               <span
-                key={c.id}
-                className={`erp-chip${filterRawCategory === c.id ? " erp-chip--active" : ""}`}
-                onClick={() => { setFilterRawCategory(filterRawCategory === c.id ? "" : c.id); setRawPage(0); setSelectedRawIds(new Set()); }}
+                className={`erp-chip${filterRawCategory === "" ? " erp-chip--active" : ""}`}
+                onClick={() => { setFilterRawCategory(""); setRawPage(0); setSelectedRawIds(new Set()); }}
               >
-                {c.name}
+                {copy.pos.allCategories}
               </span>
-            ))}
+              {rawCategories.map((c) => (
+                <span
+                  key={c.id}
+                  className={`erp-chip${filterRawCategory === c.id ? " erp-chip--active" : ""}`}
+                  onClick={() => { setFilterRawCategory(filterRawCategory === c.id ? "" : c.id); setRawPage(0); setSelectedRawIds(new Set()); }}
+                >
+                  {c.name}
+                </span>
+              ))}
+            </div>
+            <div className="erp-table-pagination-info">
+              <span>{copy.purchasing.rawRowsPerPage}:</span>
+              {([10, 25, 50] as const).map((n) => (
+                <span
+                  key={n}
+                  className={`erp-chip erp-chip--sm${rawPageSize === n ? " erp-chip--active" : ""}`}
+                  onClick={() => { setRawPageSize(n); setRawPage(0); setSelectedRawIds(new Set()); }}
+                >
+                  {n}
+                </span>
+              ))}
+              <span>
+                {filteredRawMaterials.length === 0 ? "0" : `${rawPage * rawPageSize + 1}–${Math.min((rawPage + 1) * rawPageSize, filteredRawMaterials.length)}`} / {filteredRawMaterials.length}
+              </span>
+            </div>
           </div>
 
           <div className="erp-search">
@@ -1872,22 +2308,6 @@ export default function PurchasingScreen() {
               value={rawSearch}
               onChange={(e) => { setRawSearch(e.target.value); setRawPage(0); setSelectedRawIds(new Set()); }}
             />
-          </div>
-
-          {/* Pagination controls */}
-          <div className="erp-table-header-row">
-            <div className="erp-table-controls">
-              <span className="erp-text-muted" style={{ fontSize: 13 }}>{copy.purchasing.rawRowsPerPage}:</span>
-              {([10, 25, 50] as const).map((n) => (
-                <span
-                  key={n}
-                  className={`erp-chip${rawPageSize === n ? " erp-chip--active" : ""}`}
-                  onClick={() => { setRawPageSize(n); setRawPage(0); setSelectedRawIds(new Set()); }}
-                >
-                  {n}
-                </span>
-              ))}
-            </div>
           </div>
 
           <div className="erp-table-wrap">
@@ -1910,6 +2330,7 @@ export default function PurchasingScreen() {
                   <th>{copy.products.name}</th>
                   <th>{copy.products.category}</th>
                   <th>{copy.products.unit}</th>
+                  <th>{copy.purchasing.variants}</th>
                   <th>{copy.products.active}</th>
                   <th>{copy.common.actions}</th>
                 </tr>
@@ -1917,12 +2338,18 @@ export default function PurchasingScreen() {
               <tbody>
                 {filteredRawMaterials.length === 0 ? (
                   <tr>
-                    <td colSpan={isOwner ? 6 : 5} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
+                    <td colSpan={isOwner ? 7 : 6} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
                       {copy.purchasing.noRawMaterials}
                     </td>
                   </tr>
                 ) : (
-                  pagedRawMaterials.map((p) => (
+                  pagedRawMaterials.map((p) => {
+                    const assignedGroupId = rawMaterialGroupMap.get(p.id);
+                    const assignedGroup = assignedGroupId ? state.variantGroups.find((g) => g.id === assignedGroupId) : null;
+                    const groupValues = assignedGroupId
+                      ? state.variantGroupValues.filter((v) => v.group_id === assignedGroupId).sort((a, b) => a.sort_order - b.sort_order)
+                      : [];
+                    return (
                     <tr key={p.id} className={selectedRawIds.has(p.id) ? "erp-table-row--selected" : ""}>
                       {isOwner && (
                         <td>
@@ -1940,6 +2367,18 @@ export default function PurchasingScreen() {
                       <td><strong>{p.name}</strong></td>
                       <td>{getRawCategoryName(p.category_id)}</td>
                       <td>{getRawInventoryUnit(p.id)}</td>
+                      <td>
+                        {assignedGroup ? (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                            <span style={{ fontSize: 12, color: "var(--erp-muted)", marginRight: 2 }}>{assignedGroup.name}:</span>
+                            {groupValues.map((v) => (
+                              <span key={v.id} className="erp-badge erp-badge--info" style={{ fontSize: 11 }}>{v.name}</span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span style={{ color: "var(--erp-muted)", fontSize: 12 }}>—</span>
+                        )}
+                      </td>
                       <td>
                         <span className={`erp-badge ${p.is_active ? "erp-badge--success" : "erp-badge--danger"}`}>
                           {p.is_active ? copy.products.active : copy.products.inactive}
@@ -1960,7 +2399,8 @@ export default function PurchasingScreen() {
                         )}
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -1980,22 +2420,19 @@ export default function PurchasingScreen() {
       {tab === "receiving" && (
         <>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--erp-ink-secondary)" }}>
+            <div className="erp-table-pagination-info">
               <span>{copy.purchasing.rowsPerPage}:</span>
               {([10, 25, 50] as const).map((n) => (
                 <span
                   key={n}
-                  className={`erp-chip${receivingPageSize === n ? " erp-chip--active" : ""}`}
-                  style={{ padding: "2px 10px", fontSize: 12 }}
+                  className={`erp-chip erp-chip--sm${receivingPageSize === n ? " erp-chip--active" : ""}`}
                   onClick={() => { setReceivingPageSize(n); setReceivingPage(0); }}
                 >
                   {n}
                 </span>
               ))}
-              <span style={{ marginLeft: 8 }}>
-                {filteredReceivings.length > 0
-                  ? `${receivingPage * receivingPageSize + 1}–${Math.min((receivingPage + 1) * receivingPageSize, filteredReceivings.length)} / ${filteredReceivings.length}`
-                  : "0"}
+              <span>
+                {filteredReceivings.length === 0 ? "0" : `${receivingPage * receivingPageSize + 1}–${Math.min((receivingPage + 1) * receivingPageSize, filteredReceivings.length)}`} / {filteredReceivings.length}
               </span>
             </div>
           </div>
@@ -2169,20 +2606,35 @@ export default function PurchasingScreen() {
             </div>
           )}
 
-          {/* Pagination controls */}
-          <div className="erp-table-header-row">
-            <div className="erp-table-controls">
-              <span className="erp-text-muted" style={{ fontSize: 13 }}>{copy.purchasing.rowsPerPage}:</span>
+          {/* Pagination info + search */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 6 }}>
+            <div className="erp-table-pagination-info">
+              <span>{copy.purchasing.rowsPerPage}:</span>
               {([10, 25, 50] as const).map((n) => (
                 <span
                   key={n}
-                  className={`erp-chip${vendorPageSize === n ? " erp-chip--active" : ""}`}
+                  className={`erp-chip erp-chip--sm${vendorPageSize === n ? " erp-chip--active" : ""}`}
                   onClick={() => { setVendorPageSize(n); setVendorPage(0); setSelectedVendorIds(new Set()); }}
                 >
                   {n}
                 </span>
               ))}
+              <span>
+                {sortedVendors.length === 0 ? "0" : `${vendorPage * vendorPageSize + 1}–${Math.min((vendorPage + 1) * vendorPageSize, sortedVendors.length)}`} / {sortedVendors.length}
+              </span>
             </div>
+          </div>
+
+          <div className="erp-search" style={{ marginBottom: 8 }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              placeholder={copy.common.search}
+              value={vendorSearch}
+              onChange={(e) => { setVendorSearch(e.target.value); setVendorPage(0); setSelectedVendorIds(new Set()); }}
+            />
           </div>
 
           <div className="erp-table-wrap">
@@ -2287,20 +2739,35 @@ export default function PurchasingScreen() {
             </div>
           )}
 
-          {/* Pagination controls */}
-          <div className="erp-table-header-row">
-            <div className="erp-table-controls">
-              <span className="erp-text-muted" style={{ fontSize: 13 }}>{copy.purchasing.rowsPerPage}:</span>
+          {/* Pagination info + search */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 6 }}>
+            <div className="erp-table-pagination-info">
+              <span>{copy.purchasing.rowsPerPage}:</span>
               {([10, 25, 50] as const).map((n) => (
                 <span
                   key={n}
-                  className={`erp-chip${catPageSize === n ? " erp-chip--active" : ""}`}
+                  className={`erp-chip erp-chip--sm${catPageSize === n ? " erp-chip--active" : ""}`}
                   onClick={() => { setCatPageSize(n); setCatPage(0); setSelectedCatIds(new Set()); }}
                 >
                   {n}
                 </span>
               ))}
+              <span>
+                {sortedRawCategories.length === 0 ? "0" : `${catPage * catPageSize + 1}–${Math.min((catPage + 1) * catPageSize, sortedRawCategories.length)}`} / {sortedRawCategories.length}
+              </span>
             </div>
+          </div>
+
+          <div className="erp-search" style={{ marginBottom: 8 }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              placeholder={copy.common.search}
+              value={catSearch}
+              onChange={(e) => { setCatSearch(e.target.value); setCatPage(0); setSelectedCatIds(new Set()); }}
+            />
           </div>
 
           <div className="erp-table-wrap">
@@ -2387,6 +2854,14 @@ export default function PurchasingScreen() {
       {/* ── Variants Tab ──────────────────────────────────────────────────── */}
       {tab === "variants" && (
         <>
+          {/* Import message banner */}
+          {groupImportMsg && (
+            <div className={`erp-import-msg${groupImportMsg.ok ? " erp-import-msg--ok" : " erp-import-msg--err"}`}>
+              {groupImportMsg.text}
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setGroupImportMsg(null)} style={{ marginLeft: 8 }}>✕</button>
+            </div>
+          )}
+
           {/* Bulk bar */}
           {isOwner && selectedGroupIds.size > 0 && (
             <div className="erp-bulk-bar">
@@ -2397,7 +2872,19 @@ export default function PurchasingScreen() {
             </div>
           )}
 
-          {/* Search */}
+          {/* Pagination info + search */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 6 }}>
+            <div className="erp-table-pagination-info">
+              <span>{copy.purchasing.variantGroupRowsPerPage}:</span>
+              {([10, 25, 50] as const).map((s) => (
+                <span key={s} className={`erp-chip erp-chip--sm${groupPageSize === s ? " erp-chip--active" : ""}`} onClick={() => { setGroupPageSize(s); setGroupPage(0); setSelectedGroupIds(new Set()); }}>{s}</span>
+              ))}
+              <span>
+                {filteredGroups.length === 0 ? "0" : `${groupPage * groupPageSize + 1}–${Math.min((groupPage + 1) * groupPageSize, filteredGroups.length)}`} / {filteredGroups.length}
+              </span>
+            </div>
+          </div>
+
           <div className="erp-search" style={{ marginBottom: 8 }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -2408,16 +2895,6 @@ export default function PurchasingScreen() {
               value={groupSearch}
               onChange={(e) => { setGroupSearch(e.target.value); setGroupPage(0); setSelectedGroupIds(new Set()); }}
             />
-          </div>
-
-          {/* Page size chips */}
-          <div className="erp-table-header-row">
-            <div className="erp-table-controls">
-              <span className="erp-text-muted" style={{ fontSize: 13 }}>{copy.purchasing.variantGroupRowsPerPage}:</span>
-              {([10, 25, 50] as const).map((s) => (
-                <span key={s} className={`erp-chip${groupPageSize === s ? " erp-chip--active" : ""}`} onClick={() => { setGroupPageSize(s); setGroupPage(0); setSelectedGroupIds(new Set()); }}>{s}</span>
-              ))}
-            </div>
           </div>
 
           <div className="erp-table-wrap">
@@ -2502,7 +2979,7 @@ export default function PurchasingScreen() {
 
       {/* Variant Group Form Dialog */}
       {showGroupForm && (
-        <div className="erp-overlay" onClick={() => setShowGroupForm(false)}>
+        <div className={`erp-overlay${showRawForm ? " erp-overlay--top" : ""}`} onClick={() => setShowGroupForm(false)}>
           <div className="erp-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="erp-dialog-header">
               <h3>{editGroupId ? copy.purchasing.editVariantGroup : copy.purchasing.addVariantGroup}</h3>
@@ -2625,6 +3102,71 @@ export default function PurchasingScreen() {
               <button className="erp-btn erp-btn--secondary" onClick={() => setApplyGroupTarget(null)}>{copy.common.cancel}</button>
               <button className="erp-btn erp-btn--primary" onClick={handleApplyPreset} disabled={saving || !applyProductId}>
                 {saving ? copy.common.loading : copy.purchasing.applyPreset}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Group CSV Import Preview */}
+      {groupImportPreview && (
+        <div className="erp-overlay" onClick={() => setGroupImportPreview(null)}>
+          <div className="erp-dialog erp-dialog--wide" onClick={(e) => e.stopPropagation()}>
+            <div className="erp-dialog-header">
+              <h3>{copy.purchasing.groupImportPreviewTitle}</h3>
+              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => setGroupImportPreview(null)}>{copy.common.close}</button>
+            </div>
+            <div className="erp-dialog-body">
+              <p style={{ fontSize: 13, color: "var(--erp-ink-secondary)", marginBottom: 12 }}>{copy.purchasing.groupImportPreviewHint}</p>
+              <div className="erp-table-wrap">
+                <table className="erp-table">
+                  <thead>
+                    <tr>
+                      <th>{copy.purchasing.variantGroupName}</th>
+                      <th>{copy.purchasing.groupValues}</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupImportPreview.map((row, i) => (
+                      <tr key={i} style={{ opacity: row.isDuplicate ? 0.5 : 1 }}>
+                        <td><strong>{row.presetName}</strong></td>
+                        <td>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {row.values.map((v, vi) => (
+                              <span
+                                key={vi}
+                                className={`erp-badge ${row.clashingValues.includes(v) ? "erp-badge--danger" : "erp-badge--info"}`}
+                                style={{ fontSize: 11 }}
+                                title={row.clashingValues.includes(v) ? copy.purchasing.groupImportClash : undefined}
+                              >
+                                {v}{row.clashingValues.includes(v) ? " ✕" : ""}
+                              </span>
+                            ))}
+                            {row.values.length === 0 && <span style={{ color: "var(--erp-muted)", fontSize: 12 }}>—</span>}
+                          </div>
+                        </td>
+                        <td>
+                          {row.isDuplicate && (
+                            <span className="erp-badge erp-badge--danger" style={{ fontSize: 11 }}>
+                              {copy.purchasing.rawImportDuplicate}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="erp-dialog-footer">
+              <button className="erp-btn erp-btn--secondary" onClick={() => setGroupImportPreview(null)}>{copy.common.cancel}</button>
+              <button
+                className="erp-btn erp-btn--primary"
+                onClick={handleConfirmGroupImport}
+                disabled={groupImportSaving || groupImportPreview.every((r) => r.isDuplicate)}
+              >
+                {groupImportSaving ? copy.common.loading : copy.purchasing.groupImportConfirm}
               </button>
             </div>
           </div>
@@ -2776,7 +3318,18 @@ export default function PurchasingScreen() {
                           <div className="erp-rec-item-label">{copy.products.qty}</div>
                           <div className="erp-rec-item-qty-group">
                             <input className="erp-input" type="text" inputMode="decimal" placeholder="0" value={item.qty} onChange={(e) => updateRecItem(idx, "qty", e.target.value)} />
-                            <span className="erp-bom-unit-label">{item.unit || "—"}</span>
+                            {item.unit && getConvertibleUnitTarget(item.unit) ? (
+                              <button
+                                type="button"
+                                className="erp-unit-toggle"
+                                onClick={() => toggleRecItemUnit(idx)}
+                                title={copy.products.unit}
+                              >
+                                ⇄ {item.unit}
+                              </button>
+                            ) : (
+                              <span className="erp-bom-unit-label">{item.unit || "—"}</span>
+                            )}
                           </div>
                         </div>
                       ) : <div className="erp-rec-col erp-rec-col--qty" />}
@@ -2789,14 +3342,14 @@ export default function PurchasingScreen() {
                         </div>
                       ) : <div className="erp-rec-col erp-rec-col--total" />}
 
-                      {/* Preset — only when product selected, groups exist, and no preset applied yet */}
+                      {/* Preset — only when product selected, has an assigned preset group, and no preset applied yet */}
                       <div className="erp-rec-col erp-rec-col--preset">
                         {item.productId && state.variantGroups.length > 0 && !item.useVariants ? (() => {
                           const assignedGroupId = rawMaterialGroupMap.get(item.productId);
-                          // Show only the assigned group, or all groups if none assigned yet
+                          // Only show the assigned group; hide entirely if none assigned
                           const availableGroups = assignedGroupId
                             ? state.variantGroups.filter((g) => g.id === assignedGroupId)
-                            : state.variantGroups;
+                            : [];
                           return availableGroups.length > 0 ? (
                             <>
                               <div className="erp-rec-item-label">{copy.purchasing.applyPresetInline}</div>
@@ -2843,7 +3396,18 @@ export default function PurchasingScreen() {
                           <div className="erp-rec-item-label">{copy.products.qty}</div>
                           <div className="erp-rec-item-qty-group">
                             <input className="erp-input" type="text" inputMode="decimal" placeholder="0" value={vr.qty} onChange={(e) => updateVariantRow(idx, vi, "qty", e.target.value)} />
-                            <span className="erp-bom-unit-label">{item.unit || "—"}</span>
+                            {item.unit && getConvertibleUnitTarget(item.unit) ? (
+                              <button
+                                type="button"
+                                className="erp-unit-toggle"
+                                onClick={() => toggleRecItemUnit(idx)}
+                                title={copy.products.unit}
+                              >
+                                ⇄ {item.unit}
+                              </button>
+                            ) : (
+                              <span className="erp-bom-unit-label">{item.unit || "—"}</span>
+                            )}
                           </div>
                         </div>
                         <div>
@@ -2959,6 +3523,39 @@ export default function PurchasingScreen() {
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                   <option value="__NEW__">{copy.purchasing.newRawCategoryOption}</option>
+                </select>
+              </div>
+              <div className="erp-input-group">
+                <label className="erp-label">{copy.purchasing.variants}</label>
+                <select
+                  className="erp-select"
+                  value={rawPresetGroupId}
+                  onChange={(e) => {
+                    if (e.target.value === "__NEW__") {
+                      setEditGroupId(null);
+                      setGroupName("");
+                      setGroupFormValues([{ tempId: crypto.randomUUID(), name: "" }]);
+                      setShowGroupForm(true);
+                    } else {
+                      setRawPresetGroupId(e.target.value);
+                    }
+                  }}
+                >
+                  <option value="">— {copy.purchasing.noGroups.replace("yet", "").trim()} —</option>
+                  {state.variantGroups
+                    .filter((g) => {
+                      const assigned = rawMaterialGroupMap.get(editRawId || "");
+                      return !assigned || assigned === g.id || rawPresetGroupId === g.id;
+                    })
+                    .map((g) => {
+                      const vals = getGroupValues(g.id);
+                      return (
+                        <option key={g.id} value={g.id}>
+                          {g.name}{vals.length > 0 ? ` (${vals.map((v) => v.name).join(", ")})` : ""}
+                        </option>
+                      );
+                    })}
+                  <option value="__NEW__">{copy.purchasing.addVariantGroup}</option>
                 </select>
               </div>
               {!editRawId && (
@@ -3278,6 +3875,7 @@ export default function PurchasingScreen() {
                       <th>{copy.products.category}</th>
                       <th>{copy.products.unit}</th>
                       <th>{copy.products.description}</th>
+                      <th>{copy.purchasing.variants}</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -3295,6 +3893,21 @@ export default function PurchasingScreen() {
                         </td>
                         <td>{row.unit}</td>
                         <td>{row.description || "—"}</td>
+                        <td>
+                          {row.presetVariant ? (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                              <span style={{ fontSize: 12 }}>{row.presetVariant}</span>
+                              {row.isNewPreset && !row.isDuplicate && (
+                                <span className="erp-badge erp-badge--warning" style={{ fontSize: 11 }}>
+                                  {copy.purchasing.rawImportNewCategory}
+                                </span>
+                              )}
+                              {row.presetValues.map((v, vi) => (
+                                <span key={vi} className="erp-badge erp-badge--info" style={{ fontSize: 11 }}>{v}</span>
+                              ))}
+                            </div>
+                          ) : "—"}
+                        </td>
                         <td>
                           {row.isDuplicate && (
                             <span className="erp-badge erp-badge--danger" style={{ fontSize: 11 }}>

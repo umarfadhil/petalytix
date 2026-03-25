@@ -139,6 +139,7 @@ export interface ErpCopy {
     importDuplicate: string;
     importSuccess: string;
     importSkipped: string;
+    importPlanLimit: string;
     importError: string;
     bulkDelete: string;
     bulkDeleteConfirm: string;
@@ -162,6 +163,7 @@ export interface ErpCopy {
     presetAppliedTo: string;
     selectComponentVariant: string;
     bomPerVariant: string;
+    bomCopyToAll: string;
   };
   inventory: {
     title: string;
@@ -182,6 +184,8 @@ export interface ErpCopy {
     lowStockCount: (n: number) => string;
     deleteInventory: string;
     confirmDeleteInventory: string;
+    hideZeroStock: string;
+    showZeroStock: string;
   };
   purchasing: {
     title: string;
@@ -230,11 +234,13 @@ export interface ErpCopy {
     importDuplicate: string;
     importSuccess: string;
     importSkipped: string;
+    importPlanLimit: string;
     importError: string;
     bulkDelete: string;
     bulkDeleteConfirm: string;
     rowsPerPage: string;
     catImportSuccess: string;
+    catImportPlanLimit: string;
     catImportPreviewHint: string;
     catBulkDeleteConfirm: string;
     deleteCategoryTitle: string;
@@ -249,6 +255,7 @@ export interface ErpCopy {
     rawImportDuplicate: string;
     rawImportSuccess: string;
     rawImportSkipped: string;
+    rawImportPlanLimit: string;
     rawImportError: string;
     rawBulkDelete: string;
     rawBulkDeleteConfirm: string;
@@ -266,6 +273,15 @@ export interface ErpCopy {
     groupBulkDeleteConfirm: string;
     duplicateGroup: string;
     duplicateGroupValue: string;
+    duplicateGroupValueCrossGroup: (value: string, groupName: string) => string;
+    groupDownloadTemplate: string;
+    groupImportCsv: string;
+    groupImportPreviewTitle: string;
+    groupImportPreviewHint: string;
+    groupImportConfirm: string;
+    groupImportSuccess: string;
+    groupImportError: string;
+    groupImportClash: string;
     applyToProduct: string;
     applyPreset: string;
     appliedTo: string;
@@ -397,6 +413,7 @@ export interface ErpCopy {
     importCsv: string;
     downloadTemplate: string;
     importSuccess: string;
+    importPlanLimit: string;
     importError: string;
     importInvalidRow: string;
     importPreviewTitle: string;
@@ -646,6 +663,7 @@ const en: ErpCopy = {
     importDuplicate: "duplicate",
     importSuccess: "Products imported successfully",
     importSkipped: "skipped (duplicate)",
+    importPlanLimit: "Plan limit reached — remaining rows were not imported.",
     importError: "Failed to import CSV",
     bulkDelete: "Delete Selected",
     bulkDeleteConfirm: "Delete selected products? This cannot be undone.",
@@ -669,6 +687,7 @@ const en: ErpCopy = {
     presetAppliedTo: "Applied To",
     selectComponentVariant: "Variant",
     bomPerVariant: "BOM per Variant",
+    bomCopyToAll: "Copy to all variants",
   },
   inventory: {
     title: "Inventory",
@@ -693,6 +712,8 @@ const en: ErpCopy = {
     lowStockCount: (n: number) => `${n} item${n === 1 ? "" : "s"} below minimum stock`,
     deleteInventory: "Delete",
     confirmDeleteInventory: "Delete this inventory row? This cannot be undone.",
+    hideZeroStock: "Hide Zero Stock",
+    showZeroStock: "Show Zero Stock",
   },
   purchasing: {
     title: "Purchasing",
@@ -741,11 +762,13 @@ const en: ErpCopy = {
     importDuplicate: "duplicate",
     importSuccess: "Vendors imported successfully",
     importSkipped: "skipped (duplicate)",
+    importPlanLimit: "Plan limit reached — remaining rows were not imported.",
     importError: "Failed to import CSV",
     bulkDelete: "Delete Selected",
     bulkDeleteConfirm: "Delete selected vendors? This cannot be undone.",
     rowsPerPage: "Rows",
     catImportSuccess: "Categories imported successfully",
+    catImportPlanLimit: "Plan limit reached — remaining rows were not imported.",
     catImportPreviewHint: "Review the data below before importing. Duplicate categories will be skipped.",
     catBulkDeleteConfirm: "Delete selected categories? This cannot be undone.",
     deleteCategoryTitle: "Delete Category",
@@ -755,11 +778,12 @@ const en: ErpCopy = {
     rawImportCsv: "Import CSV",
     rawDownloadTemplate: "Download Template",
     rawImportPreviewTitle: "Preview Import",
-    rawImportPreviewHint: "Review the data below before importing. Duplicates will be skipped. New categories will be created automatically.",
+    rawImportPreviewHint: "Review the data below before importing. Duplicates will be skipped. New categories and preset variants will be created automatically.",
     rawImportConfirm: "Import",
     rawImportDuplicate: "duplicate",
     rawImportSuccess: "Raw materials imported successfully",
     rawImportSkipped: "skipped (duplicate)",
+    rawImportPlanLimit: "Plan limit reached — remaining rows were not imported.",
     rawImportError: "Failed to import CSV",
     rawBulkDelete: "Delete Selected",
     rawBulkDeleteConfirm: "Delete selected raw materials? This cannot be undone.",
@@ -777,6 +801,15 @@ const en: ErpCopy = {
     groupBulkDeleteConfirm: "Delete selected presets? All applied variants on products will also be removed. This cannot be undone.",
     duplicateGroup: "A preset with this name already exists.",
     duplicateGroupValue: "A value with this name already exists in this preset.",
+    duplicateGroupValueCrossGroup: (v: string, g: string) => `Value "${v}" already exists in another preset "${g}". Each value must be unique across all presets.`,
+    groupDownloadTemplate: "Download Template",
+    groupImportCsv: "Import CSV",
+    groupImportPreviewTitle: "Preview Import",
+    groupImportPreviewHint: "Review the data below before importing. Duplicate preset names will be skipped. Values that clash with existing presets will be skipped.",
+    groupImportConfirm: "Import",
+    groupImportSuccess: "Preset variants imported successfully",
+    groupImportError: "Failed to import CSV",
+    groupImportClash: "value clash",
     applyToProduct: "Apply to Raw Material",
     applyPreset: "Apply",
     appliedTo: "Applied To",
@@ -908,6 +941,7 @@ const en: ErpCopy = {
     importCsv: "Import CSV",
     downloadTemplate: "Download Template",
     importSuccess: "Customers imported successfully",
+    importPlanLimit: "Plan limit reached — remaining rows were not imported.",
     importError: "Failed to import CSV",
     importInvalidRow: "Invalid row skipped",
     importPreviewTitle: "Preview Import",
@@ -1157,6 +1191,7 @@ const id: ErpCopy = {
     importDuplicate: "duplikat",
     importSuccess: "Produk berhasil diimpor",
     importSkipped: "dilewati (duplikat)",
+    importPlanLimit: "Batas paket tercapai — baris tersisa tidak diimpor.",
     importError: "Gagal mengimpor CSV",
     bulkDelete: "Hapus Terpilih",
     bulkDeleteConfirm: "Hapus produk yang dipilih? Tindakan ini tidak dapat dibatalkan.",
@@ -1180,6 +1215,7 @@ const id: ErpCopy = {
     presetAppliedTo: "Diterapkan ke",
     selectComponentVariant: "Varian",
     bomPerVariant: "BOM per Varian",
+    bomCopyToAll: "Salin ke semua varian",
   },
   inventory: {
     title: "Inventori",
@@ -1204,6 +1240,8 @@ const id: ErpCopy = {
     lowStockCount: (n: number) => `${n} item di bawah stok minimum`,
     deleteInventory: "Hapus",
     confirmDeleteInventory: "Hapus baris inventori ini? Tindakan ini tidak dapat dibatalkan.",
+    hideZeroStock: "Sembunyikan Stok Kosong",
+    showZeroStock: "Tampilkan Stok Kosong",
   },
   purchasing: {
     title: "Pembelian",
@@ -1252,11 +1290,13 @@ const id: ErpCopy = {
     importDuplicate: "duplikat",
     importSuccess: "Vendor berhasil diimpor",
     importSkipped: "dilewati (duplikat)",
+    importPlanLimit: "Batas paket tercapai — baris tersisa tidak diimpor.",
     importError: "Gagal mengimpor CSV",
     bulkDelete: "Hapus Terpilih",
     bulkDeleteConfirm: "Hapus vendor yang dipilih? Tindakan ini tidak dapat dibatalkan.",
     rowsPerPage: "Baris",
     catImportSuccess: "Kategori berhasil diimpor",
+    catImportPlanLimit: "Batas paket tercapai — baris tersisa tidak diimpor.",
     catImportPreviewHint: "Periksa data berikut sebelum mengimpor. Kategori duplikat akan dilewati.",
     catBulkDeleteConfirm: "Hapus kategori yang dipilih? Tindakan ini tidak dapat dibatalkan.",
     deleteCategoryTitle: "Hapus Kategori",
@@ -1266,11 +1306,12 @@ const id: ErpCopy = {
     rawImportCsv: "Impor CSV",
     rawDownloadTemplate: "Unduh Template",
     rawImportPreviewTitle: "Pratinjau Impor",
-    rawImportPreviewHint: "Periksa data berikut sebelum mengimpor. Duplikat akan dilewati. Kategori baru akan dibuat otomatis.",
+    rawImportPreviewHint: "Periksa data berikut sebelum mengimpor. Duplikat akan dilewati. Kategori baru dan preset varian akan dibuat otomatis.",
     rawImportConfirm: "Impor",
     rawImportDuplicate: "duplikat",
     rawImportSuccess: "Bahan baku berhasil diimpor",
     rawImportSkipped: "dilewati (duplikat)",
+    rawImportPlanLimit: "Batas paket tercapai — baris tersisa tidak diimpor.",
     rawImportError: "Gagal mengimpor CSV",
     rawBulkDelete: "Hapus Terpilih",
     rawBulkDeleteConfirm: "Hapus bahan baku yang dipilih? Tindakan ini tidak dapat dibatalkan.",
@@ -1288,6 +1329,15 @@ const id: ErpCopy = {
     groupBulkDeleteConfirm: "Hapus preset yang dipilih? Semua varian yang diterapkan pada produk juga akan dihapus. Tindakan ini tidak dapat dibatalkan.",
     duplicateGroup: "Preset dengan nama ini sudah ada.",
     duplicateGroupValue: "Nilai dengan nama ini sudah ada dalam preset ini.",
+    duplicateGroupValueCrossGroup: (v: string, g: string) => `Nilai "${v}" sudah ada di preset lain "${g}". Setiap nilai harus unik di semua preset.`,
+    groupDownloadTemplate: "Unduh Template",
+    groupImportCsv: "Impor CSV",
+    groupImportPreviewTitle: "Pratinjau Impor",
+    groupImportPreviewHint: "Periksa data berikut sebelum mengimpor. Nama preset duplikat akan dilewati. Nilai yang bentrok dengan preset yang ada akan dilewati.",
+    groupImportConfirm: "Impor",
+    groupImportSuccess: "Preset varian berhasil diimpor",
+    groupImportError: "Gagal mengimpor CSV",
+    groupImportClash: "bentrok",
     applyToProduct: "Terapkan ke Bahan Baku",
     applyPreset: "Terapkan",
     appliedTo: "Diterapkan Ke",
@@ -1419,6 +1469,7 @@ const id: ErpCopy = {
     importCsv: "Impor CSV",
     downloadTemplate: "Unduh Template",
     importSuccess: "Pelanggan berhasil diimpor",
+    importPlanLimit: "Batas paket tercapai — baris tersisa tidak diimpor.",
     importError: "Gagal mengimpor CSV",
     importInvalidRow: "Baris tidak valid dilewati",
     importPreviewTitle: "Pratinjau Impor",

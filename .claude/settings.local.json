@@ -49,7 +49,10 @@
       "Bash(grep -v \"^$\")",
       "Bash(npx skills:*)",
       "Bash(echo \"Exit: $?\")",
-      "mcp__claude_ai_Supabase__list_tables"
+      "mcp__claude_ai_Supabase__list_tables",
+      "Bash(xargs grep:*)",
+      "Bash(grep -r \"unit\\\\|currentQty\\\\|current_qty\" 'c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/repos/ayakasir/app/src/main/java/com/ayakasir/app/core/data/local' --include=*.kt -l)",
+      "Bash(grep -r \"unit\\\\|currentQty\\\\|displayQty\\\\|formatQty\\\\|InventoryUnit\\\\|toKg\\\\|toL\\\\b\" 'c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/repos/ayakasir/app/src/main/java/com/ayakasir/app' --include=*.kt -l)"
     ]
   }
 }

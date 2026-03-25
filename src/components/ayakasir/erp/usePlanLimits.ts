@@ -36,6 +36,8 @@ export function usePlanLimits() {
       ? Math.max(0, Math.ceil((state.restaurant.plan_expires_at - Date.now()) / (1000 * 60 * 60 * 24)))
       : Infinity;
 
+    const rawCategories = state.categories.filter((c) => c.category_type === "RAW_MATERIAL");
+
     return {
       plan,
       planExpired,
@@ -47,6 +49,10 @@ export function usePlanLimits() {
         rawMaterials: rawMaterials.length,
         monthlyTransactions: monthlyTxCount,
         staff: staff.length,
+        vendors: state.vendors.length,
+        goodsReceivings: state.goodsReceivings.length,
+        rawCategories: rawCategories.length,
+        variantGroups: state.variantGroups.length,
       },
       canAddProduct: menuProducts.length < limits.maxProducts,
       canAddCustomer: state.customers.length < limits.maxCustomers,
@@ -54,6 +60,10 @@ export function usePlanLimits() {
       canTransact: monthlyTxCount < limits.maxTransactionsPerMonth,
       canAddStaff: staff.length < limits.maxStaff,
       canUseUtang: limits.allowUtang,
+      canAddVendor: state.vendors.length < limits.maxVendors,
+      canAddReceiving: state.goodsReceivings.length < limits.maxGoodsReceivings,
+      canAddRawCategory: rawCategories.length < limits.maxRawCategories,
+      canAddVariantGroup: state.variantGroups.length < limits.maxVariantGroups,
     };
-  }, [state.restaurant, state.products, state.customers, state.tenantUsers, state.transactions]);
+  }, [state.restaurant, state.products, state.customers, state.tenantUsers, state.transactions, state.vendors, state.goodsReceivings, state.categories, state.variantGroups]);
 }

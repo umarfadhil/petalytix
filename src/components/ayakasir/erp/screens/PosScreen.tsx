@@ -179,13 +179,10 @@ export default function PosScreen() {
     const required = new Map<string, { name: string; requiredBase: number; currentBase: number; unit: string }>();
     for (const item of cart) {
       const allComponents = state.productComponents.filter((c) => c.parent_product_id === item.productId);
-      // Filter components: if component has a variant, only include when sold variant matches by name
+      // Filter by parent_variant_id: shared (empty) always included; variant-specific only when matching sold variant
       const components = allComponents.filter((comp) => {
-        if (!comp.component_variant_id) return true;
-        if (!item.variantId) return false;
-        const compVariant = state.variants.find((v) => v.id === comp.component_variant_id);
-        const soldVariant = state.variants.find((v) => v.id === item.variantId);
-        return compVariant && soldVariant && compVariant.name.toLowerCase() === soldVariant.name.toLowerCase();
+        if (!comp.parent_variant_id) return true; // shared — always include
+        return item.variantId && comp.parent_variant_id === item.variantId;
       });
       if (components.length > 0) {
         for (const comp of components) {
@@ -227,7 +224,7 @@ export default function PosScreen() {
       }
     }
     return warnings;
-  }, [cart, state.inventory, state.productComponents, state.products]);
+  }, [cart, state.inventory, state.productComponents, state.products, state.variants]);
 
   // Customer search filtered from local state
   const filteredCustomers = useMemo(() => {
@@ -413,13 +410,10 @@ export default function PosScreen() {
       };
       for (const item of cart) {
         const allComponents = state.productComponents.filter((c) => c.parent_product_id === item.productId);
-        // Filter components: if component has a variant, only include when sold variant matches by name
+        // Filter by parent_variant_id: shared (empty) always included; variant-specific only when matching sold variant
         const components = allComponents.filter((comp) => {
-          if (!comp.component_variant_id) return true;
-          if (!item.variantId) return false;
-          const compVariant = state.variants.find((v) => v.id === comp.component_variant_id);
-          const soldVariant = state.variants.find((v) => v.id === item.variantId);
-          return compVariant && soldVariant && compVariant.name.toLowerCase() === soldVariant.name.toLowerCase();
+          if (!comp.parent_variant_id) return true; // shared — always include
+          return item.variantId && comp.parent_variant_id === item.variantId;
         });
         if (components.length > 0) {
           for (const comp of components) {

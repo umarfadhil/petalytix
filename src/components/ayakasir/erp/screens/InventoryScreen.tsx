@@ -15,12 +15,13 @@ export default function InventoryScreen() {
 
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
+  const [hideZeroStock, setHideZeroStock] = useState(false);
   const [invPage, setInvPage] = useState(0);
   const [invPageSize, setInvPageSize] = useState<10 | 25 | 50>(10);
   const [adjustItem, setAdjustItem] = useState<DbInventory | null>(null);
   const [newQty, setNewQty] = useState("");
   const [minQtyInput, setMinQtyInput] = useState("");
-  const [dialogUnit, setDialogUnit] = useState(""); // active input unit for the dialog (may differ from base)
+  const [dialogUnit, setDialogUnit] = useState(""); // active input unit for the dialog (may differ from stored unit)
   const [movementType, setMovementType] = useState<"adjustment_in" | "adjustment_out" | "waste">("adjustment_in");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
@@ -43,12 +44,13 @@ export default function InventoryScreen() {
     setDisplayUnits((prev) => new Map(prev).set(key, next));
   };
 
-  // inv.unit is now the display unit marker (kg/L/g/mL/pcs); current_qty is always in base (g/mL/pcs).
-  // Convert stored base qty to display unit for rendering.
-  const convertToDisplayUnit = (baseQty: number, displayUnit: string): number => {
-    if (displayUnit === "kg") return baseQty / 1000;
-    if (displayUnit === "L") return baseQty / 1000;
-    return baseQty;
+  // inv.unit is the stored unit; current_qty and min_qty are stored in that same unit.
+  // Convert qty from storedUnit to displayUnit for rendering when toggled.
+  const convertToDisplayUnit = (qty: number, fromUnit: string, toUnit: string): number => {
+    if (fromUnit === toUnit) return qty;
+    if ((fromUnit === "kg" && toUnit === "g") || (fromUnit === "L" && toUnit === "mL")) return qty * 1000;
+    if ((fromUnit === "g" && toUnit === "kg") || (fromUnit === "mL" && toUnit === "L")) return qty / 1000;
+    return qty;
   };
 
   const isToggleable = (unit: string) =>
@@ -59,11 +61,10 @@ export default function InventoryScreen() {
     [state.categories]
   );
 
-  const toBaseConversion = (unit: string) => {
-    if (unit === "L") return 1000;
-    if (unit === "kg") return 1000;
-    return 1;
-  };
+  // Convert from dialogUnit to stored unit (adjustItem.unit) for writing back to DB.
+  // Keep decimal precision (no integer rounding) so kg/L adjustments entered via g/mL stay accurate.
+  const toStoredQty = (qty: number, dialogUnit: string, storedUnit: string): number =>
+    parseFloat(convertToDisplayUnit(qty, dialogUnit, storedUnit).toFixed(6));
 
   /**
    * Compute the new avg_cogs after a stock adjustment.
@@ -72,10 +73,9 @@ export default function InventoryScreen() {
    *   newAvg = floor((oldAvg × oldQty) / newQty)
    *   → cost diluted over more units → lower HPP; floor prevents total cost inflation.
    *
-   * adjustment_out (stock count correction — units simply disappear at their avg cost):
-   *   newAvg = oldAvg (unchanged)
-   *   → stock value drops proportionally with qty; per-unit cost is unaffected.
-   *   Mirrors Android app behaviour.
+   * adjustment_out (stock count correction):
+   *   newAvg = ceil((oldAvg × oldQty) / newQty)
+   *   → remaining units absorb the same total historical cost.
    *
    * waste (expired / damaged — cost was already incurred; absorbed by remaining units):
    *   newAvg = ceil((oldAvg × oldQty) / newQty)
@@ -92,11 +92,10 @@ export default function InventoryScreen() {
     if (type === "adjustment_in") {
       return oldQty > 0 ? Math.floor((oldAvg * oldQty) / newQty) : 0;
     }
-    if (type === "waste") {
+    if (type === "adjustment_out" || type === "waste") {
       // Total cost preserved → ceil so remaining stock absorbs the full original cost
       return oldQty > 0 ? Math.ceil((oldAvg * oldQty) / newQty) : 0;
     }
-    // adjustment_out: per-unit cost unchanged, stock value drops with qty
     return oldAvg;
   };
 
@@ -124,6 +123,7 @@ export default function InventoryScreen() {
         // Hide the base (no-variant) inventory row only if the product has variants AND the base row has no stock
         // (i.e., it was auto-created when the raw material was added, not from an explicit receiving)
         if (!inv.variant_id && productsWithVariants.has(inv.product_id) && inv.current_qty === 0) return false;
+        if (hideZeroStock && inv.current_qty === 0) return false;
         if (filterCategory && inv.categoryId !== filterCategory) return false;
         if (search) {
           const q = search.toLowerCase();
@@ -132,18 +132,18 @@ export default function InventoryScreen() {
         return true;
       })
       .sort((a, b) => a.productName.localeCompare(b.productName));
-  }, [state.inventory, state.products, state.variants, state.categories, search, filterCategory, productsWithVariants]);
+  }, [state.inventory, state.products, state.variants, state.categories, search, filterCategory, productsWithVariants, hideZeroStock]);
 
   const handleAdjust = async () => {
     if (!adjustItem) return;
-    // User enters qty in the display unit (adjustItem.unit); convert to base for storage
+    // User enters qty in dialogUnit; convert to the inventory row's stored unit before saving.
     const qtyAfterDisplay = parseFloat(newQty) || 0;
     if (qtyAfterDisplay < 0) {
       alert(locale === "id" ? "Stok tidak boleh di bawah 0." : "Stock cannot be below 0.");
       return;
     }
-    // Convert dialog unit to base (e.g. L→mL, kg→g); dialogUnit tracks the active input unit
-    const qtyAfterVal = Math.round(qtyAfterDisplay * toBaseConversion(dialogUnit));
+    // Convert dialog unit to stored unit; dialogUnit may differ from adjustItem.unit when toggled
+    const qtyAfterVal = toStoredQty(qtyAfterDisplay, dialogUnit, adjustItem.unit);
     // Validate direction: adjustment_in must increase stock; adjustment_out/waste must decrease stock
     if (movementType === "adjustment_in" && qtyAfterVal < adjustItem.current_qty) {
       alert(locale === "id"
@@ -157,13 +157,12 @@ export default function InventoryScreen() {
         : `${movementType === "waste" ? "Expired / Damaged" : "Stock Shortage"}: new quantity cannot be greater than current stock.`);
       return;
     }
-    // min_qty is also entered in dialogUnit — convert to base
+    // min_qty is also entered in dialogUnit — convert to stored unit
     const minQtyDisplay = parseFloat(minQtyInput) || 0;
-    const minQtyVal = Math.round(minQtyDisplay * toBaseConversion(dialogUnit));
+    const minQtyVal = toStoredQty(minQtyDisplay, dialogUnit, adjustItem.unit);
     setSaving(true);
     try {
-      // computeNewAvgCogs already returns a rounded integer (floor for in, ceil for out/waste)
-      // adjustItem.current_qty and qtyAfterVal are both in base units
+      // adjustItem.current_qty and qtyAfterVal are both in adjustItem.unit (stored unit)
       const newAvgCogs = computeNewAvgCogs(
         adjustItem.avg_cogs ?? 0,
         adjustItem.current_qty,
@@ -297,16 +296,25 @@ export default function InventoryScreen() {
         </div>
       </div>
 
-      <div className="erp-search">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-        </svg>
-        <input
-          type="text"
-          placeholder={copy.common.search}
-          value={search}
-          onChange={(e) => { setSearch(e.target.value); setInvPage(0); }}
-        />
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div className="erp-search" style={{ flex: 1 }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            type="text"
+            placeholder={copy.common.search}
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setInvPage(0); }}
+          />
+        </div>
+        <button
+          className={`erp-btn erp-btn--sm${hideZeroStock ? " erp-btn--primary" : " erp-btn--ghost"}`}
+          onClick={() => { setHideZeroStock((v) => !v); setInvPage(0); }}
+          title={hideZeroStock ? copy.inventory.showZeroStock : copy.inventory.hideZeroStock}
+        >
+          {hideZeroStock ? copy.inventory.showZeroStock : copy.inventory.hideZeroStock}
+        </button>
       </div>
 
       <div className="erp-table-wrap">
@@ -334,16 +342,15 @@ export default function InventoryScreen() {
               pagedInventoryRows.map((inv) => {
                 const isLow = inv.current_qty < inv.min_qty && inv.min_qty > 0;
                 const dispUnit = getDisplayUnit(inv);
-                const dispCurrent = convertToDisplayUnit(inv.current_qty, dispUnit);
-                const dispMin = convertToDisplayUnit(inv.min_qty, dispUnit);
+                const dispCurrent = convertToDisplayUnit(inv.current_qty, inv.unit, dispUnit);
+                const dispMin = convertToDisplayUnit(inv.min_qty, inv.unit, dispUnit);
                 const fmt3 = (n: number) => parseFloat(n.toFixed(3)).toString();
                 const fmtDisp = (n: number) => `${fmt3(n)} ${dispUnit}`;
-                // avg_cogs is stored per base unit in the DB; convert to display unit for label
-                const avgCostPerBase = inv.current_qty > 0 ? (inv.avg_cogs ?? 0) : 0;
-                // inv.unit is already base (mL/g/pcs); dispUnit may be L/kg.
-                // cost per dispUnit = cost per base × how many base units fit in 1 dispUnit
-                const avgCostPerDisp = avgCostPerBase * toBaseConversion(dispUnit);
-                const stockValue = inv.current_qty * avgCostPerBase;
+                // avg_cogs is stored per inv.unit (e.g. per kg). Convert to dispUnit for label.
+                const avgCostPerStoredUnit = inv.current_qty > 0 ? (inv.avg_cogs ?? 0) : 0;
+                // Cost per unit scales inversely to qty: cost/kg → cost/g = ÷1000; cost/g → cost/kg = ×1000.
+                const avgCostPerDisp = avgCostPerStoredUnit * convertToDisplayUnit(1, dispUnit, inv.unit);
+                const stockValue = inv.current_qty * avgCostPerStoredUnit;
                 return (
                   <tr key={`${inv.product_id}-${inv.variant_id}`}>
                     <td>
@@ -377,7 +384,7 @@ export default function InventoryScreen() {
                       )}
                     </td>
                     <td style={{ fontSize: 13 }}>
-                      {avgCostPerBase > 0 ? `${formatRupiah(avgCostPerDisp)}/${dispUnit}` : "—"}
+                      {avgCostPerStoredUnit > 0 ? `${formatRupiah(avgCostPerDisp)}/${dispUnit}` : "—"}
                     </td>
                     <td style={{ fontSize: 13, fontWeight: stockValue > 0 ? 500 : undefined }}>
                       {stockValue > 0 ? formatRupiah(stockValue) : "—"}
@@ -386,12 +393,12 @@ export default function InventoryScreen() {
                       <button
                         className="erp-btn erp-btn--ghost erp-btn--sm"
                         onClick={() => {
-                          // Start dialog in display unit (mL→L, g→kg) for toggleable units
-                          const initUnit = inv.unit === "mL" ? "L" : inv.unit === "g" ? "kg" : inv.unit;
+                          // Start dialog in the stored display unit
+                          const initUnit = inv.unit;
                           setAdjustItem(inv);
                           setDialogUnit(initUnit);
-                          setNewQty(String(convertToDisplayUnit(inv.current_qty, initUnit)));
-                          setMinQtyInput(String(convertToDisplayUnit(inv.min_qty, initUnit)));
+                          setNewQty(String(convertToDisplayUnit(inv.current_qty, inv.unit, initUnit)));
+                          setMinQtyInput(String(convertToDisplayUnit(inv.min_qty, inv.unit, initUnit)));
                           setMovementType("adjustment_in");
                           setReason("");
                         }}
@@ -451,7 +458,7 @@ export default function InventoryScreen() {
                       </span>
                       <button
                         type="button"
-                        className={`erp-chip${dialogUnit === (adjustItem.unit === "mL" ? "mL" : "g") ? " erp-chip--active" : ""}`}
+                        className={`erp-chip${(dialogUnit === "mL" || dialogUnit === "g") ? " erp-chip--active" : ""}`}
                         style={{ fontSize: 12, padding: "2px 10px" }}
                         onClick={() => {
                           const factor = (dialogUnit === "L" || dialogUnit === "kg") ? 1000 : 1 / 1000;

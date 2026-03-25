@@ -706,6 +706,9 @@ a.erp-auth-logo {
   z-index: 200;
   padding: 24px;
 }
+.erp-overlay--top {
+  z-index: 201;
+}
 
 .erp-dialog {
   background: var(--erp-surface);
@@ -1079,6 +1082,45 @@ a.erp-auth-logo {
   width: 68px;
   padding: 4px 6px;
   font-size: 13px;
+}
+
+/* ── BOM variant groups ── */
+.erp-bom-variant-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.erp-bom-variant-group {
+  border: 1px solid var(--erp-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--erp-bg);
+}
+
+
+.erp-bom-variant-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.erp-bom-variant-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--erp-primary);
+}
+
+.erp-bom-variant-group--shared .erp-bom-variant-group-title {
+  color: var(--erp-muted);
+}
+
+.erp-bom-empty {
+  font-size: 12px;
+  color: var(--erp-muted);
+  text-align: center;
+  padding: 4px 0;
 }
 
 /* ── Page header ── */
@@ -1791,6 +1833,21 @@ a.erp-auth-logo {
   font-size: 12px;
   white-space: nowrap;
   min-width: 28px;
+}
+.erp-unit-toggle {
+  border: 1px solid var(--erp-border);
+  background: var(--erp-surface);
+  color: var(--erp-ink-secondary);
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 8px;
+  min-width: 54px;
+  cursor: pointer;
+}
+.erp-unit-toggle:hover {
+  background: color-mix(in srgb, var(--erp-primary) 8%, var(--erp-surface));
+  color: var(--erp-primary);
 }
 .erp-rec-col--remove {
   display: flex;

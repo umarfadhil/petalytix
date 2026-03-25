@@ -21,11 +21,8 @@ export function formatDateTime(timestamp: number, locale: string = "id"): string
 }
 
 export function formatQty(qty: number, unit: string): string {
-  const fmt3 = (n: number) => parseFloat(n.toFixed(3)).toString();
-  if (unit === "g" && qty >= 1000) return `${fmt3(qty / 1000)} kg`;
-  if (unit === "mL" && qty >= 1000) return `${fmt3(qty / 1000)} L`;
-  if (unit === "kg" || unit === "L") return `${fmt3(qty)} ${unit}`;
-  return `${qty} ${unit}`;
+  // unit is the stored display unit (kg/L/g/mL/pcs); current_qty is in that unit.
+  return `${parseFloat(qty.toFixed(3))} ${unit}`;
 }
 
 export function todayRange(): [number, number] {
