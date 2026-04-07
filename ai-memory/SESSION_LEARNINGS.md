@@ -1273,3 +1273,25 @@
 - **Change:** In Product form dialog, moved `Kategori` directly below `Nama`, and moved `Harga` below `Kategori` to match requested input flow.
 - **Scope:** UI field order only; no validation/business-logic changes.
 
+## 2026-04-07 — Cashier Session: Stale-session day-boundary rule removed
+
+- **Context:** The web ERP previously had a stale-session rule: any session with `opened_at < todayMidnight` was treated as inactive, locking POS. Mobile had no such rule → divergence where mobile showed session open but web showed POS locked.
+- **Decision:** Removed the stale-session concept entirely. Any unclosed session (`closed_at === null`) is now treated as active regardless of age. Stores that carry sessions across days are fully supported, matching mobile behavior.
+- **Changes:** `PosScreen.tsx` — removed `todayMidnight`, `staleSession`, simplified `currentSession` to direct `.find(s => s.closed_at === null)`; removed stale auto-close block in `handleOpenCashierSession`; removed `closeCashierSession` import. Same simplification in `DashboardScreen.tsx` for `activeSession`.
+- **TypeScript:** `tsc --noEmit` passes clean after change.
+
+## 2026-04-07 — Settings: CSV Export only outputs first item per multi-item transaction
+
+- **Bug:** For SALE/SALE_DEBT/SALE_QRIS/SALE_TRANSFER ledger entries, the CSV only emitted one row per ledger entry (taking `txItems[0]`). Transactions with 2+ items were under-reported.
+- **Root cause:** The non-COGS path used `txItems[0]` and emitted a single `rows.push(...)` without iterating over all items. The COGS path already correctly looped over `grItems` — the SALE path was never updated to match.
+- **Fix:** Mirrored the COGS pattern: loop over all `txItems` for SALE types, emitting one CSV row per item. Non-sale ledger entries (no txItems) fall through to a plain single row with empty item columns.
+- **Note:** `e.amount` (total ledger amount) is still repeated on every item row — matches original behavior, consistent with COGS rows repeating the total COGS amount.
+- **File changed:** `src/components/ayakasir/erp/screens/SettingsScreen.tsx`
+
+## 2026-04-08 — Settings CSV: person_in_charge always resolves to Owner name
+
+- **Bug:** `person_in_charge` column showed the Owner's name for all rows, even rows created by a Cashier.
+- **Root cause:** The lookup was `userMap.get(tx?.user_id || e.user_id)`. When a transaction existed (`tx` is defined), `tx.user_id` was used instead of `e.user_id`. These can differ — e.g. a DEBT_SETTLED ledger entry written by the Owner references a transaction originally created by a Cashier. The fallback `|| state.user?.name` (the currently logged-in Owner) further masked any miss.
+- **Fix:** Always use `e.user_id` (the ledger entry's own user field) as the sole lookup key — it's the authoritative record of who performed that specific action.
+- **File changed:** `src/components/ayakasir/erp/screens/SettingsScreen.tsx`
+

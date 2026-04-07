@@ -137,7 +137,7 @@
 - Keep cash ledger flow (1 step): WITHDRAWAL ledger entry with `amount: 0`, description "Simpan kas — tutup kasir" / "Cash kept — cashier close".
 - INITIAL_BALANCE entries with `reference_id = sessionId` are historical records — never delete them on close. No unlinked placeholder is created or needed.
 - Saldo Awal is no longer in Settings — set exclusively via Open Cashier in PosScreen.
-- **Stale session rule:** a session with `opened_at < todayMidnight` (opened before today midnight) is stale. Dashboard and POS treat it as if no session exists. PosScreen exposes `staleSession` and auto-closes it when the user opens a new session. SettingsScreen still allows manual close of stale sessions. `todayMidnight` computed via `useMemo` with `new Date(); d.setHours(0,0,0,0)` pattern.
+- **Session carry-over:** Any unclosed session (`closed_at === null`) is treated as active regardless of when it was opened. There is no stale-session day-boundary rule — stores that do not close sessions daily are fully supported. `currentSession`/`activeSession` is simply `cashierSessions.find(s => s.closed_at === null) ?? null`.
 
 ### ERP Variant Preset Groups Rules
 - `variant_groups` table: `id, tenant_id, name, sync_status, updated_at`.

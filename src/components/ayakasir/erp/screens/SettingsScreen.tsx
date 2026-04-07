@@ -658,7 +658,7 @@ export default function SettingsScreen() {
       const tx = e.reference_id ? txMap.get(e.reference_id) : undefined;
       const customer = tx?.customer_id ? customerMap.get(tx.customer_id) : undefined;
       const customerCat = customer?.category_id ? customerCatMap.get(customer.category_id) : undefined;
-      const personInCharge = userMap.get(tx?.user_id || e.user_id)?.name || state.user?.name || "";
+      const personInCharge = userMap.get(e.user_id)?.name || state.user?.name || "";
       const baseFields = [
         e.id,
         e.reference_id || "",
@@ -700,22 +700,41 @@ export default function SettingsScreen() {
         }
       }
 
-      // SALE types and all other entries
+      // SALE types: expand one row per transaction item
       const txItems = e.reference_id ? (txItemsByTx.get(e.reference_id) || []) : [];
       const isSaleType = e.type === "SALE" || e.type === "SALE_QRIS" || e.type === "SALE_TRANSFER" || e.type === "SALE_DEBT";
-      const item = isSaleType && txItems.length > 0 ? txItems[0] : undefined;
-      const product = item ? productMap.get(item.product_id) : undefined;
-      const category = product?.category_id ? categoryMap.get(product.category_id) : undefined;
+      if (isSaleType && txItems.length > 0) {
+        for (const item of txItems) {
+          const product = productMap.get(item.product_id);
+          const category = product?.category_id ? categoryMap.get(product.category_id) : undefined;
+          rows.push([
+            ...baseFields,
+            escape(category?.name),
+            escape(item.product_name || product?.name),
+            escape(item.variant_name),
+            item.qty,
+            item.unit_price,
+            item.discount_type || "",
+            item.discount_value ?? "",
+            item.discount_per_unit ?? "",
+            e.amount,
+            ...tailFields,
+          ].join(","));
+        }
+        continue;
+      }
+
+      // All other ledger entries (no item detail)
       rows.push([
         ...baseFields,
-        escape(category?.name),
-        escape(item?.product_name || product?.name),
-        escape(item?.variant_name),
-        item?.qty ?? "",
-        item?.unit_price ?? "",
-        item?.discount_type || "",
-        item?.discount_value ?? "",
-        item?.discount_per_unit ?? "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
         e.amount,
         ...tailFields,
       ].join(","));

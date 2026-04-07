@@ -10,7 +10,7 @@ import { calculateCashBalance, createLedgerEntry } from "@/lib/supabase/reposito
 import { createCashWithdrawal } from "@/lib/supabase/repositories/cash-withdrawals";
 import { createCustomer } from "@/lib/supabase/repositories/customers";
 import { adjustInventory } from "@/lib/supabase/repositories/inventory";
-import { openCashierSession, closeCashierSession } from "@/lib/supabase/repositories/cashier-sessions";
+import { openCashierSession } from "@/lib/supabase/repositories/cashier-sessions";
 import { verifyErpPinAction } from "@/app/ayakasir/actions/auth";
 import type { DbTransaction, DbTransactionItem, DbGeneralLedger, DbCashWithdrawal, DbCustomer } from "@/lib/supabase/types";
 
@@ -94,11 +94,8 @@ export default function PosScreen() {
   const customerSearchRef = useRef<HTMLInputElement>(null);
 
   // Derive current active cashier session (null = locked)
-  // A session opened before today midnight is treated as stale — POS shows lock overlay so user opens a fresh session
-  const todayMidnight = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }, []);
-  const rawCurrentSession = state.cashierSessions.find((s) => s.closed_at === null) ?? null;
-  const staleSession = rawCurrentSession && rawCurrentSession.opened_at < todayMidnight ? rawCurrentSession : null;
-  const currentSession = rawCurrentSession && rawCurrentSession.opened_at >= todayMidnight ? rawCurrentSession : null;
+  // Any unclosed session is considered active regardless of when it was opened
+  const currentSession = state.cashierSessions.find((s) => s.closed_at === null) ?? null;
 
   // Enabled payment methods from tenant settings (comma-separated string)
   const enabledMethods = useMemo<Set<PaymentMethod>>(() => {
@@ -523,18 +520,6 @@ export default function PosScreen() {
     setOpeningSession(true);
     try {
       const now = Date.now();
-      // Auto-close any stale session (opened before today midnight) before creating a new one
-      if (staleSession) {
-        const closedStale = await closeCashierSession(supabase, staleSession.id, {
-          closed_at: now,
-          closing_balance: 0,
-          withdrawal_amount: null,
-          match_status: "MATCH",
-          mismatch_note: null,
-          updated_at: now,
-        });
-        dispatch({ type: "UPSERT", table: "cashierSessions", payload: closedStale as unknown as Record<string, unknown> });
-      }
       // Generate session ID upfront so INITIAL_BALANCE can reference it
       const sessionId = crypto.randomUUID();
       // Write INITIAL_BALANCE general_ledger entry linked to this session

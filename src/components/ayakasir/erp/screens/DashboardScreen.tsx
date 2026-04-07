@@ -46,10 +46,8 @@ export default function DashboardScreen() {
   }
 
   // Active cashier session (null = no open session)
-  // A session opened before today midnight is considered stale and excluded from shift filtering
-  const todayMidnight = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }, []);
-  const rawActiveSession = state.cashierSessions.find((s) => s.closed_at === null) ?? null;
-  const activeSession = rawActiveSession && rawActiveSession.opened_at >= todayMidnight ? rawActiveSession : null;
+  // Any unclosed session is considered active regardless of when it was opened
+  const activeSession = state.cashierSessions.find((s) => s.closed_at === null) ?? null;
 
   const range = useMemo<[number, number]>(() => {
     if (period === "today") return todayRange();

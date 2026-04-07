@@ -2,6 +2,12 @@
 
 ## Changelog
 
+### v1.1.6
+
+- Cashier Session — Stale-Session Rule Removed: any unclosed session (`closed_at === null`) is now treated as active regardless of when it was opened; the previous day-boundary rule that locked POS for sessions opened before midnight has been removed to match mobile app behavior and support stores that carry sessions across days.
+- Settings — CSV Export Multi-Item Transactions: fixed a bug where only the first item of a multi-item transaction was emitted in the CSV; SALE/SALE_DEBT/SALE_QRIS/SALE_TRANSFER entries now expand into one row per transaction item, matching the existing COGS expansion behavior.
+- Settings — CSV Export `person_in_charge` Fix: column now always resolves from `e.user_id` (the ledger entry's own user field) instead of `tx.user_id`; previously, entries like DEBT_SETTLED written by an Owner that referenced a Cashier's transaction would incorrectly show the Owner's name for the Cashier's ledger action.
+
 ### v1.1.5
 
 - Inventory/Purchasing — Value Gap Clarification: documented that Purchasing total (`SUM(qty × cost_per_unit)`) and Inventory value (`SUM(current_qty × avg_cogs)`) can diverge when weighted average HPP is fractional and persisted as integer `avg_cogs`; this is expected by design and matches Android behavior.
