@@ -2,6 +2,18 @@
 
 export type TenantPlan = "PERINTIS" | "TUMBUH" | "MAPAN";
 
+export interface DbOrganization {
+  id: string;
+  name: string;
+  owner_email: string;
+  plan: TenantPlan;
+  plan_started_at: number | null;
+  plan_expires_at: number | null;
+  sync_status: string;
+  updated_at: number;
+  created_at: number;
+}
+
 export interface DbTenant {
   id: string;
   name: string;
@@ -16,6 +28,9 @@ export interface DbTenant {
   plan: TenantPlan;
   plan_started_at: number | null;
   plan_expires_at: number | null;
+  organization_id: string | null;  // FK → organizations(id)
+  branch_name: string | null;      // display name for this branch
+  is_primary: boolean;             // true = primary (catalog owner) branch
   sync_status: string;
   updated_at: number;
   created_at: number;
@@ -24,6 +39,7 @@ export interface DbTenant {
 export interface DbCustomerCategory {
   id: string;
   tenant_id: string;
+  organization_id: string | null; // FK → organizations(id); org-scoped for multi-branch
   name: string;
   sync_status: string;
   updated_at: number;
@@ -32,6 +48,7 @@ export interface DbCustomerCategory {
 export interface DbCustomer {
   id: string;
   tenant_id: string;
+  organization_id: string | null; // FK → organizations(id); org-scoped for multi-branch
   name: string;
   phone: string | null;
   email: string | null;
@@ -54,7 +71,9 @@ export interface DbUser {
   password_hash: string | null;
   password_salt: string | null;
   role: "OWNER" | "CASHIER";
+  job_title: string;
   tenant_id: string | null;
+  organization_id: string | null; // FK → organizations(id)
   feature_access: string | null;
   is_active: boolean;
   sync_status: string;
@@ -102,6 +121,14 @@ export interface DbVariantGroup {
   name: string;
   sync_status: string;
   updated_at: number;
+}
+
+export interface DbMasterDataLink {
+  id: string;
+  organization_id: string;
+  target_tenant_id: string;
+  data_type: string;
+  linked_at: number;
 }
 
 export interface DbVariantGroupValue {
@@ -203,6 +230,7 @@ export interface DbTransactionItem {
   discount_type: "NONE" | "AMOUNT" | "PERCENT";
   discount_value: number;
   discount_per_unit: number;
+  cogs_per_unit: number; // BIGINT: BOM-computed HPP per unit at checkout time; 0 for legacy rows
   sync_status: string;
   updated_at: number;
 }

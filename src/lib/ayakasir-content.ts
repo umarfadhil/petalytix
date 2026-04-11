@@ -81,7 +81,12 @@ type AyaKasirCopy = {
       name: string;
       tagline: string;
       price: string;
+      originalPrice?: string;
+      discountBadge?: string;
+      priceSuffix?: string;
+      promoHook?: string;
       features: string[];
+      footnote?: string;
       cta: string;
       highlighted?: boolean;
     }[];
@@ -192,16 +197,19 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
         },
         {
           name: "Tumbuh",
-          tagline: "Manage your business more efficiently.",
+          tagline: "Everything you need to grow — less than Rp1,000/day.",
           price: "Rp29,900",
+          originalPrice: "Rp49,900",
+          discountBadge: "Save 40%",
+          promoHook: "Limited promo — lock in now",
           features: [
-            "3 Branches (Coming Soon)",
+            "3 Branches",
             "1 Owner + 2 Staff per branch",
             "300 Products, Customers, Raw Materials",
             "6,000 transactions / month",
             "Bulk updates on Customers, Purchases, Inventory, Products, Cashier, and Dashboard",
             "Payment: Cash, QRIS, Transfer, Debt (Utang)",
-            "Back Office Console (Coming Soon)",
+            "Back Office Console",
             "Advanced reports & raw data access",
           ],
           cta: "Try Now",
@@ -209,19 +217,21 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
         },
         {
           name: "Mapan",
-          tagline: "Control all operations from one dashboard.",
-          price: "Custom",
+          tagline: "Full-scale control for multi-branch businesses.",
+          price: "Rp19,900",
+          originalPrice: "Rp59,900",
+          discountBadge: "Save 67%",
+          priceSuffix: "/ branch / month",
+          promoHook: "Founding price — before it goes up",
           features: [
-            "Unlimited branches (Coming Soon)",
-            "Multi-Owner + Unlimited Staff",
-            "Unlimited Products, Customers, Raw Materials",
-            "Unlimited transactions / month",
-            "Bulk updates on Customers, Purchases, Inventory, Products, Cashier, and Dashboard",
+            "All Tumbuh features, no limits",
+            "1 feature request / year*",
             "Payment Gateway (Coming Soon)",
-            "Back Office Console (Coming Soon)",
-            "Consolidated reports & raw data access",
-            "Set up by developer team",
+            "Priority support",
+            "Onboarding & training",
+            "Setup by developer team",
           ],
+          footnote: "* Subject to technical feasibility",
           cta: "Contact Developer",
         },
       ],
@@ -457,16 +467,19 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
         },
         {
           name: "Tumbuh",
-          tagline: "Kelola bisnis Anda dengan lebih rapi dan efisien.",
+          tagline: "Semua yang kamu butuhkan untuk berkembang — kurang dari Rp1.000/hari.",
           price: "Rp29.900",
+          originalPrice: "Rp49.900",
+          discountBadge: "Hemat 40%",
+          promoHook: "Promo terbatas — amankan sekarang",
           features: [
-            "3 Cabang (Segera Hadir)",
+            "3 Cabang",
             "1 Pemilik + 2 Staf per cabang",
             "300 Produk, Pelanggan, Bahan Baku",
             "6.000 transaksi / bulan",
             "Kelola massal Pelanggan, Pembelian, Inventaris, Produk, Kasir, dan Dashboard",
             "Pembayaran: Tunai, QRIS, Transfer, Utang",
-            "Konsol Back Office (Segera Hadir)",
+            "Konsol Back Office",
             "Laporan lanjutan & akses data mentah",
           ],
           cta: "Coba Sekarang",
@@ -474,19 +487,21 @@ const ayakasirCopy: Record<AyaKasirLocale, AyaKasirCopy> = {
         },
         {
           name: "Mapan",
-          tagline: "Kendalikan seluruh operasional bisnis dari satu dashboard.",
-          price: "Custom",
+          tagline: "Kendali penuh untuk bisnis multi-cabang.",
+          price: "Rp19.900",
+          originalPrice: "Rp59.900",
+          discountBadge: "Hemat 67%",
+          priceSuffix: "/ cabang / bulan",
+          promoHook: "Harga founding — sebelum naik",
           features: [
-            "Cabang tidak terbatas (Segera Hadir)",
-            "Multi-Pemilik + Staf tidak terbatas",
-            "Produk, Pelanggan, Bahan Baku tidak terbatas",
-            "Transaksi tidak terbatas / bulan",
-            "Kelola massal Pelanggan, Pembelian, Inventaris, Produk, Kasir, dan Dashboard",
+            "Semua fitur Tumbuh tanpa batasan",
+            "Request fitur 1x per tahun*",
             "Payment Gateway (Segera Hadir)",
-            "Konsol Back Office (Segera Hadir)",
-            "Laporan konsolidasi & akses data mentah",
+            "Prioritas penanganan kendala",
+            "Pelatihan penggunaan",
             "Setup oleh tim developer",
           ],
+          footnote: "* Kondisional jika memungkinkan untuk diakomodasi",
           cta: "Hubungi Developer",
         },
       ],

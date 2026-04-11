@@ -8,6 +8,7 @@ export interface ErpSessionPayload extends JWTPayload {
   tenantId: string;
   role: "OWNER" | "CASHIER";
   name: string;
+  organizationId?: string; // populated for OWNER; undefined for old sessions (back-compat)
 }
 
 function getSecret() {

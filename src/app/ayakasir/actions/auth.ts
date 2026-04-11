@@ -206,12 +206,29 @@ export async function loginErpAction({
     };
   }
 
+  // Resolve organizationId for OWNER accounts
+  let organizationId: string | undefined;
+  if (dbUser.role === "OWNER") {
+    if (dbUser.organization_id) {
+      organizationId = dbUser.organization_id;
+    } else {
+      // Backfill: look up org via owner_email from tenants
+      const { data: tenant } = await supabase
+        .from("tenants")
+        .select("organization_id")
+        .eq("id", tenantId)
+        .maybeSingle();
+      organizationId = (tenant?.organization_id as string | null) ?? undefined;
+    }
+  }
+
   const token = await createErpSession({
     userId: dbUser.id,
     email: dbUser.email || normalizedEmail,
     tenantId,
     role: dbUser.role,
     name: dbUser.name,
+    organizationId,
   });
 
   setErpSessionCookie(token);
@@ -512,7 +529,9 @@ interface UserUpsertInput {
   email: string;
   phone: string;
   role: "OWNER" | "CASHIER";
+  jobTitle?: string;
   password?: string; // omit to keep existing
+  pin?: string; // 6-digit PIN; omit to keep existing
   isActive: boolean;
   tenantId: string;
   featureAccess?: string | null; // comma-separated feature codes, null = owner (all access)
@@ -542,6 +561,8 @@ export async function upsertTenantUserAction(
       email: normalizedEmail || null,
       phone: input.phone.trim() || null,
       role: input.role,
+      job_title: input.jobTitle?.trim() ?? "",
+      tenant_id: input.tenantId,
       is_active: input.isActive,
       feature_access: input.role === "OWNER" ? null : (input.featureAccess ?? null),
       sync_status: "SYNCED",
@@ -554,6 +575,12 @@ export async function upsertTenantUserAction(
       updates.password_salt = salt;
     }
 
+    if (input.pin && /^\d{6}$/.test(input.pin)) {
+      const pinSalt = generatePasswordSalt();
+      updates.pin_hash = hashPassword(input.pin, pinSalt);
+      updates.pin_salt = pinSalt;
+    }
+
     const { error } = await supabase.from("users").update(updates).eq("id", input.id);
     if (error) {
       return { ok: false, message: error.message };
@@ -564,21 +591,36 @@ export async function upsertTenantUserAction(
     if (!input.password || input.password.length < 6) {
       return { ok: false, message: "Password must be at least 6 characters." };
     }
+    if (!input.pin || !/^\d{6}$/.test(input.pin)) {
+      return { ok: false, message: "PIN must be exactly 6 digits." };
+    }
     const userId = crypto.randomUUID();
     const salt = generatePasswordSalt();
     const hash = hashPassword(input.password, salt);
+    const pinSalt = generatePasswordSalt();
+    const pinHash = hashPassword(input.pin, pinSalt);
+
+    // Resolve organization_id from the tenant so staff appear in Office
+    const { data: tenantRow } = await supabase
+      .from("tenants")
+      .select("organization_id")
+      .eq("id", input.tenantId)
+      .maybeSingle();
+    const organizationId = (tenantRow?.organization_id as string | null) ?? null;
 
     const { error } = await supabase.from("users").insert({
       id: userId,
       name: trimmedName,
       email: normalizedEmail || null,
       phone: input.phone.trim() || null,
-      pin_hash: "",
-      pin_salt: "",
+      pin_hash: pinHash,
+      pin_salt: pinSalt,
       password_hash: hash,
       password_salt: salt,
       role: input.role,
+      job_title: input.jobTitle?.trim() ?? "",
       tenant_id: input.tenantId,
+      organization_id: organizationId,
       is_active: input.isActive,
       feature_access: input.role === "OWNER" ? null : (input.featureAccess ?? null),
       sync_status: "SYNCED",
@@ -619,6 +661,30 @@ export async function updateQrisSettingsAction(input: {
     return { ok: false, message: error.message };
   }
   return { ok: true, tenant: data as Record<string, unknown> };
+}
+
+export async function verifyOwnerPasswordAction(password: string): Promise<ActionResult> {
+  const session = await getErpSession();
+  if (!session || session.role !== "OWNER") {
+    return { ok: false, message: "Unauthorized" };
+  }
+  const supabase = createAdminClient();
+  const { data: user, error } = await supabase
+    .from("users")
+    .select("password_hash, password_salt")
+    .eq("id", session.userId)
+    .maybeSingle();
+  if (error || !user) {
+    return { ok: false, message: "Account not found." };
+  }
+  const dbUser = user as Pick<DbUser, "password_hash" | "password_salt">;
+  if (!dbUser.password_hash || !dbUser.password_salt) {
+    return { ok: false, message: "Password not set." };
+  }
+  if (!verifyPassword(password, dbUser.password_salt, dbUser.password_hash)) {
+    return { ok: false, message: "Incorrect password." };
+  }
+  return { ok: true };
 }
 
 export async function deleteTenantUserAction(userId: string): Promise<ActionResult> {
@@ -769,6 +835,321 @@ export async function activateAccountAction(email: string): Promise<ActionResult
 
   if (tenantError) return { ok: false };
 
+  return { ok: true };
+}
+
+interface BranchInput {
+  branchName: string;
+  province: string;
+  city: string;
+}
+
+// Create a new branch (tenant) under the owner's organization.
+export async function createBranchAction(input: BranchInput): Promise<ActionResult & { tenantId?: string }> {
+  const session = await getErpSession();
+  if (!session || session.role !== "OWNER" || !session.organizationId) {
+    return { ok: false, message: "Unauthorized." };
+  }
+
+  const branchName = input.branchName.trim();
+  const province = input.province.trim();
+  const city = input.city.trim();
+  if (!branchName || !province || !city) {
+    return { ok: false, message: "Nama cabang, provinsi, dan kota wajib diisi." };
+  }
+
+  const supabase = createAdminClient();
+
+  // Enforce plan branch limit
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("plan, plan_expires_at")
+    .eq("id", session.organizationId)
+    .single();
+
+  const { data: existingBranches } = await supabase
+    .from("tenants")
+    .select("id")
+    .eq("organization_id", session.organizationId);
+
+  const { getPlanLimits: _getPlanLimits } = await import("@/lib/ayakasir-plan");
+  const planExpired = org?.plan_expires_at != null && Date.now() > org.plan_expires_at;
+  const effectivePlan = planExpired ? "PERINTIS" : (org?.plan ?? "PERINTIS");
+  const limits = _getPlanLimits(effectivePlan as import("@/lib/ayakasir-plan").TenantPlan);
+  if ((existingBranches?.length ?? 0) >= limits.maxBranches) {
+    return { ok: false, message: "Batas cabang telah tercapai." };
+  }
+
+  // Get the primary branch to inherit plan info and owner_phone
+  const { data: primaryBranch } = await supabase
+    .from("tenants")
+    .select("owner_email, owner_phone, plan, plan_started_at, plan_expires_at, enabled_payment_methods")
+    .eq("organization_id", session.organizationId)
+    .eq("is_primary", true)
+    .single();
+
+  const now = Date.now();
+  const newTenantId = crypto.randomUUID();
+
+  const { error } = await supabase.from("tenants").insert({
+    id: newTenantId,
+    name: branchName,
+    branch_name: branchName,
+    owner_email: primaryBranch?.owner_email ?? session.email,
+    owner_phone: primaryBranch?.owner_phone ?? "",
+    province,
+    city,
+    is_active: true,
+    is_primary: false,
+    organization_id: session.organizationId,
+    plan: primaryBranch?.plan ?? "TUMBUH",
+    plan_started_at: primaryBranch?.plan_started_at ?? now,
+    plan_expires_at: primaryBranch?.plan_expires_at ?? null,
+    enabled_payment_methods: primaryBranch?.enabled_payment_methods ?? "CASH,QRIS,TRANSFER,UTANG",
+    sync_status: "SYNCED",
+    updated_at: now,
+    created_at: now,
+  });
+
+  if (error) {
+    return { ok: false, message: "Gagal membuat cabang. Coba lagi." };
+  }
+
+  return { ok: true, tenantId: newTenantId };
+}
+
+// Update branch name / province / city for any branch in the org.
+export async function updateBranchAction(
+  branchId: string,
+  input: BranchInput
+): Promise<ActionResult> {
+  const session = await getErpSession();
+  if (!session || session.role !== "OWNER" || !session.organizationId) {
+    return { ok: false, message: "Unauthorized." };
+  }
+
+  const branchName = input.branchName.trim();
+  const province = input.province.trim();
+  const city = input.city.trim();
+  if (!branchName || !province || !city) {
+    return { ok: false, message: "Nama cabang, provinsi, dan kota wajib diisi." };
+  }
+
+  const supabase = createAdminClient();
+
+  // Verify branch belongs to this org
+  const { data: branch } = await supabase
+    .from("tenants")
+    .select("organization_id")
+    .eq("id", branchId)
+    .maybeSingle();
+
+  if (!branch || branch.organization_id !== session.organizationId) {
+    return { ok: false, message: "Cabang tidak ditemukan." };
+  }
+
+  const { error } = await supabase
+    .from("tenants")
+    .update({
+      name: branchName,
+      branch_name: branchName,
+      province,
+      city,
+      updated_at: Date.now(),
+    })
+    .eq("id", branchId);
+
+  if (error) {
+    return { ok: false, message: "Gagal memperbarui cabang. Coba lagi." };
+  }
+
+  return { ok: true };
+}
+
+// Assign (or re-assign) a CASHIER user to a branch within the same org.
+export async function assignStaffToBranchAction(
+  userId: string,
+  targetTenantId: string
+): Promise<ActionResult> {
+  const session = await getErpSession();
+  if (!session || session.role !== "OWNER" || !session.organizationId) {
+    return { ok: false, message: "Unauthorized." };
+  }
+
+  const supabase = createAdminClient();
+
+  // Verify both the user and the target branch belong to this org
+  const [userRes, branchRes] = await Promise.all([
+    supabase
+      .from("users")
+      .select("id, role, organization_id")
+      .eq("id", userId)
+      .maybeSingle(),
+    supabase
+      .from("tenants")
+      .select("id, organization_id")
+      .eq("id", targetTenantId)
+      .maybeSingle(),
+  ]);
+
+  if (!userRes.data || userRes.data.organization_id !== session.organizationId) {
+    return { ok: false, message: "Karyawan tidak ditemukan dalam organisasi ini." };
+  }
+  if (userRes.data.role !== "CASHIER") {
+    return { ok: false, message: "Hanya kasir yang dapat dipindahkan antar cabang." };
+  }
+  if (!branchRes.data || branchRes.data.organization_id !== session.organizationId) {
+    return { ok: false, message: "Cabang tidak ditemukan dalam organisasi ini." };
+  }
+
+  const { error } = await supabase
+    .from("users")
+    .update({ tenant_id: targetTenantId, updated_at: Date.now() })
+    .eq("id", userId);
+
+  if (error) {
+    return { ok: false, message: "Gagal memindahkan karyawan. Coba lagi." };
+  }
+
+  return { ok: true };
+}
+
+// Sync staff assignments for a branch: unassigns staff no longer in newStaffIds
+// (sets their tenant_id to null — no branch) and assigns the new ones.
+// Uses a fresh DB read to diff so stale local state can't cause ghost assignments.
+export async function syncBranchStaffAction(
+  branchId: string,
+  newStaffIds: string[]
+): Promise<ActionResult & { unassignedIds: string[]; assignedIds: string[] }> {
+  const EMPTY = { ok: false as const, unassignedIds: [], assignedIds: [] };
+
+  const session = await getErpSession();
+  if (!session || session.role !== "OWNER" || !session.organizationId) {
+    return { ...EMPTY, message: "Unauthorized." };
+  }
+
+  const supabase = createAdminClient();
+  const orgId = session.organizationId;
+
+  // Fetch current staff on this branch — fresh from DB
+  const currentStaffRes = await supabase
+    .from("users")
+    .select("id")
+    .eq("tenant_id", branchId)
+    .eq("role", "CASHIER")
+    .eq("organization_id", orgId);
+
+  const currentIds = (currentStaffRes.data || []).map((u: { id: string }) => u.id);
+  const removedIds = currentIds.filter((id: string) => !newStaffIds.includes(id));
+  const addedIds = newStaffIds.filter((id) => !currentIds.includes(id));
+
+  // Unassign removed staff → no branch (tenant_id = null)
+  if (removedIds.length > 0) {
+    await supabase
+      .from("users")
+      .update({ tenant_id: null, updated_at: Date.now() })
+      .in("id", removedIds)
+      .eq("organization_id", orgId);
+  }
+
+  // Assign new staff → this branch
+  if (addedIds.length > 0) {
+    await supabase
+      .from("users")
+      .update({ tenant_id: branchId, updated_at: Date.now() })
+      .in("id", addedIds)
+      .eq("organization_id", orgId);
+  }
+
+  return { ok: true, unassignedIds: removedIds, assignedIds: addedIds };
+}
+
+// Delete a non-primary branch after verifying the owner's password.
+// Moves any staff assigned to the branch back to the primary branch before deleting.
+export async function deleteBranchAction(
+  branchId: string,
+  password: string
+): Promise<ActionResult> {
+  const session = await getErpSession();
+  if (!session || session.role !== "OWNER" || !session.organizationId) {
+    return { ok: false, message: "Unauthorized." };
+  }
+
+  const supabase = createAdminClient();
+
+  // 1. Verify owner password
+  const { data: ownerRow } = await supabase
+    .from("users")
+    .select("password_hash, password_salt")
+    .eq("id", session.userId)
+    .maybeSingle();
+
+  if (!ownerRow?.password_hash || !ownerRow?.password_salt) {
+    return { ok: false, message: "Tidak dapat memverifikasi password." };
+  }
+  if (!verifyPassword(password, ownerRow.password_salt, ownerRow.password_hash)) {
+    return { ok: false, message: "Password salah." };
+  }
+
+  // 2. Verify the branch belongs to this org and is not the primary
+  const { data: branch } = await supabase
+    .from("tenants")
+    .select("id, organization_id, is_primary")
+    .eq("id", branchId)
+    .maybeSingle();
+
+  if (!branch || branch.organization_id !== session.organizationId) {
+    return { ok: false, message: "Cabang tidak ditemukan." };
+  }
+  if (branch.is_primary) {
+    return { ok: false, message: "Cabang utama tidak dapat dihapus." };
+  }
+
+  // 3. Unassign staff from this branch (set tenant_id = null, not reassigned to primary)
+  await supabase
+    .from("users")
+    .update({ tenant_id: null, updated_at: Date.now() })
+    .eq("tenant_id", branchId);
+
+  // 4. Delete the branch (tenant row)
+  const { error } = await supabase.from("tenants").delete().eq("id", branchId);
+  if (error) {
+    return { ok: false, message: "Gagal menghapus cabang. Coba lagi." };
+  }
+
+  return { ok: true };
+}
+
+// Switch the active branch (tenantId) in the ERP session cookie.
+// OWNER only — keeps organizationId, role, userId, email, name unchanged.
+export async function switchBranchAction(branchId: string): Promise<ActionResult> {
+  const session = await getErpSession();
+  if (!session || session.role !== "OWNER" || !session.organizationId) {
+    return { ok: false, message: "Unauthorized." };
+  }
+
+  const supabase = createAdminClient();
+  // Verify the branch belongs to the same org
+  const { data: branch } = await supabase
+    .from("tenants")
+    .select("id, organization_id, is_active")
+    .eq("id", branchId)
+    .maybeSingle();
+
+  if (!branch || branch.organization_id !== session.organizationId || !branch.is_active) {
+    return { ok: false, message: "Branch not found or not active." };
+  }
+
+  const token = await createErpSession({
+    userId: session.userId,
+    email: session.email,
+    tenantId: branchId,
+    role: session.role,
+    name: session.name,
+    organizationId: session.organizationId,
+  });
+
+  setErpSessionCookie(token);
   return { ok: true };
 }
 

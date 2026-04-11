@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useErp } from "./store";
 import { getErpCopy } from "./i18n";
 import { useBasePath } from "./useBasePath";
-import { logoutErpAction } from "@/app/ayakasir/actions/auth";
+import { logoutErpAction, switchBranchAction } from "@/app/ayakasir/actions/auth";
 
 const NAV_ITEMS = [
   { key: "dashboard", icon: DashboardIcon, path: "/app/dashboard", feature: "DASHBOARD" },
@@ -24,6 +24,8 @@ export default function ErpSidebar() {
   const base = useBasePath();
   const copy = getErpCopy(locale);
   const [collapsed, setCollapsed] = useState(false);
+  const [switchingBranch, setSwitchingBranch] = useState(false);
+  const isId = locale === "id";
 
   // Compute allowed features for current user
   const isOwner = state.user?.role === "OWNER";
@@ -35,6 +37,24 @@ export default function ErpSidebar() {
           .map((s) => s.trim())
           .filter(Boolean)
       );
+
+  // Show Office link whenever the plan allows it (orgBranches populated = plan allows Office)
+  const canAccessOffice = isOwner && state.orgBranches.length >= 1;
+  // Show branch switcher dropdown only when there are actually multiple branches to switch between
+  const hasMultiBranch = isOwner && state.orgBranches.length > 1;
+
+  async function handleBranchSwitch(e: React.ChangeEvent<HTMLSelectElement>) {
+    const branchId = e.target.value;
+    if (!branchId || branchId === state.restaurant?.id) return;
+    setSwitchingBranch(true);
+    const result = await switchBranchAction(branchId);
+    if (result.ok) {
+      // Hard navigation to guarantee fresh SSR with the new tenant cookie
+      window.location.href = `${base}/${locale}/app/dashboard`;
+    } else {
+      setSwitchingBranch(false);
+    }
+  }
 
   async function handleLogout() {
     await logoutErpAction();
@@ -54,6 +74,24 @@ export default function ErpSidebar() {
           {collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
         </button>
       </div>
+
+      {/* Branch switcher — OWNER with multiple branches only */}
+      {hasMultiBranch && !collapsed && (
+        <div className="erp-branch-switcher">
+          <div className="erp-branch-switcher-label">{isId ? "Cabang Aktif" : "Active Branch"}</div>
+          <select
+            value={state.restaurant?.id || ""}
+            onChange={handleBranchSwitch}
+            disabled={switchingBranch}
+          >
+            {state.orgBranches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.branch_name || b.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <nav className="erp-sidebar-nav">
         {NAV_ITEMS.filter(({ feature }) => allowedFeatures === null || allowedFeatures.has(feature)).map(({ key, icon: Icon, path }) => {
@@ -76,6 +114,19 @@ export default function ErpSidebar() {
             </a>
           );
         })}
+
+        {/* Kantor link — directly after Pengaturan (Settings), same style */}
+        {canAccessOffice && (
+          <a
+            href={`${base}/${locale}/app/office/overview`}
+            className={`erp-sidebar-link${pathname.includes("/app/office") ? " erp-sidebar-link--active" : ""}${collapsed ? " erp-sidebar-link--icon-only" : ""}`}
+            title={collapsed ? (isId ? "Kantor" : "Back Office") : undefined}
+            onClick={(e) => { e.preventDefault(); router.push(`${base}/${locale}/app/office/overview`); }}
+          >
+            <OfficeIcon />
+            {!collapsed && <span>{isId ? "Kantor" : "Back Office"}</span>}
+          </a>
+        )}
       </nav>
 
       <div className="erp-sidebar-footer">
@@ -195,6 +246,17 @@ function ChevronRightIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
       <path d="M9 18l6-6-6-6" />
+    </svg>
+  );
+}
+
+function OfficeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="7" width="20" height="14" rx="2" />
+      <path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2" />
+      <line x1="12" y1="12" x2="12" y2="12" strokeWidth="3" />
+      <path d="M2 12h20" />
     </svg>
   );
 }

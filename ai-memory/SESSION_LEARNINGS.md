@@ -1,5 +1,274 @@
 ﻿# Session Learnings
 
+## 2026-04-11 — Overview: filter chips moved below subtitle
+
+- Moved the period filter chip group (`erp-chip-group`) from inside the `erp-screen-header` row to a separate `office-report-filters` div placed below `erp-screen-subtitle`, matching the pattern used in `/office/reports`.
+- Export button remains in `erp-screen-header` (right-aligned via existing flex layout).
+- Removed the wrapper divs `office-overview-header-row` and `office-overview-header-actions` (were only used to hold chips + button together in the header).
+
+## 2026-04-11 — Office Reports: Kategori Terlaris section
+
+- Added **Kategori Terlaris** (Top Categories) section to `/office/reports`, placed between Produk Terlaris and Konsumen Utama.
+- Same columns as Produk Terlaris: Kategori, Terjual, Pendapatan, HPP, Pendapatan Bersih, Profitabilitas (%), Porsi Penjualan (%).
+- No pagination — all categories shown (typically a small list).
+- **Data pipeline:** `consolidatedCategories` (MENU type only) + `category_id` on `consolidatedProducts` were added to load.
+  - `layout.tsx`: products query extended to `select("…, category_id")`; categories fetched separately with `.eq("category_type", "MENU")`.
+  - `ConsolidatedProduct` interface: `category_id: string | null` field added.
+  - `OfficeState`: `consolidatedCategories: DbCategory[]` field added.
+- **Aggregation in ReportsScreen:** `topCategories` useMemo — builds `productCategoryMap` (product_id → category_id) and `categoryNameMap` (id → name) from state, then loops `filteredTxItems` accumulating qty/revenue/cogs per category key. Products with no category fall into "Tanpa Kategori" / "Uncategorized" bucket.
+- **PDF export:** category table added after products table using same column structure.
+- Products with `null` category_id are grouped under a single "Tanpa Kategori" key (`__uncategorized__` internal key).
+
+## 2026-04-11 — Office Reports: COGS discrepancy fix + KPI section layout
+
+**COGS discrepancy root cause:** `ReportsScreen` was computing `cogs_per_unit * qty` directly, returning 0 for legacy tx items (pre-2026-04-11, when `cogs_per_unit` was not yet written at checkout). `OverviewScreen` correctly falls back to BOM reconstruction for zero values.
+
+**Fix:**
+- Extracted shared COGS utilities into `src/components/ayakasir/erp/utils.ts`: `toInventoryUnit`, `buildInvMap`, `buildBomMap`, `buildHistoricalCogsMap`, `getHistoricalAvgCogs`, `computeItemCogs`. These are pure functions (no React hooks), imported by any screen that needs COGS.
+- `ReportsScreen` now builds `invMap`, `bomMap`, `historicalCogsMap` from state and calls `computeItemCogs(...)` for `totalCogs`, `branchRevenue.cogs`, and `topProducts.cogs` — identical fallback logic to OverviewScreen.
+- `OverviewScreen` keeps its own local copies (not yet migrated to imports) — the shared utils are additive, not a breaking change.
+
+**KPI card restructure:**
+- Cards reorganised into 3 labelled sections: **Penjualan** (Pendapatan Kotor, COGS, Pendapatan Bersih, Profitabilitas), **Analisa Transaksi** (Transaksi, Pelanggan, Rata-rata Transaksi), **Utang** (Utang Belum Lunas).
+- New CSS: `.office-report-kpi-sections`, `.office-report-kpi-section`, `.office-report-kpi-section-title` in `erp.css`.
+- Renames: "Total Pendapatan" → "Pendapatan Kotor", "Margin Keuntungan" → "Profitabilitas", "Total Transaksi" → "Transaksi", "Pelanggan Unik" → "Pelanggan".
+
+## 2026-04-11 — Office Reports: COGS, Net Income, Profit Margin indicators
+
+- **Added 3 new KPI cards** after the existing 5: HPP/COGS (`totalCogs`), Pendapatan Bersih/Net Income (`netIncome = totalRevenue - totalCogs`), Margin Keuntungan/Profit Margin (`profitabilityPct = round(netIncome/totalRevenue*100)`).
+- **Profit Margin card styling:** `--success` (green border) when ≥30%, `--danger` (red) when negative, neutral otherwise.
+- **Cards show `-`** when `totalCogs === 0` (no COGS data yet for legacy rows).
+- **Branch table:** added HPP and Pendapatan Bersih columns; total row uses aggregate `totalCogs` / `netIncome`.
+- **Top Products table:** added HPP and Pendapatan Bersih columns per product; `%` column now appended with `· N%↑` showing per-product margin when COGS data exists.
+- **COGS source:** `ConsolidatedTxItem.cogs_per_unit` (snapshotted at checkout) × `qty`. Falls back to `0` for legacy rows (pre-2026-04-11 transactions where `cogs_per_unit` was not yet written).
+- **`filteredTxIdSet`** extracted as a dedicated `useMemo` to avoid duplicate `new Set(...)` in both `totalCogs` and `topProducts` computations.
+- **`branchRevenue`** now returns `{ cogs, netIncome }` in addition to `{ revenue, count }` — used by both the table and PDF.
+- **`topProducts`** now returns `{ cogs }` in addition to `{ name, qty, revenue }`.
+- **PDF export updated:** KPI section split into two 4-column rows (profitability row first, operational row second); branch and product table headers/rows include HPP + Pendapatan Bersih columns.
+- **New CSS class:** `.office-report-kpi-card--success` added to `erp.css`.
+
+
+## 2026-04-11 — COGS Discrepancy Root Cause: historicalCogsMap qty accumulation bug
+
+**Confirmed via DB query on tx e973d2a7-c43f-404f-8e43-271886bbe7db (Potato Chips, 1× qty):**
+
+- **Products page (Rp3,200):** current DB `avg_cogs = 32/g` × 100g BOM = correct.
+- **Unduh Data (Rp3,400):** `historicalCogsMap` replay lands on `34/g` at tx date = wrong.
+
+**Root cause:** `historicalCogsMap` in `OverviewScreen.tsx` replays GR history accumulating qty (`prevQty += receivedQty`) but **never subtracts qty consumed by sales**. So `prevQty` is always inflated (pure sum of all GRs), making each new GR's weighted average diluted more than reality. The direction of error depends on price trend: overweights older prices relative to newer ones.
+
+**Fix implemented (2026-04-11):**
+1. `ALTER TABLE transaction_items ADD COLUMN cogs_per_unit BIGINT NOT NULL DEFAULT 0;` — applied to Supabase.
+2. `PosScreen.tsx` — `calcCogsPerUnit()` computed from live `state.inventory.avg_cogs` × BOM qty before stock deduction; written to every new `transaction_item`.
+3. `OverviewScreen.tsx` — `computeItemCogs()` accepts `cogsPerUnit?`; if `>0` returns `cogsPerUnit × qty` directly; else falls back to GR reconstruction for legacy rows (cogs_per_unit = 0).
+4. `ConsolidatedTxItem` (office/store.tsx) and office `layout.tsx` select updated to include `cogs_per_unit`.
+5. `DbTransactionItem` (types.ts) updated with the new field.
+
+## 2026-04-11 — COGS Discrepancy: Unduh Data (Rp6.405) vs Products Page (Rp8.830)
+
+**Root cause:** Two different data sources for `avg_cogs` are used by the two screens.
+
+- **Products page (`ProductsScreen.tsx`):** `calcMenuItemCogs()` reads `state.inventory` — the **current/latest `avg_cogs` snapshot** from the DB (today's replacement cost). → shows Rp8.830
+- **Overview CSV (`OverviewScreen.tsx`):** `computeItemCogs()` with `atDate = tx.date` reconstructs **historical `avg_cogs`** at transaction time by replaying all GR items chronologically (`historicalCogsMap`). → shows Rp6.405
+
+**Why they differ:**
+- Raw material costs were lower at the time of tx `578c8c01-d6e6-4dd9-972e-7ac48b8ddd57` than they are today.
+- A more expensive goods receiving after that date raised the current `avg_cogs`, which Products page reflects.
+- Neither number is wrong — they answer different questions: CSV = P&L accuracy at sale time; Products = current replacement cost.
+
+**Additional divergence sources:**
+- `bomMap` in OverviewScreen uses exact `parent_variant_id` key (UUID or name as stored); if tx `variantId` doesn't match the BOM key, fewer components may be counted.
+- `historicalCogsMap` rebuilds from GR records only — does not replay `inventory_movements` (adjustments), so it can diverge from actual DB `avg_cogs` trajectory.
+- `Math.floor()` applied at each GR checkpoint accumulates small rounding differences.
+
+**Implication for future improvements:** If the goal is consistent COGS across both views, the canonical approach is to snapshot `avg_cogs` per component at transaction checkout time (write it to `transaction_items` or a separate table) rather than reconstructing it from GR history later.
+
+## 2026-04-11 — Office Overview: Unduh Data Button Style
+
+- **Change:** Updated "Unduh Data" button in `/office/overview` from `erp-btn erp-btn--ghost erp-btn--sm` to `erp-btn erp-btn--primary` to match the "Unduh Laporan" button style in `/office/reports`.
+
+## 2026-04-10 — Office Sidebar: Nav Reorder + Staff Icon Update
+
+- **Nav order changed** in `OfficeSidebar.tsx` to: Ringkasan → Laporan → Cabang → Karyawan → Inventori → Pelanggan → Data Master → Pengaturan.
+- **StaffIcon replaced:** was identical to CustomersIcon (people group). New icon is an ID-card/badge (rounded rect + avatar circle + name lines) — distinct and representative of staff management.
+
+
+## 2026-04-10 — Office Reports: PDF Download (Unduh Laporan)
+
+- **Change:** Replaced the non-functional "Unduh CSV" button in `/office/reports` with "Unduh Laporan" (ID) / "Download Report" (EN) that generates and prints a PDF summary.
+- **No external library:** Uses `window.open("", "_blank")` + `document.write()` to render a standalone HTML page, then `win.print()` after a 400ms delay (allows styles to load). Browser's Save as PDF covers the export use case.
+- **`buildPdfContent()`:** Pure function that receives all computed KPIs + tables and returns a self-contained HTML string with inline `<style>` (print-optimised, `@page` margins, no Tailwind). Includes: KPI cards, payment breakdown, revenue by branch, top 10 products, top 10 customers.
+- **Plan gate:** Still disabled for PERINTIS plan (`canExportCsv` boolean from `getPlanLimits`). Warning banner copy updated to match.
+- **`document.write` deprecation:** Suppressed with `// eslint-disable-line` — intentional use on a freshly opened blank window (no alternative for synchronous HTML injection into a new window).
+
+## 2026-04-10 — Products Screen: BOM/COGS name-vs-UUID compatibility fix
+
+- **Root cause (both bugs):** The Android mobile app writes `parent_variant_id` as the variant **name** (e.g. `"Small"`, `"Regular"`) instead of the variant UUID. The web ERP's BOM edit and COGS calculation both matched by UUID, so name-based rows were invisible.
+- **Bug 1 — BOM empty in edit dialog:** `openEdit` now calls `resolveLoadedPvId(pvId)` which detects non-UUID values via regex and resolves them to the variant UUID using a `variantNameToId` map built from the product's variants. UUID values pass through unchanged.
+- **Bug 2 — Same COGS across variants:** `calcMenuItemCogs` now accepts `variantName` as a 3rd arg and matches `parent_variant_id === variantId || parent_variant_id === variantName`. This handles both UUID-based (web-saved) and name-based (mobile-saved) rows correctly.
+- **Rule:** `parent_variant_id` in DB may be either a UUID (saved by web ERP) or a variant name (saved by Android app). Always normalise on load (`openEdit`) and match both forms in read-path calculations.
+
+## 2026-04-10 — Products Screen: COGS Column — BOM-based Calculation
+
+- **Root cause fix:** COGS for menu items must be calculated from BOM, not read from `inventory.avg_cogs` (which only applies to raw materials). Menu items have no inventory row.
+- **Formula:** `SUM(component.required_qty × raw_material.avg_cogs)` per BOM component, after unit conversion (kg→g ×1000, L→mL ×1000, pcs unchanged) to match the raw material's stored inventory unit.
+- **Variant-aware:** For a specific variant, include components where `parent_variant_id === variantId` (variant-specific) plus `parent_variant_id === ""` (shared). For no-variant products, only shared components (`parent_variant_id === ""`).
+- **Helper:** `calcMenuItemCogs(productId, variantId, components, inventory)` — returns `null` if no BOM components exist, otherwise the total COGS as a number. Displays `—` (muted) if null or zero (e.g., raw material has no purchasing history yet).
+- **Interfaces:** `ErpInventory` and `ErpComponent` thin inline interfaces used to avoid importing full DB types.
+- **`bomQtyToStoredUnit(qty, bomUnit)`:** converts BOM qty to the raw material's stored unit (kg→g, L→mL, pcs unchanged).
+
+## 2026-04-10 — Products Screen: COGS Column with Variant Expand
+
+- **Scope:** Added HPP (COGS) column to the Produk tab table in `/app/products` (`ProductsScreen.tsx`).
+- **No-variant products:** COGS cell shows `avg_cogs` from the `inventory` row where `variant_id === ""`. Displays `—` (muted) if zero or no row.
+- **Products with variants:** COGS cell shows a small expand button ("▼ Harga Pokok" / "▲ Harga Pokok"). Clicking it toggles expansion state (`expandedCogsIds` Set) and reveals child rows — one per variant — showing variant name, combined price (base + adjustment), and per-variant `avg_cogs`.
+- **Inventory lookup:** `state.inventory.find(i => i.product_id === p.id && i.variant_id === v.id)` for each variant row.
+- **i18n key:** `copy.dashboard.cogs` — already existed in both EN ("Cost of Goods") and ID ("Harga Pokok"). NOT in `copy.common`.
+- **colspan fix:** Empty-state `<td colSpan>` updated from 6/5 to 7/6 (owner/non-owner) to account for new column.
+- **CSS:** Added `.erp-cogs-variant-row td` (subtle background) and `.erp-cogs-expand-btn` (small font, compact padding) to `erp.css`.
+- **`flatMap` pattern:** `pagedProducts.map(...)` changed to `pagedProducts.flatMap(...)` returning `[mainRow, ...variantRows]` when expanded.
+- **TypeScript:** `npx tsc --noEmit` passes clean.
+
+## 2026-04-10 — Overview Screen Improvement (Period Filter + 5-Stat Branch Cards)
+
+- **Scope:** Rewrote `/app/office/overview` `OverviewScreen.tsx` for richer, period-aware branch performance.
+- **Period filter:** 4 chips (Today / This Week / This Month / This Year) placed inline in the screen header row (`office-overview-header-row`). Uses same `erp-chip-group` / `erp-chip--active` pattern as other screens.
+- **Org-level KPI row:** 5 cards in a single-row grid (`.office-overview-kpi-grid`): Pendapatan, Pembelian, Transaksi, Pelanggan, Perlu Stok. Danger accent on Perlu Stok when count > 0.
+- **Per-branch cards:** Each card now shows 5 stats in a 5-column inner grid (`.office-branch-stats-grid`): Pendapatan, Pembelian, Transaksi, Pelanggan, Perlu Stok. Badge also shows "Tutup" (muted) when no active session.
+- **Data source for period:** `consolidatedTxs` (filtered by range) for revenue/tx/customers; `consolidatedGrItems` (filtered by range) for purchasing spend. `branchSummaries.lowStockCount` is always current snapshot (not period-dependent).
+- **New CSS:** `.office-overview-header-row`, `.office-overview-kpi-grid`, `.office-overview-kpi-card`, `.office-overview-kpi-label`, `.office-overview-kpi-value`, `.office-branch-stats-grid`, `.office-branch-stat-item` — added in `erp.css`. Responsive breakpoints at 1100px (→3-col), 900px (→2-col), 640px (→2-col for KPIs, 2-col for branch stat grid).
+
+## 2026-04-10 — Master Data Linking Dashboard
+
+- **Scope:** Full rewrite of `/app/office/master-data` from a flat product list into a card-based master data linking dashboard.
+- **Concept:** 7 data sets (Customers, Vendors, Raw Materials, Category Raw, Variant Groups, Menu Items, Category Menu) displayed as cards with per-branch toggle switches. Toggle ON = link (copy data from primary → target). Toggle OFF = unlink (delete matching data from target with confirm dialog).
+- **New DB table:** `master_data_links` (`id, organization_id, target_tenant_id, data_type, linked_at`) with unique constraint `(organization_id, target_tenant_id, data_type)`. Migration applied.
+- **New type:** `DbMasterDataLink` in `types.ts`.
+- **Store changes:** `OfficeState` gained `masterDataLinks: DbMasterDataLink[]` and `primaryDataCounts: PrimaryDataCounts` (counts of each data type at primary branch). New reducer actions: `UPSERT_MASTER_DATA_LINK`, `DELETE_MASTER_DATA_LINK`.
+- **Layout fetch:** `office/layout.tsx` now fetches `master_data_links` rows + count queries for products (MENU_ITEM/RAW_MATERIAL), categories (MENU/RAW_MATERIAL), vendors, variant_groups at primary branch. Customers counted from org-scoped data.
+- **New API:** `POST /api/office/master-data-links` with `{ action: "LINK"|"UNLINK", targetTenantId, dataType }`. LINK copies by skip-by-name strategy. UNLINK deletes by name-matching against primary (preserves manually-created branch data). CUSTOMERS are config-only (org-scoped, no copy/delete).
+- **Unlink safety:** Uses name-matching against primary branch to identify what to delete — `sync_status: "SYNCED"` cannot be used as a deletion boundary because ALL rows use it (both locally-created and sync-copied). MENU_ITEMS unlink cascade-deletes variants, product_components, inventory for matched products.
+- **UI:** 2-column card grid (`.office-md-grid`), each card has SVG icon + title + primary branch count + branch list with CSS toggle switches. Confirm dialog on unlink. Spinner during pending operations. Responsive: 1-col on mobile.
+- **CSS:** `.office-md-*` classes added to `erp.css` — grid, card, toggle switch, spinner animation.
+- **Old sync dialog removed.** `POST /api/office/sync-products` still exists but is no longer used by the UI.
+- **TypeScript:** `npx tsc --noEmit` passes clean.
+
+## 2026-04-10 — Office Products → Master Data rename (superseded by linking dashboard above)
+
+## 2026-04-10 — Office Products Screen: Filter UI + Sync Feature
+
+- **Filter bar layout:** chip-style type filter (All/Menu/Bahan Baku) using `.erp-chip-group` + `.erp-chip` (same pattern as InventoryScreen period filter); branch `<select>` right-aligned via `.office-products-filter-bar` (flexbox justify-content: space-between); search input below the filter bar row.
+- **Sync Products dialog:** `SyncDialog` component in same file. User picks what to sync (All/Menu/Raw Material), source branch, and one or more target branches (checkboxes). Calls `POST /api/office/sync-products`.
+- **API route:** `src/app/api/office/sync-products/route.ts` — auth-gated (ERP session cookie, OWNER + organizationId). Copies products + categories + variants + product_components from source to target(s). Skip-by-name strategy: existing products at target are not overwritten. Variant/component IDs remapped. Category created if missing.
+- **CSS added:** `.office-products-filter-bar`, `.office-products-branch-select` in `erp.css`.
+- **TypeScript:** `npx tsc --noEmit` passes clean.
+
+## 2026-04-10 — Office Products Screen Added
+
+- **Scope:** Added "Produk" nav item to Owner Office sidebar and a read-only Products screen at `/app/office/products` (now renamed to `/app/office/master-data`).
+- **New files:**
+  - `src/components/ayakasir/erp/office/screens/ProductsScreen.tsx` — read-only cross-branch product list
+  - `src/app/ayakasir/[locale]/app/office/products/page.tsx` — route page
+- **Changes:**
+  - `OfficeSidebar.tsx`: added `products` entry (between Reports and Inventory) with `ProductsIcon` (shopping bag SVG). Labels: "Produk" (id) / "Products" (en).
+- **Data source:** Uses existing `state.consolidatedProducts` (already fetched in `office/layout.tsx` SSR) — no new DB queries needed.
+- **Screen features:** search by name, filter by product type (All/Menu/Raw Material), filter by branch, pagination (20/page).
+- **Read-only:** no CRUD — office-level product management is future scope. Products are catalog (org-level); this screen is for visibility across branches.
+
+## 2026-04-09 — Office Inventory Report Advanced Upgrade
+
+- **Scope:** Upgraded `/app/office/inventory` from a basic low-stock-only card view to a full inventory analytics dashboard.
+- **Data pipeline changes:**
+  - `OfficeState` (store.tsx) gained 4 new fields: `consolidatedInventory`, `consolidatedMovements`, `consolidatedGrItems`, `consolidatedProducts`.
+  - `office/layout.tsx` SSR now fetches: `inventory` (full snapshot), `inventory_movements` (current year), `goods_receiving` + `goods_receiving_items` (joined for date), `products` (name lookups) — all across org branches.
+- **InventoryScreen KPIs:**
+  - Snapshot section (always current): Total Stock Value (avg COGS-based), Total SKUs, Low Stock count, Out of Stock count.
+  - Period-filtered section: Total Purchasing spend, Stock Movements count, Stock In qty, Waste qty.
+- **Period filter:** Today / This Week / This Month / This Year / Custom date range (same pattern as ReportsScreen).
+- **Tables/sections:**
+  - Low Stock Alerts table (product, branch, stock vs minimum, status badge).
+  - Per-Branch Inventory Breakdown (expandable rows → detail table with per-item stock, COGS, value, status).
+  - Top Wasted Products (period).
+  - Top Purchased Raw Materials (period, by spend).
+  - Stock Movement History (paginated, with type badges and color-coded qty changes).
+- **CSS:** `.office-inv-*` and `.office-report-kpi-card--warning` styles added to `erp.css`.
+- **TypeScript:** `npx tsc --noEmit` passes clean.
+
+## 2026-04-09 — Back Office (`/app/office`): Multi-Branch Refined Design (PLAN ONLY — not implemented)
+
+- **Route:** `/app/office` (owner-only), not `/app/kantor`.
+- **Confirmed design decisions:**
+  - CASHIER belongs to exactly ONE branch (no change from current behavior).
+  - Customers = **org-level** (global): `customers`/`customer_categories` queried by `organization_id`, all branches share the same customer pool.
+  - Products/catalog = **org-level** (shared); Inventory/stock = **per branch** (`tenant_id` scoped, no change).
+  - Branch limit: **3 total** (including primary) for Tumbuh. Mapan = unlimited.
+  - Billing: **single invoice per org**. Plan fields move from `tenants` → `organizations`.
+- **Schema changes:**
+  - New table `organizations` (`id, name, owner_email, plan, plan_started_at, plan_expires_at, sync_status, updated_at, created_at`).
+  - `tenants` gains `organization_id UUID`, `branch_name TEXT`, `is_primary BOOLEAN DEFAULT false`.
+  - `users` gains `organization_id UUID` (OWNER scoped to org; CASHIER has `tenant_id`).
+  - `customers`/`customer_categories` gain `organization_id UUID` for org-level scoping.
+  - Backfill: one org per existing tenant (matched via `owner_email`); set `is_primary = true`; link users via `tenant_id → tenant → org`.
+  - Products remain `tenant_id` scoped to **primary branch tenant** (Option A — no schema change, all branches read same products). Simpler, safer for mobile sync.
+- **Auth:** `ErpSessionPayload` gains optional `organizationId?: string`. Login action populates it from `users.organization_id`. Old sessions without it continue working for per-branch ERP. `/app/office` access requires `role === "OWNER"` + `organizationId` present.
+- **Middleware:** `/app/office` protected — CASHIER redirected to dashboard; unauthenticated to login.
+- **New route group `/app/office/`** (parallel to `(erp)`): layout (OfficeProvider + OfficeSidebar), overview, branches, staff, reports, inventory, customers, settings.
+- **OfficeProvider:** loads aggregates only (BranchSummary per tenant, org users, org customers) via parallel SSR queries. Not full per-branch state.
+- **Branch switcher** in `ErpSidebar` header (OWNER only): dropdown + "Back Office" link → `/app/office/overview`. Switch calls `switchBranchAction(branchId)` → rewrites cookie `tenantId`, redirects to `/app/dashboard`.
+- **Plan gating:** `PLAN_LIMITS` gains `maxBranches` (PERINTIS=1, TUMBUH=3, MAPAN=Infinity). `usePlanLimits` gains `canAccessOffice`, `canCreateBranch`. PERINTIS → redirect to dashboard with upgrade prompt.
+- **Office screens:**
+  - `overview` — per-branch KPI cards (today revenue, tx count, active cashier session, low-stock count) + org totals row.
+  - `branches` — branch CRUD; create provisions new `tenants` row linked to org; plan limit badge (X/3).
+  - `staff` — org-wide user management (all branches); create/edit/reassign branch/deactivate; replaces per-branch User Management for OWNER.
+  - `reports` — multi-branch consolidated: revenue by branch, top products across org, CSV export with `branch_name` column (TUMBUH+ only).
+  - `inventory` — cross-branch stock view grouped by product; read-only (adjustments stay in branch ERP).
+  - `customers` — full CRUD org-wide; transaction history shows branch name per tx.
+  - `settings` — org profile, plan info + usage vs limits, billing placeholder.
+- **Rollout order:** (1) Supabase migration; (2) `types.ts` + `ayakasir-plan.ts`; (3) auth token + login action; (4) middleware guard; (5) `/app/office` routes + OfficeProvider; (6) branch switcher in ErpSidebar; (7) customers repos → org-scoped; (8) remove "Coming Soon" on landing pricing.
+- **Status:** IMPLEMENTED (2026-04-09). See implementation notes below.
+- **Implementation notes:**
+  - `types.ts`: Added `DbOrganization`; `DbTenant` gained `organization_id`, `branch_name`, `is_primary`; `DbUser` gained `organization_id`; `DbCustomer`/`DbCustomerCategory` gained `organization_id`.
+  - `ayakasir-plan.ts`: Added `maxBranches` to `PlanLimits` (PERINTIS=1, TUMBUH=3, MAPAN=Infinity).
+  - `erp-auth-token.ts`: `ErpSessionPayload` gained optional `organizationId`.
+  - `auth.ts`: `loginErpAction` now resolves and sets `organizationId` for OWNER. New `switchBranchAction` rewrites the session cookie `tenantId` after verifying branch belongs to same org.
+  - `middleware.ts`: `/app/office` routes require `role === "OWNER"` + `organizationId` present; CASHIER redirected to dashboard.
+  - `(erp)/layout.tsx`: Fetches `orgBranches` (all org branches) for OWNER with multi-branch plan and passes them to `ErpProvider` via `initialData.orgBranches`.
+  - `store.tsx` (ErpProvider): Added `orgBranches: DbTenant[]` to `ErpState`.
+  - `ErpSidebar.tsx`: OWNER with multi-branch sees branch switcher (dropdown) + "Kantor/Back Office" link (OfficeIcon). `switchBranchAction` called on select change.
+  - `usePlanLimits.ts`: Added `canAccessOffice` (`maxBranches > 1`) and `canCreateBranch` (`orgBranches.length < maxBranches`).
+  - `/app/office/` route group: `layout.tsx` (SSR fetches org + branches + users + customers + per-branch summaries; guards PERINTIS away), `page.tsx` (redirect to overview), 7 sub-pages (overview/branches/staff/reports/inventory/customers/settings).
+  - `office/store.tsx`: `OfficeProvider` + `useOffice` — lightweight state (organization, branches, orgUsers, orgCustomers, orgCustomerCategories, branchSummaries, activeTenantId).
+  - `office/OfficeSidebar.tsx`: Mirrors ErpSidebar but with Office nav items + "Ke Kasir/To Cashier" back link.
+  - `erp.css`: All `.office-*` classes added at the end of the file.
+  - `CustomersScreen.tsx` + `PosScreen.tsx`: Added `organization_id: null` to `createCustomer` calls (TS required field).
+  - Supabase migration SQL NOT yet applied — requires manual execution in Supabase dashboard.
+
+## 2026-04-09 — Office Staff Page: Limit enforcement + terminology + responsiveness
+
+- **Term change:** `kasir/cashiers` → `karyawan/staff` in `erp-screen-subtitle`.
+- **Org-wide limit:** `canAddStaff = orgStaffTotal < maxStaffPerBranch * totalBranches`. All CASHIER users (including unassigned ones) count toward the total. Button is disabled + shows tooltip when limit is hit.
+- **Per-branch limit in dialog:** Branch `<option>` is `disabled` when `staffPerBranch[b.id] >= maxStaffPerBranch` (unless editing the same branch). Branch label shows current count `(X/Y)`. `handleSave` also validates the target branch hasn't hit its limit (guards against moving a staff to a full branch).
+- **Responsive CSS:** Added `.erp-screen`, `.erp-screen-header`, `.erp-screen-title`, `.erp-screen-subtitle` to `erp.css` (were used but undefined). Added `@media (max-width: 640px)` breakpoint: header stacks vertically, stat cards go single-column, table collapses to labeled row-per-field layout using `data-label` attrs + CSS `::before`.
+- **Files changed:** `src/components/ayakasir/erp/office/screens/StaffScreen.tsx`, `src/app/ayakasir/[locale]/app/erp.css`.
+
+## 2026-04-09 — Office Staff: Delete staff with owner password confirmation
+
+- **Flow:** Edit dialog → "Hapus karyawan ini" link → confirm step (warning text + password input) → "Hapus Permanen" button.
+- **Delete step state:** `deleteStep: "idle" | "confirm"` inside dialog; resets on `closeDialog()`.
+- **Auth:** New `verifyOwnerPasswordAction(password)` server action in `auth.ts` — fetches owner's `password_hash/password_salt` from `users` table and calls `verifyPassword()`. Returns `{ ok: false }` on mismatch.
+- **Delete action:** Existing `deleteTenantUserAction(userId)` reused — requires `role === "OWNER"` session, refuses self-delete.
+- **Optimistic local update:** `dispatch({ type: "DELETE_USER", id })` before `router.refresh()` so the table updates immediately.
+- **Save button** is disabled while `deleteStep === "confirm"` to prevent accidental saves during delete flow.
+- **Files changed:** `src/components/ayakasir/erp/office/screens/StaffScreen.tsx`, `src/app/ayakasir/actions/auth.ts`.
+
+## 2026-04-09 — Office Branches: Staff assignment ghost bug fix
+
+- **Bug:** Editing a branch and replacing all staff (e.g., Anton+Budi → Cindy+Desi) would leave the old staff still assigned to the branch, resulting in 4 staff instead of 2.
+- **Root cause:** The old client-side diff used `state.orgUsers` (SSR snapshot) to compute `prevIds`. If staff were assigned outside the current Office session (e.g., from the ERP Settings screen), the local state didn't reflect them — so `removedIds` was empty and no unassignment happened.
+- **Fix:** New `syncBranchStaffAction(branchId, newStaffIds[])` server action in `auth.ts` that fetches current staff from DB fresh, diffs against the new list, bulk-unassigns removed staff → `tenant_id = null` (no branch), bulk-assigns new staff → target branch. Returns `{ unassignedIds, assignedIds }` for local state dispatch.
+- **Client change:** `BranchesScreen.tsx` now calls `syncBranchStaffAction` once (replaces the multi-step `assignStaffToBranchAction` + manual diff). Local state is updated from the server's returned diff, not from stale React state.
+- **Files changed:** `src/app/ayakasir/actions/auth.ts`, `src/components/ayakasir/erp/office/screens/BranchesScreen.tsx`.
+
 ## 2026-03-25 — Inventory: Purchasing total vs Inventory value discrepancy (Rp7,500 gap)
 
 - **Root cause:** `avg_cogs` (BIGINT) is stored as `Math.round(weightedAvg)`. When a raw material has **multiple receivings**, the weighted-average produces a fractional per-unit cost that gets truncated by rounding. The cumulative stock value (`current_qty × avg_cogs`) then diverges from the true total cost (sum of all `qty × cost_per_unit` from goods_receiving_items).
@@ -1295,3 +1564,91 @@
 - **Fix:** Always use `e.user_id` (the ledger entry's own user field) as the sole lookup key — it's the authoritative record of who performed that specific action.
 - **File changed:** `src/components/ayakasir/erp/screens/SettingsScreen.tsx`
 
+## 2026-04-09 — Office Reports: Advanced consolidated KPI dashboard
+
+- **Context:** The `/office/reports` page was a minimal table showing today-only revenue per branch. Owner needed richer KPIs with time filtering.
+- **Changes:**
+  - **Store** (`office/store.tsx`): Added `ConsolidatedTx` and `ConsolidatedTxItem` types, plus `consolidatedTxs` and `consolidatedTxItems` arrays to `OfficeState`.
+  - **Layout** (`office/layout.tsx`): Fetches current-year COMPLETED transactions (id, tenant_id, date, total, payment_method, debt_status, customer_id) and transaction_items (product_name, variant_name, qty, subtotal) across all branches server-side.
+  - **ReportsScreen** (`office/screens/ReportsScreen.tsx`): Full rewrite with period filter (Today/Week/Month/Year/Custom date), KPI cards (total revenue with vs-prev-period %, total transactions, avg transaction value, unique customers, unpaid debts all-time), payment method breakdown with visual bars, revenue-by-branch table (with avg tx, shift status, low stock), top 10 products table.
+  - **CSS** (`erp.css`): `.office-report-*` classes for KPI grid, payment breakdown bars, date range picker, responsive breakpoints.
+- **Data strategy:** Server-side fetches year's transactions in layout → passed as initialData → client-side filtering by period. No additional API calls needed per period change.
+- **TypeScript:** `tsc --noEmit` passes clean.
+
+## 2026-04-09 — Office Customers: Search Gap + Pagination
+
+- **File:** `src/components/ayakasir/erp/office/screens/CustomersScreen.tsx`
+- **Changes:**
+  - Added `marginTop: 16` inline style on `.erp-card` to create a visual gap between the search bar and the customer table.
+  - Added pagination (10 rows/page) using `PAGE_SIZE = 10`, `page` state, and existing `.erp-table-pagination` / `.erp-table-pagination-info` CSS classes.
+  - Search resets page to 0 via `handleSearch()`.
+  - Pagination controls (‹ / ›) only render when `totalPages > 1`.
+
+## 2026-04-09 — ERP ↔ Office Navigation Sync Fixes
+
+- **Issue 1 — Office changes not reflected when returning to Kasir:**
+  - Root cause: `(erp)/layout.tsx` SSR result is RSC-cached by Next.js. Navigating Office → Kasir within the same tab doesn't re-run SSR, so `ErpProvider` gets stale `initialData`. The `reconcileRef` window-focus handler only fires if the tab was blurred, which doesn't happen for in-app navigation.
+  - Fix: Added `router.refresh()` alongside `router.push()` in `OfficeSidebar`'s "Ke Kasir" click handler to invalidate the RSC cache on every back-navigation.
+  - File: `src/components/ayakasir/erp/office/OfficeSidebar.tsx`
+
+- **Issue 2 — Branch switcher (Cabang Aktif) not responding:**
+  - Root cause: `switchBranchAction` updates the session cookie, but `router.push() + router.refresh()` races — the refresh can resolve before the push navigation completes, so the new page still gets SSR'd with the old cookie.
+  - Fix: Replaced `router.push() + router.refresh()` with `window.location.href = ...` (hard navigation), which guarantees the browser sends the updated cookie and SSR re-runs with the new `tenantId`.
+  - File: `src/components/ayakasir/erp/ErpSidebar.tsx`
+
+
+## 2026-04-10 — Overview Unduh Data: CSV → Single XLSX (3 Sheets)
+
+- **Scope:** Replaced 4 separate CSV downloads in `/office/overview` with a single `.xlsx` file containing 3 sheets.
+- **Library:** Installed `xlsx` (SheetJS) — `npm install xlsx`. Import as `import * as XLSX from "xlsx"` in the client component.
+- **Helper:** `downloadXlsx(filename, sheets)` — uses `XLSX.utils.aoa_to_sheet` (array-of-arrays) + `XLSX.utils.book_append_sheet` + `XLSX.writeFile`.
+- **Sheet 1 — Penjualan:** One row per transaction item. Columns: Date, Branch, Tx ID, Payment Method, Product, Variant, Qty, Unit Price, Subtotal, COGS Item, Net Item.
+- **Sheet 2 — Inventori:** Three sections separated by blank rows and section label rows: (A) Goods Receiving detail, (B) Stock Adjustments/Movements detail, (C) Current Stock Snapshot.
+- **Sheet 3 — Analisa Transaksi:** One row per transaction with pre-computed per-tx COGS (summed from filteredTxItems). Columns: Date, Branch, Tx ID, Customer, Payment Method, Total, COGS, Net Revenue, Debt Status.
+- **Removed:** `escapeCsvCell`, `buildCsvRows`, `downloadCsv` helpers — no longer needed.
+- **Type note:** `ConsolidatedGoodsReceivingItem` has no `variant_name` field — use `productName(tenantId, variant_id)` with !== guard for the variant column (same as original code).
+- **Filename pattern:** `ringkasan_{period}_{YYYY-MM-DD}.xlsx`
+
+## 2026-04-10 — Historical COGS in Overview XLSX Export
+
+- **Problem:** `computeItemCogs` was using `invMap` (latest inventory snapshot) for all COGS calculations, so COGS in the XLSX reflected today's avg_cogs, not the value at time of sale.
+- **DB limitation:** `transaction_items` has no COGS column; `inventory_movements` has no avg_cogs snapshot. Historical COGS is not stored at sale time. The mobile app would need a schema change to fix this properly.
+- **Solution (web-only approximation):** Reconstruct historical avg_cogs timeline per `(tenantId, productId, variantId)` by replaying `consolidatedGrItems` in chronological order using the weighted-average formula. Stored as `historicalCogsMap: Map<key, [{date, avg_cogs, qty}]>` (ascending).
+- **Lookup:** `getHistoricalAvgCogs(tenantId, productId, variantId, atDate)` — binary search for last checkpoint with `date <= atDate`. Falls back to `invMap` (latest snapshot) when no GR history exists for that component.
+- **`computeItemCogs` signature:** Added optional `atDate?: number` param. When provided, uses historical lookup; when omitted, uses latest snapshot (backwards compatible).
+- **Applied to:** `orgCogs`, `branchStats.cogsMap`, Sheet 1 (Penjualan item rows), Sheet 3 (Analisa Transaksi per-tx COGS pre-compute). All use `txDateMap.get(item.transaction_id)` as `atDate`.
+- **`txDateMap` scope:** Moved from inside `handleExportCsv` to component level (as a `useMemo`) so it can be shared by on-screen KPI calculations.
+- **Data coverage:** GR headers are only loaded for the current year (`gte date yearStart`) in `office/layout.tsx`, so historical reconstruction is limited to current-year receivings. Transactions from prior years fall back to latest snapshot.
+
+## 2026-04-11 — Settings Screen: Cetak blank page + Staff disappear on edit
+
+### Bug 1: Cetak (Print) returns blank page
+- **Root cause:** `handlePrintReport` called `window.print()` directly. The CSS rule `body > * { display: none !important }` hides the Next.js root div (`#__next`), which contains the `.erp-overlay`. The overlay is NOT a direct child of `<body>`, so it's hidden along with everything else. Nothing visible to print.
+- **Fix:** `handlePrintReport` now opens a new window (`window.open("", "_blank")`) with the same HTML used by `handleDownloadReport`, plus `window.onload = function() { window.print(); }` to auto-trigger print. No more reliance on page-level CSS.
+
+### Bug 2: Staff list disappears after editing a user
+- **Root cause:** After a successful `upsertTenantUserAction`, the code re-fetched users with the **browser anon-key Supabase client** (`supabase.from("users").select("*")`). Supabase RLS on the `users` table likely restricts the browser client from reading other users' rows (returns only the owner's own row or empty). `SET_ALL` then replaced `state.tenantUsers` with this partial result.
+- **Fix:** Removed the re-fetch entirely. Instead, construct the updated `DbUser` object from `editingUser` (merge with form values) for edits, or build a new row using `result.userId` for creates. Dispatch `{ type: "UPSERT", table: "tenantUsers", payload: updatedUser }` — same pattern as `handleDeleteUser`.
+- **Note for new user create:** `pin_hash`, `pin_salt`, `password_hash`, `password_salt` are set to empty/null placeholders in local state (correct values are in DB). These fields are not shown in UI; Realtime will eventually sync the real row.
+
+## 2026-04-11 — Settings: Manajemen User blank on navigation + Role/Jabatan cleanup
+
+### Bug 1: Manajemen User section blank after navigating to /settings
+- **Root cause:** The `reconcileRef` in `store.tsx` fires on every `window focus` event and re-fetches all tables using the **browser anon-key Supabase client**. RLS blocks this client from reading `users` rows (other than the current user), so `tenantUsers.data` returns empty/partial. `SET_ALL` then replaced `state.tenantUsers` with this empty array, wiping the SSR-loaded list.
+- **Fix:** Removed `users` from the `reconcileRef` Promise.all in `store.tsx` and removed `tenantUsers` from the `SET_ALL` dispatch payload. `tenantUsers` is now managed exclusively via: SSR initial load (admin client, bypasses RLS) + `UPSERT`/`DELETE` dispatches from mutations + Realtime Postgres Changes events.
+- **Key rule:** Never re-fetch `users` table with the browser anon client — it will always return restricted results due to RLS.
+
+### Improvement 2: Replace Role with Jabatan in Manajemen User UI
+- **Change:** Removed the Role dropdown (`OWNER`/`CASHIER`) from the Add/Edit User dialog. The system `role` field is now invisible to the owner — it's preserved from `editingUser.role` on edit, and defaults to `CASHIER` on create (since owners can only add staff, not other owners). Feature access section still uses `userForm.role` to conditionally render.
+- **Table column:** Replaced the Role badge column with Jabatan (`u.job_title`). Role was redundant because all staff are CASHIER and the owner sees their own row too.
+- **i18n:** Table header now uses `copy.settings.userJobTitle` instead of `copy.settings.userRole`.
+
+## 2026-04-11 — Landing Page: Pricing section overhaul
+
+- **Removed "Segera Hadir" badges** from Tumbuh's "3 Cabang" and "Konsol Back Office" features (both now live).
+- **Mapan features simplified:** replaced exhaustive bullet list with 6 concise points: Semua fitur Tumbuh tanpa batasan / Request fitur 1x per tahun* / Payment Gateway (Segera Hadir) / Prioritas penanganan kendala / Pelatihan penggunaan / Setup oleh tim developer. Footnote for conditional request feature.
+- **Strikethrough pricing added:** new `originalPrice` field in plan type, rendered as struck-through text above current price. Tumbuh: Rp49.900 → Rp29.900 (Hemat 40%). Mapan: Rp59.900 → Rp19.900/cabang/bulan (Hemat 67%).
+- **Mapan price changed** from "Custom" to `Rp19.900` with `priceSuffix: "/ cabang / bulan"`. CTA link still goes to WhatsApp.
+- **Psychological hooks:** `promoHook` field added per plan — shown as orange inline badge below price. Tumbuh: "Promo terbatas — amankan sekarang". Mapan: "Harga founding — sebelum naik".
+- **CSS added to globals.css:** `.ayakasir-pricing-price-block`, `.ayakasir-pricing-original-row`, `.ayakasir-pricing-original` (strikethrough), `.ayakasir-pricing-discount-badge` (red pill), `.ayakasir-pricing-promo` repurposed for urgency hook (orange), `.ayakasir-pricing-promo-secondary` for "Coba Gratis 3 Bulan" (green), `.ayakasir-pricing-footnote`.
+- **Type changes in `AyaKasirCopy`:** plan shape extended with `originalPrice?`, `discountBadge?`, `priceSuffix?`, `promoHook?`, `footnote?`.

@@ -27,6 +27,15 @@ const ALL_FEATURES = ["POS", "DASHBOARD", "MENU", "INVENTORY", "PURCHASING", "CU
 type UserFeature = typeof ALL_FEATURES[number];
 const DEFAULT_CASHIER_FEATURES: UserFeature[] = ["POS", "INVENTORY"];
 
+const JOB_TITLES = [
+  "Store Manager",
+  "Supervisor",
+  "Waiter",
+  "Kitchen",
+  "Cashier",
+  "General Staff",
+] as const;
+
 function parseFeatureAccess(raw: string | null | undefined): UserFeature[] {
   if (!raw) return [];
   return raw.split(",").map((s) => s.trim()).filter((s): s is UserFeature => (ALL_FEATURES as readonly string[]).includes(s));
@@ -363,7 +372,81 @@ export default function SettingsScreen() {
   };
 
   const handlePrintReport = () => {
-    window.print();
+    const s = frozenSummary ?? closeCashierSummary;
+    const matchText = closeMatch === true
+      ? copy.settings.matchYes
+      : closeMatch === false
+      ? `${copy.settings.matchNo}${closeMismatchNote ? ` — ${closeMismatchNote}` : ""}`
+      : "—";
+
+    const methodOrder: Array<["CASH" | "QRIS" | "TRANSFER" | "UTANG", string]> = [
+      ["CASH", copy.pos.cash],
+      ["QRIS", copy.pos.qris],
+      ["TRANSFER", copy.pos.transfer],
+      ["UTANG", copy.pos.utang],
+    ];
+    const methodRows = methodOrder
+      .map(([key, label]) => {
+        const amt = s.byMethod[key] ?? 0;
+        const style = key === "UTANG" ? ' style="color:red;text-align:right"' : ' style="text-align:right"';
+        return `      <tr><td>${label}</td><td${style}>${formatRupiah(amt)}</td></tr>`;
+      })
+      .join("\n");
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>${copy.settings.closeCashierReport}</title>
+  <style>
+    body { font-family: 'Courier New', monospace; font-size: 13px; padding: 32px; max-width: 480px; margin: 0 auto; }
+    h2 { text-align: center; margin-bottom: 4px; }
+    .sub { text-align: center; color: #666; margin-bottom: 24px; font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+    td { padding: 6px 4px; border-bottom: 1px solid #eee; font-size: 13px; }
+    td:last-child { text-align: right; }
+    .section { font-weight: bold; padding: 10px 4px 4px; border-top: 2px solid #000; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; }
+    .total td { font-weight: bold; border-top: 2px solid #000; }
+    .match { margin-top: 20px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+    .match-label { font-weight: bold; margin-bottom: 4px; }
+    @media print { body { padding: 0; } }
+  </style>
+</head>
+<body>
+  <h2>${state.restaurant?.name || "AyaKasir"}</h2>
+  <p class="sub">${copy.settings.closeCashierReport}</p>
+  <table>
+    <tr><td>${copy.settings.closeTime}</td><td>${formatDateTime(s.closeTime, locale)}</td></tr>
+    <tr><td>${copy.settings.cashierInCharge}</td><td>${s.cashier}</td></tr>
+    <tr><td>${copy.settings.totalTransactions}</td><td>${s.totalTransactions}</td></tr>
+  </table>
+  <table>
+    <tr><td class="section" colspan="2">${copy.settings.paymentBreakdown}</td></tr>
+    ${methodRows}
+    <tr class="total"><td>${copy.settings.totalSales}</td><td>${formatRupiah(s.totalSales)}</td></tr>
+  </table>
+  <table>
+    <tr><td class="section" colspan="2">${copy.settings.cashBalanceSection}</td></tr>
+    <tr><td>${copy.settings.openingBalance}</td><td>${formatRupiah(s.openingBalance)}</td></tr>
+    <tr><td>${copy.dashboard.cashSales}</td><td>${formatRupiah((s as { cashSales?: number }).cashSales ?? 0)}</td></tr>
+    <tr><td>${copy.settings.debtSettlement}</td><td>${formatRupiah((s as { debtSettlements?: number }).debtSettlements ?? 0)}</td></tr>
+    <tr><td>${copy.dashboard.cashWithdrawal}</td><td>&#8722;${formatRupiah((s as { withdrawalAmount?: number }).withdrawalAmount ?? 0)}</td></tr>
+    <tr class="total"><td>${copy.settings.closingBalance}</td><td>${formatRupiah(s.closingBalance)}</td></tr>
+    ${(s as { cashEmptied?: boolean }).cashEmptied ? `<tr><td colspan="2" style="color:#b45309;font-style:italic;font-size:12px">${copy.settings.cashEmptiedNote}</td></tr>` : ""}
+  </table>
+  <div class="match">
+    <div class="match-label">${copy.settings.matchQuestion}</div>
+    <div>${matchText}</div>
+  </div>
+  <script>window.onload = function() { window.print(); };<\/script>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank");
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+    }
   };
 
   // ── Change password ──────────────────────────────────────────
@@ -426,7 +509,9 @@ export default function SettingsScreen() {
     email: "",
     phone: "",
     role: "CASHIER" as "OWNER" | "CASHIER",
+    jobTitle: "",
     password: "",
+    pin: "",
     isActive: true,
     featureAccess: DEFAULT_CASHIER_FEATURES as UserFeature[],
   });
@@ -434,7 +519,7 @@ export default function SettingsScreen() {
 
   const openAddUser = () => {
     setEditingUser(null);
-    setUserForm({ name: "", email: "", phone: "", role: "CASHIER", password: "", isActive: true, featureAccess: DEFAULT_CASHIER_FEATURES });
+    setUserForm({ name: "", email: "", phone: "", role: "CASHIER", jobTitle: "", password: "", pin: "", isActive: true, featureAccess: DEFAULT_CASHIER_FEATURES });
     setShowUserDialog(true);
   };
 
@@ -445,7 +530,9 @@ export default function SettingsScreen() {
       email: u.email || "",
       phone: u.phone || "",
       role: u.role,
+      jobTitle: u.job_title || "",
       password: "",
+      pin: "",
       isActive: u.is_active,
       featureAccess: parseFeatureAccess(u.feature_access),
     });
@@ -560,8 +647,15 @@ export default function SettingsScreen() {
       alert(copy.plan.limitReached);
       return;
     }
-    // Email validation
-    if (userForm.email && !userForm.email.includes("@")) {
+    // Email required + format validation
+    if (!userForm.email.trim()) {
+      setMessage({
+        type: "error",
+        text: locale === "id" ? "Email wajib diisi." : "Email is required.",
+      });
+      return;
+    }
+    if (!userForm.email.includes("@")) {
       setMessage({
         type: "error",
         text: locale === "id" ? "Format email tidak valid." : "Invalid email format.",
@@ -580,7 +674,9 @@ export default function SettingsScreen() {
         email: userForm.email,
         phone: userForm.phone,
         role: userForm.role,
+        jobTitle: userForm.jobTitle || undefined,
         password: userForm.password || undefined,
+        pin: userForm.pin || undefined,
         isActive: userForm.isActive,
         featureAccess: featureAccessStr,
         tenantId,
@@ -590,15 +686,41 @@ export default function SettingsScreen() {
         setSaving(false);
         return;
       }
-      // Re-fetch tenant users for instant UI update
-      const { data: refreshed } = await supabase
-        .from("users")
-        .select("*")
-        .eq("tenant_id", tenantId)
-        .order("name");
-      if (refreshed) {
-        dispatch({ type: "SET_ALL", payload: { tenantUsers: refreshed as DbUser[] } });
-      }
+      // Update local state without re-fetching (browser client RLS may not see all users)
+      const now = Date.now();
+      const updatedUser: DbUser = editingUser
+        ? {
+            ...editingUser,
+            name: userForm.name.trim(),
+            email: userForm.email.trim().toLowerCase() || null,
+            phone: userForm.phone.trim() || null,
+            role: userForm.role,
+            job_title: userForm.jobTitle?.trim() ?? "",
+            is_active: userForm.isActive,
+            feature_access: featureAccessStr,
+            sync_status: "SYNCED",
+            updated_at: now,
+          }
+        : {
+            id: result.userId!,
+            name: userForm.name.trim(),
+            email: userForm.email.trim().toLowerCase() || null,
+            phone: userForm.phone.trim() || null,
+            pin_hash: "",
+            pin_salt: "",
+            password_hash: null,
+            password_salt: null,
+            role: userForm.role,
+            job_title: userForm.jobTitle?.trim() ?? "",
+            tenant_id: tenantId,
+            organization_id: null,
+            is_active: userForm.isActive,
+            feature_access: featureAccessStr,
+            sync_status: "SYNCED",
+            updated_at: now,
+            created_at: now,
+          };
+      dispatch({ type: "UPSERT", table: "tenantUsers", payload: updatedUser as unknown as Record<string, unknown> });
       setShowUserDialog(false);
       setMessage({ type: "success", text: copy.common.success });
     } catch {
@@ -964,7 +1086,7 @@ export default function SettingsScreen() {
                 <tr>
                   <th>{copy.settings.userName}</th>
                   <th>Email</th>
-                  <th>{copy.settings.userRole}</th>
+                  <th>{copy.settings.userJobTitle}</th>
                   <th>{copy.settings.userActive}</th>
                   <th>{copy.common.actions}</th>
                 </tr>
@@ -974,10 +1096,8 @@ export default function SettingsScreen() {
                   <tr key={u.id}>
                     <td>{u.name}</td>
                     <td style={{ color: "var(--erp-muted)" }}>{u.email || "—"}</td>
-                    <td>
-                      <span className={`erp-badge ${u.role === "OWNER" ? "erp-badge--info" : "erp-badge--success"}`}>
-                        {u.role}
-                      </span>
+                    <td style={{ color: "var(--erp-muted)" }}>
+                      {u.role === "OWNER" ? (locale === "id" ? "Owner" : "Owner") : (u.job_title || "—")}
                     </td>
                     <td>
                       <span className={`erp-badge ${u.is_active ? "erp-badge--success" : "erp-badge--muted"}`}>
@@ -1257,22 +1377,21 @@ export default function SettingsScreen() {
                 />
               </div>
               <div className="erp-input-group">
-                <label className="erp-label">{copy.settings.userRole}</label>
-                <select
-                  className="erp-input"
-                  value={userForm.role}
-                  onChange={(e) => {
-                    const role = e.target.value as "OWNER" | "CASHIER";
-                    setUserForm((f) => ({
-                      ...f,
-                      role,
-                      featureAccess: role === "CASHIER" ? (f.featureAccess.length ? f.featureAccess : DEFAULT_CASHIER_FEATURES) : [],
-                    }));
-                  }}
-                >
-                  <option value="CASHIER">CASHIER</option>
-                  <option value="OWNER">OWNER</option>
-                </select>
+                <label className="erp-label">{copy.settings.userJobTitle}</label>
+                {userForm.role === "OWNER" ? (
+                  <input className="erp-input" type="text" value="Owner" disabled />
+                ) : (
+                  <select
+                    className="erp-input"
+                    value={userForm.jobTitle}
+                    onChange={(e) => setUserForm((f) => ({ ...f, jobTitle: e.target.value }))}
+                  >
+                    <option value="">{locale === "id" ? "— Pilih jabatan —" : "— Select job title —"}</option>
+                    {JOB_TITLES.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                )}
               </div>
               <div className="erp-input-group">
                 <label className="erp-label">
@@ -1290,6 +1409,26 @@ export default function SettingsScreen() {
                   onChange={(e) => setUserForm((f) => ({ ...f, password: e.target.value }))}
                   minLength={6}
                   placeholder={editingUser ? "••••••" : ""}
+                  autoComplete="new-password"
+                />
+              </div>
+              <div className="erp-input-group">
+                <label className="erp-label">
+                  {copy.settings.userPin}
+                  {editingUser && (
+                    <span style={{ fontSize: 12, color: "var(--erp-muted)", marginLeft: 8 }}>
+                      ({copy.settings.userPinHint})
+                    </span>
+                  )}
+                </label>
+                <input
+                  className="erp-input"
+                  type="password"
+                  inputMode="numeric"
+                  value={userForm.pin}
+                  onChange={(e) => setUserForm((f) => ({ ...f, pin: e.target.value.replace(/\D/g, "").slice(0, 6) }))}
+                  maxLength={6}
+                  placeholder={editingUser ? "••••••" : "6 digit"}
                   autoComplete="new-password"
                 />
               </div>
@@ -1345,7 +1484,7 @@ export default function SettingsScreen() {
               <button
                 className="erp-btn erp-btn--primary"
                 onClick={handleSaveUser}
-                disabled={saving || !userForm.name.trim() || (!editingUser && userForm.password.length < 6)}
+                disabled={saving || !userForm.name.trim() || (!editingUser && (userForm.password.length < 6 || userForm.pin.length !== 6))}
               >
                 {saving ? copy.common.loading : copy.common.save}
               </button>

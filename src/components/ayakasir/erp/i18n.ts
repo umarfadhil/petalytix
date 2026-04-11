@@ -33,6 +33,7 @@ export interface ErpCopy {
     utangTotal: string;
     rowsPerPage: string;
     cogs: string;
+    cogsTooltip: string;
     cashFlowDetails: string;
     cashFlowIn: string;
     cashFlowOut: string;
@@ -324,8 +325,11 @@ export interface ErpCopy {
     userEmail: string;
     userPhone: string;
     userRole: string;
+    userJobTitle: string;
     userPassword: string;
     userPasswordHint: string;
+    userPin: string;
+    userPinHint: string;
     userActive: string;
     noUsers: string;
     featureAccess: string;
@@ -557,6 +561,7 @@ const en: ErpCopy = {
     utangTotal: "Unpaid Debt (UTANG)",
     rowsPerPage: "Rows",
     cogs: "Cost of Goods",
+    cogsTooltip: "Calculated from the Bill of Materials (BOM): each raw material needed × its average purchase cost (avg. COGS). The current figure reflects the latest purchase prices recorded in Purchasing.",
     cashFlowDetails: "Cash Flow Details",
     cashFlowIn: "Total In",
     cashFlowOut: "Total Out",
@@ -852,8 +857,11 @@ const en: ErpCopy = {
     userEmail: "Email",
     userPhone: "Phone",
     userRole: "Role",
+    userJobTitle: "Job Title",
     userPassword: "Password",
     userPasswordHint: "Leave blank to keep current password.",
+    userPin: "PIN (6 digits)",
+    userPinHint: "Leave blank to keep current PIN.",
     userActive: "Active",
     noUsers: "No users yet",
     featureAccess: "Feature Access",
@@ -1085,6 +1093,7 @@ const id: ErpCopy = {
     utangTotal: "Utang Belum Lunas",
     rowsPerPage: "Baris",
     cogs: "Harga Pokok",
+    cogsTooltip: "Dihitung dari Resep Produk (BOM): setiap bahan baku yang dibutuhkan × rata-rata harga belinya (avg. HPP). Angka ini mencerminkan harga pembelian terkini yang tercatat di Pembelian.",
     cashFlowDetails: "Detail Arus Kas",
     cashFlowIn: "Total Masuk",
     cashFlowOut: "Total Keluar",
@@ -1380,8 +1389,11 @@ const id: ErpCopy = {
     userEmail: "Email",
     userPhone: "Telepon",
     userRole: "Role",
+    userJobTitle: "Jabatan",
     userPassword: "Password",
     userPasswordHint: "Kosongkan untuk mempertahankan password saat ini.",
+    userPin: "PIN (6 digit)",
+    userPinHint: "Kosongkan untuk mempertahankan PIN saat ini.",
     userActive: "Aktif",
     noUsers: "Belum ada user",
     featureAccess: "Akses Fitur",

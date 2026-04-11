@@ -39,6 +39,8 @@ export interface ErpState {
   cashierSessions: DbCashierSession[];
   variantGroups: DbVariantGroup[];
   variantGroupValues: DbVariantGroupValue[];
+  // Multi-branch: org branches visible to OWNER for branch switcher
+  orgBranches: DbTenant[];
   // Pagination metadata
   dataWindowStart: number; // ms timestamp — rows with date < this were not loaded initially
   olderDataLoaded: boolean; // true once all-time data has been fetched and merged
@@ -68,6 +70,7 @@ export const EMPTY_STATE: ErpState = {
   cashierSessions: [],
   variantGroups: [],
   variantGroupValues: [],
+  orgBranches: [],
   dataWindowStart: 0,
   olderDataLoaded: false,
   realtimeStatus: "CONNECTING" as RealtimeStatus,
@@ -206,11 +209,12 @@ export function useErp() {
 interface ErpProviderProps {
   children: React.ReactNode;
   tenantId: string;
+  organizationId?: string;
   locale: string;
   initialData: Partial<ErpState>;
 }
 
-export function ErpProvider({ children, tenantId, locale, initialData }: ErpProviderProps) {
+export function ErpProvider({ children, tenantId, organizationId, locale, initialData }: ErpProviderProps) {
   const [state, dispatch] = useReducer(erpReducer, { ...EMPTY_STATE, ...initialData });
   const supabase = useMemo(() => createBrowserClient(), []);
 
@@ -294,9 +298,12 @@ export function ErpProvider({ children, tenantId, locale, initialData }: ErpProv
   reconcileRef.current = async () => {
     try {
       const windowStart = Date.now() - 90 * 24 * 60 * 60 * 1000;
+      // Note: tenantUsers is intentionally excluded — the browser anon client is restricted by RLS
+      // and cannot reliably read all users rows. tenantUsers is managed via SSR initial load,
+      // UPSERT/DELETE dispatches, and Realtime. Reconcile should not overwrite it.
       const [
         categories, products, variants, inventory, productComponents,
-        vendors, customers, customerCategories, tenantUsers,
+        vendors, customersLinkCheck, customers, customerCategories,
         variantGroups, variantGroupValues,
         goodsReceivings, transactions, cashWithdrawals,
         generalLedger, inventoryMovements, cashierSessions,
@@ -308,9 +315,11 @@ export function ErpProvider({ children, tenantId, locale, initialData }: ErpProv
         supabase.from("inventory").select("*").eq("tenant_id", tenantId),
         supabase.from("product_components").select("*").eq("tenant_id", tenantId).order("sort_order"),
         supabase.from("vendors").select("*").eq("tenant_id", tenantId).order("name"),
+        organizationId
+          ? supabase.from("master_data_links").select("id").eq("target_tenant_id", tenantId).eq("data_type", "CUSTOMERS").limit(1)
+          : Promise.resolve({ data: [] }),
         supabase.from("customers").select("*").eq("tenant_id", tenantId).order("name"),
         supabase.from("customer_categories").select("*").eq("tenant_id", tenantId).order("name"),
-        supabase.from("users").select("*").eq("tenant_id", tenantId).order("name"),
         supabase.from("variant_groups").select("*").eq("tenant_id", tenantId).order("name"),
         supabase.from("variant_group_values").select("*").eq("tenant_id", tenantId).order("sort_order"),
         supabase.from("goods_receiving").select("*").eq("tenant_id", tenantId).gte("date", windowStart).order("date", { ascending: false }),
@@ -321,6 +330,23 @@ export function ErpProvider({ children, tenantId, locale, initialData }: ErpProv
         supabase.from("cashier_sessions").select("*").eq("tenant_id", tenantId).gte("opened_at", windowStart).order("opened_at", { ascending: false }),
         supabase.from("tenants").select("*").eq("id", tenantId).single(),
       ]);
+
+      // If CUSTOMERS link active, also load org-scoped customers and merge
+      let mergedCustomers = customers.data || [];
+      let mergedCustCats = customerCategories.data || [];
+      const customersLinked = organizationId && (customersLinkCheck.data || []).length > 0;
+      if (customersLinked) {
+        const [orgCustRes, orgCatRes] = await Promise.all([
+          supabase.from("customers").select("*").eq("organization_id", organizationId).order("name"),
+          supabase.from("customer_categories").select("*").eq("organization_id", organizationId).order("name"),
+        ]);
+        const custMap = new Map<string, unknown>();
+        for (const c of [...mergedCustomers, ...(orgCustRes.data || [])]) custMap.set((c as { id: string }).id, c);
+        const catMap = new Map<string, unknown>();
+        for (const c of [...mergedCustCats, ...(orgCatRes.data || [])]) catMap.set((c as { id: string }).id, c);
+        mergedCustomers = Array.from(custMap.values()) as typeof mergedCustomers;
+        mergedCustCats = Array.from(catMap.values()) as typeof mergedCustCats;
+      }
 
       const txIds = (transactions.data || []).map((t: { id: string }) => t.id);
       const grIds = (goodsReceivings.data || []).map((r: { id: string }) => r.id);
@@ -342,9 +368,8 @@ export function ErpProvider({ children, tenantId, locale, initialData }: ErpProv
           inventory: inventory.data || [],
           productComponents: productComponents.data || [],
           vendors: vendors.data || [],
-          customers: customers.data || [],
-          customerCategories: customerCategories.data || [],
-          tenantUsers: tenantUsers.data || [],
+          customers: mergedCustomers,
+          customerCategories: mergedCustCats,
           variantGroups: variantGroups.data || [],
           variantGroupValues: variantGroupValues.data || [],
           goodsReceivings: goodsReceivings.data || [],

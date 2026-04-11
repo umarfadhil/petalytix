@@ -161,10 +161,27 @@
 - UTANG payment method is available on all plans. Visibility in POS and Settings is controlled by `tenants.enabled_payment_methods`.
 - When adding a new plan-gated feature: add the limit to `PlanLimits` interface + `PLAN_LIMITS`, add the `can*` boolean to `usePlanLimits`, enforce in the relevant screen.
 
+### ERP Data Windowing Rules
+- Initial SSR load fetches only the last 90 days (`DATA_WINDOW_DAYS = 90`) for time-based tables: `transactions`, `general_ledger`, `cash_withdrawals`, `goods_receiving`, `inventory_movements`, `cashier_sessions`.
+- Static tables (`products`, `inventory`, `customers`, `variants`, `categories`, `vendors`, `variant_groups`, etc.) are always loaded in full.
+- `transaction_items` and `goods_receiving_items` have no `date` column — fetched by parent IDs within the window.
+- `ErpState.dataWindowStart` (ms timestamp) tracks the oldest loaded date; `olderDataLoaded` is `true` when all-time data has been merged.
+- To load older data: call `fetchOlderErpData(tenantId, fromMs, toMs)` server action, then dispatch `MERGE_OLDER`. The reducer deduplicates by ID (realtime-newer rows win over older fetched rows).
+- Screens that display historical data (Dashboard CSV export, Settings CSV export) must check `!olderDataLoaded` and show a load-older-data banner if the user's date range extends before `dataWindowStart`.
+
+### Owner Office Rules
+- Office route: `src/app/ayakasir/[locale]/app/office/` — protected by ERP session + `maxBranches > 1` plan check in `office/layout.tsx`.
+- Only OWNER role with `session.organizationId` set can access Office; others are redirected to `/app/dashboard`.
+- State lives in `OfficeProvider` (`src/components/ayakasir/erp/office/store.tsx`). Office state is SSR-only (no realtime); re-enter the route to refresh.
+- Data fetch in `office/layout.tsx`: org + all branches first (needed for user fallback), then parallel fetches for users, customers, customer categories, branch summaries, current-year consolidated data, master data links, and primary branch counts.
+- Legacy staff fallback: users added before `organization_id` was backfilled have `organization_id = null`; query by `tenant_id IN (branchIds)` and union + deduplicate by ID.
+- CSS prefix: `.office-*` in `erp.css`. Do not use `.erp-*` for Office-specific UI elements.
+- Master data link/unlink: `master_data_links` table stores config; actual copy/delete is performed via API routes (`/api/office/master-data-links`, `/api/office/sync-products`).
+
 ### Adding a New ERP Feature (when mobile app updates)
 1. If new Supabase table: add type to `src/lib/supabase/types.ts`, add to `TENANT_TABLES`, create repository in `repositories/`, add to `index.ts`.
 2. If new field on existing table: update the corresponding `Db*` interface in `types.ts`.
-3. Add state field to `ErpState` in `store.tsx` and fetch it in `(erp)/layout.tsx`.
+3. Add state field to `ErpState` in `store.tsx` and fetch it in `(erp)/layout.tsx` (static = always full, time-based = windowed 90 days + include in `MERGE_OLDER` payload).
 4. Add realtime handler in the `tableKeyMap` in `store.tsx`.
 5. Add new route page in `src/app/ayakasir/[locale]/app/(erp)/` if a new screen is needed.
 6. Create or update screen component in `src/components/ayakasir/erp/screens/`.

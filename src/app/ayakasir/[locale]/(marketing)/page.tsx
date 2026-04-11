@@ -207,14 +207,29 @@ export default async function AyaKasirLandingPage({
               )}
               <h3 className="ayakasir-pricing-name">{plan.name}</h3>
               <p className="ayakasir-pricing-tagline">{plan.tagline}</p>
-              <div className="ayakasir-pricing-price">
-                {plan.price}
-                {plan.price !== "Free" && plan.price !== "Gratis" && plan.price !== "Custom" && (
-                  <span className="ayakasir-pricing-period">{copy.pricing.perMonth}</span>
+              <div className="ayakasir-pricing-price-block">
+                {plan.originalPrice && (
+                  <div className="ayakasir-pricing-original-row">
+                    <span className="ayakasir-pricing-original">{plan.originalPrice}</span>
+                    {plan.discountBadge && (
+                      <span className="ayakasir-pricing-discount-badge">{plan.discountBadge}</span>
+                    )}
+                  </div>
+                )}
+                <div className="ayakasir-pricing-price">
+                  {plan.price}
+                  {plan.price !== "Free" && plan.price !== "Gratis" && plan.price !== "Custom" && (
+                    <span className="ayakasir-pricing-period">
+                      {plan.priceSuffix ?? copy.pricing.perMonth}
+                    </span>
+                  )}
+                </div>
+                {plan.promoHook && (
+                  <div className="ayakasir-pricing-promo">{plan.promoHook}</div>
                 )}
               </div>
               {plan.highlighted && (
-                <div className="ayakasir-pricing-promo">{copy.pricing.currentPromo}</div>
+                <div className="ayakasir-pricing-promo-secondary">{copy.pricing.currentPromo}</div>
               )}
               <ul className="ayakasir-pricing-features">
                 {plan.features.map((feature, j) => (
@@ -226,6 +241,9 @@ export default async function AyaKasirLandingPage({
                   </li>
                 ))}
               </ul>
+              {plan.footnote && (
+                <p className="ayakasir-pricing-footnote">{plan.footnote}</p>
+              )}
               <a
                 className={`button ${plan.highlighted ? "primary ayakasir-btn-primary" : "ghost"} ayakasir-pricing-cta`}
                 href={plan.price === "Custom" ? `https://wa.me/628561150601?text=${encodeURIComponent(`Halo, saya tertarik dengan paket ${plan.name} AyaKasir.`)}` : `/${params.locale}/app/register`}

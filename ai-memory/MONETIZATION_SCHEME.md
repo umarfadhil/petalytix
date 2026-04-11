@@ -53,7 +53,7 @@ Target:
 - Small shops, cafes, minimarkets
 
 Price:
-- Rp29,900 / month --> Currently Free 3 Months!
+- Rp29,900 / month (strikethrough from Rp49,900 — 40% off promo) --> Currently Free 3 Months!
 
 Core Value:
 - Operational control and efficiency
@@ -63,9 +63,9 @@ Features:
 - Products, Customers, Menu up to 300 items each
 - Bulk upload for raw materials, customers, menu product
 - Up to 6.000 transactions per month
-- Max. 3 branches
+- Max. 3 branches (Owner Office multi-branch dashboard available)
 - Payment methods: Tunai, QRIS, Transfer, and Utang
-- Access to web and android app + Owner Office page
+- Access to web and android app + Owner Office page (consolidated reports, inventory analytics, master data linking)
 - Advanced reports and raw data access
 - Connect to printer / digital receipt
 - Real-time cloud sync
@@ -93,28 +93,22 @@ Target:
 - Multi-branch stores, restaurants, franchises
 
 Price:
-- TBD
+- Rp19,900 / branch / month (strikethrough from Rp59,900 — 67% off founding price)
 
 Core Value:
 - Full business control at scale
 
 Features:
-- Multi owner and unlimited staff management
-- Products, Customers, Menu unlimited
-- Every raw materials, customers, menu, etc. will be set up by developer
-- Unlimited transactions
-- Unlimited branches
-- Payment methods: Tunai, QRIS, Transfer, and Utang (Payment Gateway)
-- Access to web and android app + Owner Office page
-- Advanced reports and raw data access
-- Connect to multiple printers
-- Real-time cloud sync
-
-Limitations:
-- Custom onboarding may be required
+- All Tumbuh features, no limits (unlimited branches, staff, products, customers, transactions)
+- Owner Office with unlimited branches + advanced inventory analytics
+- 1 feature request / year (conditional on technical feasibility)
+- Payment Gateway (Coming Soon)
+- Priority support
+- Onboarding & training
+- Setup by developer team
 
 CTA:
-- "Hubungi Developer"
+- "Hubungi Developer" (links to WhatsApp)
 
 ---
 
@@ -122,7 +116,7 @@ CTA:
 
 | Feature | Perintis | Tumbuh | Mapan |
 |--------|--------|--------|--------|
-| Price | Free | Rp29.9k (Currently Free 3 Months!) | TBD |
+| Price | Free | Rp29.9k ~~Rp49.9k~~ (Currently Free 3 Months!) | Rp19.9k/branch ~~Rp59.9k~~ |
 | Users | 1 Owner + 1 Cashier | 1 Owner + 2 Staffs | Multi-Owner + Unlimited Staffs |
 | Products | 100 | 300 | Unlimited |
 | Setup | Manual | Bulk Update | Set Up by Developer |
@@ -131,7 +125,7 @@ CTA:
 | Access | web kasir and android app | web kasir + office page and android app | web kasir + office page and android app
 | Reports | Basic | Advanced | Advanced+ |
 | CSV Export | No | Yes | Yes |
-| Multi-Branch | No | Yes (Coming Soon) | Yes (Coming Soon) |
+| Multi-Branch | No | Yes (max 3 branches, Owner Office live) | Yes (unlimited branches) |
 | Analytics | No | Basic | Advanced |
 | API Access | No | No | Yes |
 | UTANG (Debt) Payment | Yes | Yes | Yes |

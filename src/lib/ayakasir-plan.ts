@@ -1,7 +1,7 @@
 import type { TenantPlan } from "@/lib/supabase/types";
 
 // Keep in sync with repos/ayakasir/app/build.gradle.kts → versionName
-export const APP_VERSION = "1.3.4";
+export const APP_VERSION = "1.3.5";
 
 export type { TenantPlan };
 
@@ -16,6 +16,7 @@ export interface PlanLimits {
   maxGoodsReceivings: number;
   maxRawCategories: number;
   maxVariantGroups: number;
+  maxBranches: number; // total branches including primary (1 = single-tenant, no Office)
 }
 
 export const PLAN_LIMITS: Record<TenantPlan, PlanLimits> = {
@@ -30,6 +31,7 @@ export const PLAN_LIMITS: Record<TenantPlan, PlanLimits> = {
     maxGoodsReceivings: 100,
     maxRawCategories: 100,
     maxVariantGroups: 100,
+    maxBranches: 1,
   },
   TUMBUH: {
     maxProducts: 300,
@@ -42,6 +44,7 @@ export const PLAN_LIMITS: Record<TenantPlan, PlanLimits> = {
     maxGoodsReceivings: 300,
     maxRawCategories: 300,
     maxVariantGroups: 300,
+    maxBranches: 3,
   },
   MAPAN: {
     maxProducts: Infinity,
@@ -54,6 +57,7 @@ export const PLAN_LIMITS: Record<TenantPlan, PlanLimits> = {
     maxGoodsReceivings: Infinity,
     maxRawCategories: Infinity,
     maxVariantGroups: Infinity,
+    maxBranches: Infinity,
   },
 };
 

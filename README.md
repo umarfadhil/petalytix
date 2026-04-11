@@ -2,6 +2,28 @@
 
 ## Changelog
 
+### v1.2.0
+
+- Owner Office — Multi-Branch Dashboard: new route at `/{locale}/app/office/` accessible to OWNER with Tumbuh+ plan (`maxBranches > 1`); protected by ERP session + plan guard in `office/layout.tsx`.
+- Owner Office — Overview Screen: branch summary cards showing today's revenue, transaction count, active cashier session status, and low-stock alert count per branch.
+- Owner Office — Branches Screen: list and manage all branches belonging to the organization.
+- Owner Office — Staff Screen: view and manage users across all branches in the organization; deduplicates legacy staff (those with `organization_id = null` backfilled from `tenant_id`).
+- Owner Office — Reports Screen: consolidated KPI dashboard with period filter (Today/Week/Month/Year/Custom date range); KPI cards (total revenue with % change vs previous period, total transactions, avg transaction value, unique customers, unpaid debts); payment method breakdown with visual bars; revenue-by-branch table; top 10 products. CSV export gated to Tumbuh+ plan.
+- Owner Office — Inventory Screen: advanced inventory analytics with period filter; snapshot KPIs (total stock value by avg COGS, total SKUs, low stock count, out-of-stock count); period-filtered KPIs (purchasing spend, stock movements, stock-in qty, waste qty); low stock alerts table; per-branch inventory breakdown with expandable rows; top wasted products; top purchased raw materials; paginated stock movement history.
+- Owner Office — Master Data Screen: card-based linking dashboard for 7 data sets (Customers, Vendors, Raw Materials, Category Raw, Variant Groups, Menu Items, Category Menu); per-branch toggle switches; Link copies from primary branch (skip-by-name); Unlink deletes name-matched rows from target (with confirm dialog); config stored in `master_data_links` table; API at `POST /api/office/master-data-links` and `POST /api/office/sync-products`.
+- Owner Office — Customers Screen: org-scoped customer view across all branches.
+- Owner Office — Settings Screen: org-level settings.
+- Owner Office — State: `OfficeProvider` (Context + useReducer) in `src/components/ayakasir/erp/office/store.tsx`; consolidated types: `BranchSummary`, `ConsolidatedTx`, `ConsolidatedTxItem`, `ConsolidatedInventoryRow`, `ConsolidatedMovement`, `ConsolidatedGoodsReceivingItem`, `ConsolidatedProduct`, `PrimaryDataCounts`.
+- Owner Office — SSR Data: `office/layout.tsx` fetches org, branches, org-scoped users (with legacy union fallback), customers, customer categories, branch summaries, current-year consolidated transactions + items, inventory snapshot, movements, goods-receiving items, product components, vendors, categories, master data links, and primary branch data counts.
+- Owner Office — CSS: `.office-*`, `.office-report-*`, `.office-inv-*`, `.office-md-*` prefixes in `erp.css`; `OfficeSidebar` with "Back to Cashier" link.
+- ERP — Data Windowing: initial SSR load in `(erp)/layout.tsx` now fetches only the last 90 days (`DATA_WINDOW_DAYS = 90`) for time-based tables (`transactions`, `general_ledger`, `cash_withdrawals`, `goods_receiving`, `inventory_movements`, `cashier_sessions`); static tables (`products`, `inventory`, `customers`, etc.) still loaded in full; `transaction_items` and `goods_receiving_items` fetched by parent IDs within the window.
+- ERP — Older Data Fetch: new server action `src/app/ayakasir/actions/fetch-older-data.ts` (`fetchOlderErpData(tenantId, fromMs, toMs)`); fetches time-windowed tables for a given date range and returns child records by parent ID joins; `MERGE_OLDER` reducer action deduplicates by ID (realtime-new rows take precedence); `ErpState.dataWindowStart` and `olderDataLoaded` track window state; screens show a banner to load older data.
+- ERP — Products BOM: per-variant BOM support via `product_components.parent_variant_id` (`TEXT NOT NULL DEFAULT ''`); empty = shared (all variants); non-empty = variant-specific; products form groups BOM rows by variant with "Copy to all variants" helper; POS deduction matches by `parent_variant_id` directly; clone remaps variant IDs via `cloneVarMap`; CSV import defaults to `""` (shared).
+- ERP — Inventory CSS: new `.erp-bom-variant-groups`, `.erp-bom-variant-group`, `.erp-bom-variant-group-header`, `.erp-bom-variant-group-title`, `.erp-bom-empty`, `.erp-older-data-banner`, `.erp-text--error`, `.erp-unit-toggle` classes.
+- ERP — Realtime Status: `useRealtimeSync` accepts optional `onStatusChange(status: RealtimeStatus)` callback; `ErpState.realtimeStatus` tracks `"CONNECTING" | "SUBSCRIBED" | "DISCONNECTED"`; `ErpProvider` re-fetches on window focus (always) and every 5 min when `DISCONNECTED` using `reconcileRef` + `realtimeStatusRef` stale-closure guards.
+- DB Types — `DbGoodsReceivingItem`: added `variant_name: string` (NOT NULL in DB) and corrected `qty`/`cost_per_unit` to `number` with integer-safe write requirement; `DbProductComponent` gained `parent_variant_id: string`.
+- Plan — `maxBranches` limit: added to `PlanLimits` interface; PERINTIS = 1 (no Office), TUMBUH = 3, MAPAN = Infinity; `APP_VERSION` bumped to `1.3.5`.
+
 ### v1.1.6
 
 - Cashier Session — Stale-Session Rule Removed: any unclosed session (`closed_at === null`) is now treated as active regardless of when it was opened; the previous day-boundary rule that locked POS for sessions opened before midnight has been removed to match mobile app behavior and support stores that carry sessions across days.

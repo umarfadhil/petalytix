@@ -96,6 +96,55 @@ function normalizeToBaseUnit(qty: number, fromUnit: string, toUnit: string): num
   return null;
 }
 
+// ── COGS helpers ─────────────────────────────────────────────────────────────
+
+/** Convert BOM component qty to raw material's stored inventory unit */
+function bomQtyToStoredUnit(qty: number, bomUnit: string): number {
+  if (bomUnit === "kg") return qty * 1000; // stored as g
+  if (bomUnit === "L") return qty * 1000;  // stored as mL
+  return qty;
+}
+
+interface ErpInventory { product_id: string; variant_id: string; avg_cogs: number }
+interface ErpComponent { parent_product_id: string; parent_variant_id: string; component_product_id: string; component_variant_id: string; required_qty: number; unit: string }
+interface ErpVariant { id: string; product_id: string; name: string }
+
+/**
+ * Calculate effective COGS for a menu item from its BOM.
+ * Supports both UUID-based and name-based parent_variant_id (mobile app writes names).
+ * Pass variantId="" for no-variant products; pass a variant UUID to include
+ * variant-specific + shared components.
+ * Returns null if no BOM components exist for the product.
+ */
+function calcMenuItemCogs(
+  productId: string,
+  variantId: string,
+  variantName: string,
+  components: ErpComponent[],
+  inventory: ErpInventory[]
+): number | null {
+  const productComponents = components.filter((c) => c.parent_product_id === productId);
+  if (productComponents.length === 0) return null;
+  const relevant = productComponents.filter((c) => {
+    if (c.parent_variant_id === "") return true; // shared
+    if (!variantId) return false; // no-variant product — only shared
+    // Match by UUID or by variant name (mobile app compatibility)
+    return c.parent_variant_id === variantId || c.parent_variant_id === variantName;
+  });
+  if (relevant.length === 0) return null;
+  let total = 0;
+  for (const comp of relevant) {
+    const compVarId = comp.component_variant_id || "";
+    const inv = inventory.find(
+      (i) => i.product_id === comp.component_product_id && i.variant_id === compVarId
+    );
+    if (!inv || inv.avg_cogs <= 0) continue;
+    const qtyInStoredUnit = bomQtyToStoredUnit(comp.required_qty, comp.unit || "pcs");
+    total += qtyInStoredUnit * inv.avg_cogs;
+  }
+  return total;
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function ProductsScreen() {
@@ -119,6 +168,14 @@ export default function ProductsScreen() {
   // Bulk delete
   const [selectedProdIds, setSelectedProdIds] = useState<Set<string>>(new Set());
   const [showProdBulkConfirm, setShowProdBulkConfirm] = useState(false);
+
+  // COGS expand
+  const [expandedCogsIds, setExpandedCogsIds] = useState<Set<string>>(new Set());
+  const toggleCogsExpand = (id: string) =>
+    setExpandedCogsIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  // COGS tooltip
+  const [cogsInfoOpen, setCogsInfoOpen] = useState(false);
 
   // CSV import
   const csvInputRef = useRef<HTMLInputElement>(null);
@@ -325,11 +382,20 @@ export default function ProductsScreen() {
       .filter((v) => v.product_id === product.id)
       .map((v) => ({ id: v.id, name: v.name, price_adjustment: String(v.price_adjustment) }));
     setFormVariants(existingVariants);
+    // Build a name→id map to normalize mobile-written parent_variant_id (may be variant name instead of UUID)
+    const variantNameToId = new Map(existingVariants.map((v) => [v.name.trim().toLowerCase(), v.id!]));
+    const resolveLoadedPvId = (pvId: string): string => {
+      if (!pvId) return "";
+      // Already a UUID (contains hyphens and right length) — keep as-is
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pvId)) return pvId;
+      // Otherwise treat as variant name and resolve to ID
+      return variantNameToId.get(pvId.trim().toLowerCase()) ?? pvId;
+    };
     const existingComponents = state.productComponents
       .filter((c) => c.parent_product_id === product.id)
       .map((c) => ({
         id: c.id,
-        parent_variant_id: c.parent_variant_id || "",
+        parent_variant_id: resolveLoadedPvId(c.parent_variant_id || ""),
         component_product_id: c.component_product_id,
         component_variant_id: c.component_variant_id || "",
         required_qty: String(c.required_qty),
@@ -1105,6 +1171,23 @@ export default function ProductsScreen() {
                   <th>{copy.products.name}</th>
                   <th>{copy.products.category}</th>
                   <th>{copy.products.price}</th>
+                  <th>
+                    <span
+                      className="erp-cogs-info"
+                      data-open={cogsInfoOpen ? "true" : undefined}
+                    >
+                      {copy.dashboard.cogs}
+                      <span
+                        className="erp-cogs-info-icon"
+                        onClick={() => setCogsInfoOpen((v) => !v)}
+                        onBlur={() => setCogsInfoOpen(false)}
+                        tabIndex={0}
+                        role="button"
+                        aria-label="Informasi Harga Pokok"
+                      >ⓘ</span>
+                      <span className="erp-cogs-info-bubble">{copy.dashboard.cogsTooltip}</span>
+                    </span>
+                  </th>
                   <th>{copy.products.active}</th>
                   <th>{copy.common.actions}</th>
                 </tr>
@@ -1112,63 +1195,105 @@ export default function ProductsScreen() {
               <tbody>
                 {pagedProducts.length === 0 ? (
                   <tr>
-                    <td colSpan={isOwner ? 6 : 5} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
+                    <td colSpan={isOwner ? 7 : 6} style={{ textAlign: "center", color: "var(--erp-muted)" }}>
                       {copy.products.noProducts}
                     </td>
                   </tr>
                 ) : (
-                  pagedProducts.map((p) => (
-                    <tr key={p.id} className={selectedProdIds.has(p.id) ? "erp-table-row--selected" : undefined}>
-                      {isOwner && (
-                        <td>
-                          <input
-                            type="checkbox"
-                            checked={selectedProdIds.has(p.id)}
-                            onChange={() => toggleSelectProduct(p.id)}
-                          />
-                        </td>
-                      )}
-                      <td>
-                        <strong>{p.name}</strong>
-                        {state.variants.filter((v) => v.product_id === p.id).length > 0 && (
-                          <span className="erp-badge erp-badge--info" style={{ marginLeft: 8 }}>
-                            {state.variants.filter((v) => v.product_id === p.id).length} {copy.products.variants.toLowerCase()}
-                          </span>
-                        )}
-                        {state.productComponents.filter((c) => c.parent_product_id === p.id).length > 0 && (
-                          <span className="erp-badge erp-badge--warning" style={{ marginLeft: 4 }}>
-                            {state.productComponents.filter((c) => c.parent_product_id === p.id).length} BOM
-                          </span>
-                        )}
-                      </td>
-                      <td>{getCategoryName(p.category_id)}</td>
-                      <td>{formatRupiah(p.price)}</td>
-                      <td>
-                        <span className={`erp-badge ${p.is_active ? "erp-badge--success" : "erp-badge--danger"}`}>
-                          {p.is_active ? copy.products.active : copy.products.inactive}
-                        </span>
-                      </td>
-                      <td className="erp-td-actions">
-                        <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => openEdit(p)}>
-                          {copy.common.edit}
-                        </button>
+                  pagedProducts.flatMap((p) => {
+                    const productVariants = state.variants.filter((v) => v.product_id === p.id);
+                    const hasVariants = productVariants.length > 0;
+                    const isExpanded = expandedCogsIds.has(p.id);
+                    // COGS: calculated from BOM components × raw material avg_cogs
+                    const noVariantCogs = calcMenuItemCogs(p.id, "", "", state.productComponents, state.inventory);
+                    const cogsCell = hasVariants ? (
+                      <button
+                        className="erp-btn erp-btn--ghost erp-btn--sm erp-cogs-expand-btn"
+                        onClick={() => toggleCogsExpand(p.id)}
+                        title={isExpanded ? "Sembunyikan HPP varian" : "Lihat HPP per varian"}
+                      >
+                        {isExpanded ? "▲" : "▼"} {copy.dashboard.cogs}
+                      </button>
+                    ) : (
+                      <span style={{ color: noVariantCogs !== null && noVariantCogs > 0 ? "inherit" : "var(--erp-muted)" }}>
+                        {noVariantCogs !== null && noVariantCogs > 0 ? formatRupiah(noVariantCogs) : "—"}
+                      </span>
+                    );
+                    const mainRow = (
+                      <tr key={p.id} className={selectedProdIds.has(p.id) ? "erp-table-row--selected" : undefined}>
                         {isOwner && (
-                          <>
-                            <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => handleCloneProduct(p)}>
-                              {copy.products.clone}
-                            </button>
-                            <button
-                              className="erp-btn erp-btn--ghost erp-btn--sm"
-                              style={{ color: "var(--erp-danger)" }}
-                              onClick={() => handleDeleteProduct(p.id)}
-                            >
-                              {copy.common.delete}
-                            </button>
-                          </>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={selectedProdIds.has(p.id)}
+                              onChange={() => toggleSelectProduct(p.id)}
+                            />
+                          </td>
                         )}
-                      </td>
-                    </tr>
-                  ))
+                        <td>
+                          <strong>{p.name}</strong>
+                          {hasVariants && (
+                            <span className="erp-badge erp-badge--info" style={{ marginLeft: 8 }}>
+                              {productVariants.length} {copy.products.variants.toLowerCase()}
+                            </span>
+                          )}
+                          {state.productComponents.filter((c) => c.parent_product_id === p.id).length > 0 && (
+                            <span className="erp-badge erp-badge--warning" style={{ marginLeft: 4 }}>
+                              {state.productComponents.filter((c) => c.parent_product_id === p.id).length} BOM
+                            </span>
+                          )}
+                        </td>
+                        <td>{getCategoryName(p.category_id)}</td>
+                        <td>{formatRupiah(p.price)}</td>
+                        <td>{cogsCell}</td>
+                        <td>
+                          <span className={`erp-badge ${p.is_active ? "erp-badge--success" : "erp-badge--danger"}`}>
+                            {p.is_active ? copy.products.active : copy.products.inactive}
+                          </span>
+                        </td>
+                        <td className="erp-td-actions">
+                          <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => openEdit(p)}>
+                            {copy.common.edit}
+                          </button>
+                          {isOwner && (
+                            <>
+                              <button className="erp-btn erp-btn--ghost erp-btn--sm" onClick={() => handleCloneProduct(p)}>
+                                {copy.products.clone}
+                              </button>
+                              <button
+                                className="erp-btn erp-btn--ghost erp-btn--sm"
+                                style={{ color: "var(--erp-danger)" }}
+                                onClick={() => handleDeleteProduct(p.id)}
+                              >
+                                {copy.common.delete}
+                              </button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                    if (!hasVariants || !isExpanded) return [mainRow];
+                    const variantRows = productVariants.map((v) => {
+                      const varCogs = calcMenuItemCogs(p.id, v.id, v.name, state.productComponents, state.inventory);
+                      return (
+                        <tr key={`${p.id}-cogs-${v.id}`} className="erp-cogs-variant-row">
+                          {isOwner && <td />}
+                          <td style={{ paddingLeft: "2rem", color: "var(--erp-muted)", fontSize: "0.85em" }}>↳ {v.name}</td>
+                          <td />
+                          <td style={{ color: "var(--erp-muted)", fontSize: "0.85em" }}>
+                            {formatRupiah(p.price + v.price_adjustment)}
+                          </td>
+                          <td style={{ fontSize: "0.85em" }}>
+                            <span style={{ color: varCogs !== null && varCogs > 0 ? "inherit" : "var(--erp-muted)" }}>
+                              {varCogs !== null && varCogs > 0 ? formatRupiah(varCogs) : "—"}
+                            </span>
+                          </td>
+                          <td /><td />
+                        </tr>
+                      );
+                    });
+                    return [mainRow, ...variantRows];
+                  })
                 )}
               </tbody>
             </table>

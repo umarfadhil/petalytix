@@ -64,6 +64,8 @@ export function usePlanLimits() {
       canAddReceiving: state.goodsReceivings.length < limits.maxGoodsReceivings,
       canAddRawCategory: rawCategories.length < limits.maxRawCategories,
       canAddVariantGroup: state.variantGroups.length < limits.maxVariantGroups,
+      canAccessOffice: limits.maxBranches > 1,
+      canCreateBranch: state.orgBranches.length < limits.maxBranches,
     };
-  }, [state.restaurant, state.products, state.customers, state.tenantUsers, state.transactions, state.vendors, state.goodsReceivings, state.categories, state.variantGroups]);
+  }, [state.restaurant, state.products, state.customers, state.tenantUsers, state.transactions, state.vendors, state.goodsReceivings, state.categories, state.variantGroups, state.orgBranches]);
 }

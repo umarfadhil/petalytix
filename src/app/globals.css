@@ -2036,6 +2036,33 @@ main {
   min-height: 40px;
 }
 
+.ayakasir-pricing-price-block {
+  margin-bottom: 4px;
+}
+
+.ayakasir-pricing-original-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.ayakasir-pricing-original {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-ink-secondary, #888);
+  text-decoration: line-through;
+}
+
+.ayakasir-pricing-discount-badge {
+  font-size: 11px;
+  font-weight: 700;
+  background: #fce4ec;
+  color: #c62828;
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
 .ayakasir-pricing-price {
   font-size: 32px;
   font-weight: 800;
@@ -2051,6 +2078,17 @@ main {
 
 .ayakasir-pricing-promo {
   display: inline-block;
+  background: #fff3e0;
+  color: #e65100;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 8px;
+  margin-bottom: 4px;
+}
+
+.ayakasir-pricing-promo-secondary {
+  display: inline-block;
   background: #e8f5e9;
   color: #2e7d32;
   font-size: 13px;
@@ -2058,6 +2096,13 @@ main {
   padding: 4px 12px;
   border-radius: 8px;
   margin-bottom: 16px;
+}
+
+.ayakasir-pricing-footnote {
+  font-size: 11px;
+  color: var(--color-ink-secondary, #888);
+  margin: -12px 0 12px;
+  font-style: italic;
 }
 
 .ayakasir-pricing-features {

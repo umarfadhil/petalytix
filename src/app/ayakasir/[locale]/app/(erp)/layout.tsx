@@ -5,6 +5,8 @@ import { ErpProvider } from "@/components/ayakasir/erp/store";
 import ErpSidebar from "@/components/ayakasir/erp/ErpSidebar";
 import { getErpSession } from "@/lib/erp-auth";
 import type { DbTenant, DbUser } from "@/lib/supabase/types";
+import { getPlanLimits } from "@/lib/ayakasir-plan";
+import type { TenantPlan } from "@/lib/supabase/types";
 
 function getServerBasePath() {
   const host = headers().get("host") || "";
@@ -142,16 +144,68 @@ export default async function ErpLayout({
     .eq("id", tenantId)
     .single();
 
+  // For OWNER with an org + plan that allows Office: fetch all org branches
+  let orgBranches: DbTenant[] = [];
+  const orgId = session.organizationId;
+  if (typedUser.role === "OWNER" && orgId) {
+    const restaurantData = restaurant as DbTenant | null;
+    const planExpired =
+      restaurantData?.plan_expires_at != null && Date.now() > restaurantData.plan_expires_at;
+    const effectivePlan = planExpired ? "PERINTIS" : (restaurantData?.plan ?? "PERINTIS") as TenantPlan;
+    const limits = getPlanLimits(effectivePlan);
+    // Fetch branches whenever Office is accessible (maxBranches > 1),
+    // even if only 1 branch exists — owner needs to reach Office to add more.
+    if (limits.maxBranches > 1) {
+      const { data: branches } = await supabase
+        .from("tenants")
+        .select("*")
+        .eq("organization_id", orgId)
+        .order("is_primary", { ascending: false });
+      orgBranches = (branches || []) as DbTenant[];
+    }
+  }
+
   // Fetch all ERP data
   const erpData = await fetchErpData(supabase, tenantId);
+
+  // If a CUSTOMERS master data link exists for this branch, also load org-scoped customers
+  const orgIdForCustomers = orgId ?? (restaurant as DbTenant | null)?.organization_id ?? null;
+  if (orgIdForCustomers) {
+    const { data: customersLink } = await supabase
+      .from("master_data_links")
+      .select("id")
+      .eq("target_tenant_id", tenantId)
+      .eq("data_type", "CUSTOMERS")
+      .limit(1);
+
+    if (customersLink && customersLink.length > 0) {
+      const [orgCustomersRes, orgCustCatsRes] = await Promise.all([
+        supabase.from("customers").select("*").eq("organization_id", orgIdForCustomers).order("name"),
+        supabase.from("customer_categories").select("*").eq("organization_id", orgIdForCustomers).order("name"),
+      ]);
+      // Merge: org-scoped + tenant-scoped, deduplicated by id
+      const merged = new Map<string, unknown>();
+      for (const c of [...(erpData.customers), ...(orgCustomersRes.data || [])]) {
+        merged.set((c as { id: string }).id, c);
+      }
+      const mergedCats = new Map<string, unknown>();
+      for (const c of [...(erpData.customerCategories), ...(orgCustCatsRes.data || [])]) {
+        mergedCats.set((c as { id: string }).id, c);
+      }
+      erpData.customers = Array.from(merged.values()) as typeof erpData.customers;
+      erpData.customerCategories = Array.from(mergedCats.values()) as typeof erpData.customerCategories;
+    }
+  }
 
   return (
     <ErpProvider
       tenantId={tenantId}
+      organizationId={orgIdForCustomers ?? undefined}
       locale={params.locale}
       initialData={{
         restaurant: (restaurant as DbTenant) || null,
         user: typedUser,
+        orgBranches,
         ...erpData,
       }}
     >

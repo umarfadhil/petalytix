@@ -52,7 +52,17 @@
       "mcp__claude_ai_Supabase__list_tables",
       "Bash(xargs grep:*)",
       "Bash(grep -r \"unit\\\\|currentQty\\\\|current_qty\" 'c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/repos/ayakasir/app/src/main/java/com/ayakasir/app/core/data/local' --include=*.kt -l)",
-      "Bash(grep -r \"unit\\\\|currentQty\\\\|displayQty\\\\|formatQty\\\\|InventoryUnit\\\\|toKg\\\\|toL\\\\b\" 'c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/repos/ayakasir/app/src/main/java/com/ayakasir/app' --include=*.kt -l)"
+      "Bash(grep -r \"unit\\\\|currentQty\\\\|displayQty\\\\|formatQty\\\\|InventoryUnit\\\\|toKg\\\\|toL\\\\b\" 'c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/repos/ayakasir/app/src/main/java/com/ayakasir/app' --include=*.kt -l)",
+      "Bash(mkdir -p \"c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/src/app/ayakasir/[locale]/app/office/overview\")",
+      "Bash(mkdir -p \"c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/src/app/ayakasir/[locale]/app/office/branches\")",
+      "Bash(mkdir -p \"c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/src/app/ayakasir/[locale]/app/office/staff\")",
+      "Bash(mkdir -p \"c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/src/app/ayakasir/[locale]/app/office/reports\")",
+      "Bash(mkdir -p \"c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/src/app/ayakasir/[locale]/app/office/inventory\")",
+      "Bash(rm \"c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/src/app/ayakasir/[locale]/app/office/products/page.tsx\")",
+      "Bash(rmdir \"c:/Users/Umar Fadhil Ramadhan/OneDrive/Documents/petalytix/src/app/ayakasir/[locale]/app/office/products\")",
+      "Bash(npm install:*)",
+      "Bash(node -e \"require\\('xlsx'\\); console.log\\('ok'\\)\")",
+      "Bash(node -e ':*)"
     ]
   }
 }

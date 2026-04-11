@@ -279,6 +279,7 @@ export default function PosScreen() {
       const saved = await createCustomer(supabase, {
         id: crypto.randomUUID(),
         tenant_id: tenantId,
+        organization_id: null,
         name: newCustomerName.trim(),
         phone: newCustomerPhone.trim() || null,
         email: null,
@@ -324,6 +325,35 @@ export default function PosScreen() {
         updated_at: now,
       };
 
+      // Compute cogs_per_unit from live inventory avg_cogs before stock is deducted
+      const toBaseForCogs = (qty: number, bomUnit: string, invUnit: string): number => {
+        const b = bomUnit.toLowerCase(), i = invUnit.toLowerCase();
+        if (b === i) return qty;
+        if (b === "kg" && i === "g") return qty * 1000;
+        if (b === "g" && i === "kg") return qty / 1000;
+        if (b === "l" && i === "ml") return qty * 1000;
+        if (b === "ml" && i === "l") return qty / 1000;
+        return qty;
+      };
+      const calcCogsPerUnit = (productId: string, variantId: string): number => {
+        const allComponents = state.productComponents.filter((c) => c.parent_product_id === productId);
+        const components = allComponents.filter((c) => {
+          if (!c.parent_variant_id) return true;
+          return variantId && c.parent_variant_id === variantId;
+        });
+        if (components.length === 0) return 0;
+        let total = 0;
+        for (const comp of components) {
+          const compVarId = comp.component_variant_id || "";
+          const inv = state.inventory.find(
+            (i) => i.product_id === comp.component_product_id && (i.variant_id === compVarId || (!i.variant_id && !compVarId))
+          );
+          if (!inv || inv.avg_cogs <= 0) continue;
+          total += toBaseForCogs(comp.required_qty, comp.unit || "pcs", inv.unit || "pcs") * inv.avg_cogs;
+        }
+        return Math.round(total);
+      };
+
       const items: Omit<DbTransactionItem, "sync_status">[] = cart.map((item) => {
         const discountPerUnit = calcDiscountPerUnit(item);
         return {
@@ -340,6 +370,7 @@ export default function PosScreen() {
           discount_type: item.discountType,
           discount_value: item.discountType === "NONE" ? 0 : Math.round(item.discountValue),
           discount_per_unit: item.discountType === "NONE" ? 0 : discountPerUnit,
+          cogs_per_unit: calcCogsPerUnit(item.productId, item.variantId),
           updated_at: now,
         };
       });

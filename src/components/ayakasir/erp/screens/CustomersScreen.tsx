@@ -220,7 +220,7 @@ export default function CustomersScreen() {
         if (detailCustomer?.id === editingCustomer.id) setDetailCustomer(updated);
       } else {
         const created = await createCustomer(supabase, {
-          id: genId(), tenant_id: tenantId,
+          id: genId(), tenant_id: tenantId, organization_id: null,
           name: formName.trim(), phone, email, birthday, gender, category_id, notes,
         });
         dispatch({ type: "UPSERT", table: "customers", payload: created as unknown as Record<string, unknown> });
@@ -469,7 +469,7 @@ export default function CustomersScreen() {
         }
 
         const created = await createCustomer(supabase, {
-          id: genId(), tenant_id: tenantId,
+          id: genId(), tenant_id: tenantId, organization_id: null,
           name: row.name, phone: row.phone, email: row.email,
           birthday: row.birthday, gender: row.gender, category_id, notes: row.notes,
         });

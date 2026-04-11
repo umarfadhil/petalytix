@@ -80,7 +80,7 @@ Middleware (`src/middleware.ts`) intercepts requests:
 - Role-based access: OWNER sees all; CASHIER sees only features in `users.feature_access` (sidebar filtered); CASHIER restricted from delete/category-management in Purchasing, Products, Customers.
 - Plan/subscription: `tenants.plan` field (`PERINTIS`/`TUMBUH`/`MAPAN`) with `plan_started_at`/`plan_expires_at`. New registrations default to `TUMBUH` with a free 3-month trial. Plan limits enforced client-side via `usePlanLimits` hook. Limits: products, customers, raw materials, monthly transactions, staff count, vendors, goods receivings, raw categories, and variant groups. Plan info section in Settings (owner-only) shows usage vs limits. Plan constants in `src/lib/ayakasir-plan.ts`.
 - Repository layer in `src/lib/supabase/repositories/` — 16 files, function-based, mirrors mobile's Kotlin repositories. New files: `cashier-sessions.ts`, `variant-groups.ts`.
-- State: React Context + useReducer in `src/components/ayakasir/erp/store.tsx`, server-side initial data load in `(erp)/layout.tsx`.
+- State: React Context + useReducer in `src/components/ayakasir/erp/store.tsx`, server-side initial data load in `(erp)/layout.tsx` (90-day window for time-based tables; `MERGE_OLDER` for on-demand older data fetch).
 - CSS: `.erp-*` prefix in `src/app/ayakasir/[locale]/app/erp.css`. Sidebar collapsible to icon-only mode. Watermark fixed bottom-right.
 - i18n: `src/components/ayakasir/erp/i18n.ts` (EN/ID).
 - Middleware protects `/app/*` routes, redirects unauthenticated to `/app/login`.
@@ -88,3 +88,25 @@ Middleware (`src/middleware.ts`) intercepts requests:
 - Cashier Session Flow: POS locked until session opened (PIN + initial balance); session-scoped Saldo Kas; close writes to `cashier_sessions` row; Dashboard "Shift Aktif" chip filters to `opened_at`.
 - Plan gating: CSV export disabled for PERINTIS plan; `APP_VERSION` constant in `src/lib/ayakasir-plan.ts`; Settings footer shows app version.
 - Variant Preset Groups: `variant_groups` + `variant_group_values` tables; Variants tab in Purchasing manages reusable presets; Apply to raw material creates `DbVariant` + `DbInventory` rows; goods receiving supports per-variant sub-rows.
+
+### Owner Office (Multi-Branch)
+
+- Route: `ayakasir.petalytix.id/{locale}/app/office/` — accessible to OWNER with Tumbuh+ plan (`maxBranches > 1`).
+- State: `OfficeProvider` (Context + useReducer) in `src/components/ayakasir/erp/office/store.tsx`. Contains: `organization`, `branches`, `orgUsers`, `orgCustomers`, `orgCustomerCategories`, `branchSummaries`, `consolidatedTxs`, `consolidatedTxItems`, `consolidatedInventory`, `consolidatedMovements`, `consolidatedGrItems`, `consolidatedProducts`, `consolidatedProductComponents`, `consolidatedVendors`, `consolidatedCategories`, `masterDataLinks`, `primaryDataCounts`, `activeTenantId`.
+- Layout (`office/layout.tsx`): SSR fetches org, branches, users (with legacy union fallback for staff with `organization_id = null`), customers, customer categories, branch summaries (today revenue/tx/session/low stock), current-year consolidated transactions + items, inventory snapshot, movements, goods-receiving items, product components, vendors, categories, master data links, and primary branch data counts.
+- Screens: Overview, Branches, Staff, Reports, Master Data (linking dashboard), Inventory (advanced analytics), Customers, Settings.
+- **Overview** (`office/screens/OverviewScreen.tsx`): Branch summary cards with today's revenue, transaction count, active cashier session indicator, and low-stock alert count per branch.
+- **Reports** (`office/screens/ReportsScreen.tsx`): Consolidated KPI dashboard with period filter (Today/Week/Month/Year/Custom date range), KPI cards (total revenue with % change vs previous period, total transactions, avg transaction value, unique customers, unpaid debts), payment method breakdown with visual bars, revenue-by-branch table, top 10 products. CSV export gated to Tumbuh+ plan.
+- **Inventory** (`office/screens/InventoryScreen.tsx`): Advanced inventory analytics with period filter (Today/Week/Month/Year/Custom). Snapshot KPIs (total stock value by avg COGS, total SKUs, low stock count, out of stock count). Period-filtered KPIs (total purchasing spend, stock movements, stock in qty, waste qty). Low stock alerts table. Per-branch inventory breakdown with expandable detail rows (per-item stock, COGS, value, status). Top wasted products, top purchased raw materials (by spend), paginated stock movement history. Data: `consolidatedInventory`, `consolidatedMovements`, `consolidatedGrItems`, `consolidatedProducts` in OfficeState.
+- **Master Data** (`office/screens/MasterDataScreen.tsx`): Card-based linking dashboard. 7 data sets (Customers, Vendors, Raw Materials, Category Raw, Variant Groups, Menu Items, Category Menu) shown as cards with per-branch toggle switches. Link = copy from primary → target branch (skip-by-name). Unlink = delete name-matched rows from target (with confirm dialog). Config stored in `master_data_links` table. API: `POST /api/office/master-data-links`, `POST /api/office/sync-products`. Customers are config-only (already org-scoped).
+- Sidebar: `OfficeSidebar.tsx` with navigation links and "Back to Cashier" link.
+- CSS: `.office-*`, `.office-report-*`, `.office-inv-*`, `.office-md-*` prefixes in `erp.css`.
+
+### ERP Data Windowing
+
+- Initial SSR load (`(erp)/layout.tsx`) fetches only the last 90 days (`DATA_WINDOW_DAYS = 90`) for time-based tables: `transactions`, `general_ledger`, `cash_withdrawals`, `goods_receiving`, `inventory_movements`, `cashier_sessions`. Static tables (`products`, `inventory`, `customers`, `variants`, `categories`, etc.) still fetched in full.
+- `transaction_items` and `goods_receiving_items` have no `date` column — fetched by parent IDs within the window.
+- `ErpState.dataWindowStart` (ms timestamp) and `olderDataLoaded` (boolean) track window state.
+- `fetchOlderErpData(tenantId, fromMs, toMs)` server action (`src/app/ayakasir/actions/fetch-older-data.ts`) fetches time-windowed rows for a date range, returns child records by parent ID joins.
+- `MERGE_OLDER` reducer action deduplicates by ID (realtime-new rows win); `olderDataLoaded = true` once `newWindowStart === 0`.
+- Screens show a banner prompting the user to load older data when `!olderDataLoaded`.

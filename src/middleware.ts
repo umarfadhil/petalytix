@@ -61,6 +61,16 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(loginUrl);
       }
 
+      // /app/office is OWNER-only and requires organizationId
+      const isOfficeRoute = subpath.startsWith("/app/office");
+      if (isOfficeRoute) {
+        if (session.role !== "OWNER" || !session.organizationId) {
+          const dashUrl = request.nextUrl.clone();
+          dashUrl.pathname = `/${locale}/app/dashboard`;
+          return NextResponse.redirect(dashUrl);
+        }
+      }
+
       // Authenticated — rewrite to internal path and carry the refreshed cookies
       const url = request.nextUrl.clone();
       url.pathname = `/${matchedProduct}${pathname}`;
